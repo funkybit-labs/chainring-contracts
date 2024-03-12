@@ -7,7 +7,6 @@ import {IERC20} from "openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
 import {Exchange} from "../src/Exchange.sol";
 import "openzeppelin-contracts/contracts/mocks/token/ERC20Mock.sol";
 
-
 contract ExchangeTest is Test {
     Exchange internal exchange;
     address internal exchangeAddress;
@@ -28,7 +27,6 @@ contract ExchangeTest is Test {
         verifyBalances(wallet1, usdcAddress, 1000e6, 4000e6, 1000e6);
         deposit(wallet1, btcAddress, 55e8);
         verifyBalances(wallet1, btcAddress, 55e8, 45e8, 55e8);
-
     }
 
     function test_MultipleDeposits() public {
@@ -43,7 +41,6 @@ contract ExchangeTest is Test {
         verifyBalances(wallet1, btcAddress, 55e8, 45e8, 55e8);
         deposit(wallet1, btcAddress, 33e8);
         verifyBalances(wallet1, btcAddress, 88e8, 12e8, 88e8);
-
     }
 
     function test_Withdrawal() public {
@@ -61,11 +58,10 @@ contract ExchangeTest is Test {
 
         withdraw(wallet1, btcAddress, 0, 51e8);
         verifyBalances(wallet1, btcAddress, 0, 100e8, 0);
-
     }
 
     function test_MultipleWallets() public {
-        (address usdcAddress, ) = setupWallets();
+        (address usdcAddress,) = setupWallets();
 
         deposit(wallet1, usdcAddress, 1000e6);
         verifyBalances(wallet1, usdcAddress, 1000e6, 4000e6, 1000e6);
@@ -76,7 +72,6 @@ contract ExchangeTest is Test {
         verifyBalances(wallet1, usdcAddress, 867e6, 4133e6, 1667e6);
         withdraw(wallet2, usdcAddress, 120e6, 120e6);
         verifyBalances(wallet2, usdcAddress, 680e6, 4320e6, 1547e6);
-
     }
 
     function deposit(address wallet, address tokenAddress, uint256 amount) internal {
@@ -94,13 +89,19 @@ contract ExchangeTest is Test {
         vm.stopPrank();
     }
 
-    function verifyBalances(address wallet, address tokenAddress, uint256 expectedBalance, uint256 walletBalance, uint256 exchangeBalance) internal {
+    function verifyBalances(
+        address wallet,
+        address tokenAddress,
+        uint256 expectedBalance,
+        uint256 walletBalance,
+        uint256 exchangeBalance
+    ) internal {
         assertEq(exchange.balances(wallet, tokenAddress), expectedBalance);
         assertEq(IERC20(tokenAddress).balanceOf(wallet), walletBalance);
         assertEq(IERC20(tokenAddress).balanceOf(exchangeAddress), exchangeBalance);
     }
 
-    function setupWallets() internal returns(address, address) {
+    function setupWallets() internal returns (address, address) {
         ERC20Mock usdcMock = new ERC20Mock();
         usdcMock.mint(wallet1, 5000e6);
         usdcMock.mint(wallet2, 5000e6);

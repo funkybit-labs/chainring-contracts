@@ -9,6 +9,14 @@ Foundry consists of:
 -   **Anvil**: Local Ethereum node, akin to Ganache, Hardhat Network.
 -   **Chisel**: Fast, utilitarian, and verbose solidity REPL.
 
+## Installing foundry (and rust)
+-   curl -L https://foundry.paradigm.xyz | bash
+-   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+-   rustup update stable
+-   source "$HOME/.cargo/env"
+-   cargo install --git https://github.com/foundry-rs/foundry --profile local --locked forge cast chisel anvil
+-   I had to put $HOME/.cargo/env in my PATH for the Intellij foundry plugin to work.
+
 ## Documentation
 
 https://book.getfoundry.sh/
