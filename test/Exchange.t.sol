@@ -5,17 +5,24 @@ import {Test, console} from "forge-std/Test.sol";
 import {ERC20Mock} from "openzeppelin-contracts/contracts/mocks/token/ERC20Mock.sol";
 import {IERC20} from "openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
 import {Exchange} from "../src/Exchange.sol";
-import "openzeppelin-contracts/contracts/mocks/token/ERC20Mock.sol";
+import {ERC1967Proxy} from "openzeppelin-contracts/contracts/proxy/ERC1967/ERC1967Proxy.sol";
+import {ERC1967Utils} from "openzeppelin-contracts/contracts/proxy/ERC1967/ERC1967Utils.sol";
+import "./contracts/ExchangeUpgrade.sol";
 
 contract ExchangeTest is Test {
     Exchange internal exchange;
-    address internal exchangeAddress;
+    address internal exchangeProxyAddress;
     address internal wallet1;
     address internal wallet2;
 
+    error OwnableUnauthorizedAccount(address account);
+
     function setUp() public {
-        exchange = new Exchange();
-        exchangeAddress = address(exchange);
+        Exchange exchangeImplementation = new Exchange();
+        exchangeProxyAddress = address(new ERC1967Proxy(address(exchangeImplementation), ""));
+        exchange = Exchange(exchangeProxyAddress);
+        exchange.initialize();
+        assertEq(exchange.getVersion(), 1);
         wallet1 = makeAddr("wallet1");
         wallet2 = makeAddr("wallet2");
     }
@@ -74,16 +81,55 @@ contract ExchangeTest is Test {
         verifyBalances(wallet2, usdcAddress, 680e6, 4320e6, 1547e6);
     }
 
+    function test_Upgrade() public {
+        (address usdcAddress,) = setupWallets();
+
+        deposit(wallet1, usdcAddress, 1000e6);
+        verifyBalances(wallet1, usdcAddress, 1000e6, 4000e6, 1000e6);
+        deposit(wallet2, usdcAddress, 800e6);
+        verifyBalances(wallet2, usdcAddress, 800e6, 4200e6, 1800e6);
+
+        // test that only the owner can upgrade the contract
+        vm.startPrank(wallet1);
+        ExchangeUpgrade newImplementation = new ExchangeUpgrade();
+        vm.expectRevert(abi.encodeWithSelector(OwnableUnauthorizedAccount.selector, wallet1));
+        exchange.upgradeToAndCall(address(newImplementation), "");
+        vm.stopPrank();
+
+        // call the proxy this time as the owner to perform the upgrade and also send data to invoke a function
+        // in the new implementation as part of the upgrade
+        // we should verify we get an Upgraded event with the implementation contract address from the proxy
+        vm.startPrank(exchange.owner());
+        vm.expectEmit(exchangeProxyAddress);
+        emit ERC1967Utils.Upgraded(address(newImplementation));
+        exchange.upgradeToAndCall(
+            address(newImplementation), abi.encodeWithSelector(ExchangeUpgrade.setValue.selector, 1000)
+        );
+        vm.stopPrank();
+        // verify the new value in the upgraded contract is set as part of the upgrade
+        assertEq(ExchangeUpgrade(exchangeProxyAddress).value(), 1000);
+
+        // check balances are maintained after the upgrade
+        verifyBalances(wallet1, usdcAddress, 1000e6, 4000e6, 1800e6);
+        verifyBalances(wallet2, usdcAddress, 800e6, 4200e6, 1800e6);
+
+        // perform some withdrawals
+        withdraw(wallet1, usdcAddress, 100e6, 100e6);
+        verifyBalances(wallet1, usdcAddress, 900e6, 4100e6, 1700e6);
+        withdraw(wallet2, usdcAddress, 120e6, 120e6);
+        verifyBalances(wallet2, usdcAddress, 680e6, 4320e6, 1580e6);
+    }
+
     function deposit(address wallet, address tokenAddress, uint256 amount) internal {
         vm.startPrank(wallet);
-        IERC20(tokenAddress).approve(exchangeAddress, amount);
+        IERC20(tokenAddress).approve(exchangeProxyAddress, amount);
         exchange.deposit(tokenAddress, amount);
         vm.stopPrank();
     }
 
     function withdraw(address wallet, address tokenAddress, uint256 amount, uint256 expectedEmitAmount) internal {
         vm.startPrank(wallet);
-        vm.expectEmit(exchangeAddress);
+        vm.expectEmit(exchangeProxyAddress);
         emit Exchange.WithdrawalCreated(expectedEmitAmount);
         exchange.withdraw(tokenAddress, amount);
         vm.stopPrank();
@@ -98,7 +144,7 @@ contract ExchangeTest is Test {
     ) internal view {
         assertEq(exchange.balances(wallet, tokenAddress), expectedBalance);
         assertEq(IERC20(tokenAddress).balanceOf(wallet), walletBalance);
-        assertEq(IERC20(tokenAddress).balanceOf(exchangeAddress), exchangeBalance);
+        assertEq(IERC20(tokenAddress).balanceOf(exchangeProxyAddress), exchangeBalance);
     }
 
     function setupWallets() internal returns (address, address) {
