@@ -95,7 +95,7 @@ contract ExchangeTest is Test {
         uint256 expectedBalance,
         uint256 walletBalance,
         uint256 exchangeBalance
-    ) view internal {
+    ) internal view {
         assertEq(exchange.balances(wallet, tokenAddress), expectedBalance);
         assertEq(IERC20(tokenAddress).balanceOf(wallet), walletBalance);
         assertEq(IERC20(tokenAddress).balanceOf(exchangeAddress), exchangeBalance);
