@@ -159,12 +159,16 @@ contract ExchangeTest is Test {
     function deposit(address wallet, address tokenAddress, uint256 amount) internal {
         vm.startPrank(wallet);
         IERC20(tokenAddress).approve(exchangeProxyAddress, amount);
+        vm.expectEmit(exchangeProxyAddress);
+        emit Exchange.Deposit(address(wallet), tokenAddress, amount);
         exchange.deposit(tokenAddress, amount);
         vm.stopPrank();
     }
 
     function deposit(address wallet, uint256 amount) internal {
         vm.startPrank(wallet);
+        vm.expectEmit(exchangeProxyAddress);
+        emit Exchange.Deposit(address(wallet), address(0), amount);
         (bool s,) = exchangeProxyAddress.call{value: amount}("");
         require(s);
         vm.stopPrank();
@@ -173,7 +177,7 @@ contract ExchangeTest is Test {
     function withdraw(address wallet, address tokenAddress, uint256 amount, uint256 expectedEmitAmount) internal {
         vm.startPrank(wallet);
         vm.expectEmit(exchangeProxyAddress);
-        emit Exchange.WithdrawalCreated(expectedEmitAmount);
+        emit Exchange.Withdrawal(wallet, tokenAddress, expectedEmitAmount);
         exchange.withdraw(tokenAddress, amount);
         vm.stopPrank();
     }
@@ -181,7 +185,7 @@ contract ExchangeTest is Test {
     function withdraw(address wallet, uint256 amount, uint256 expectedEmitAmount) internal {
         vm.startPrank(wallet);
         vm.expectEmit(exchangeProxyAddress);
-        emit Exchange.WithdrawalCreated(expectedEmitAmount);
+        emit Exchange.Withdrawal(wallet, address(0), expectedEmitAmount);
         exchange.withdraw(amount);
         vm.stopPrank();
     }

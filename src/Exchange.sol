@@ -12,8 +12,8 @@ contract Exchange is UUPSUpgradeable, OwnableUpgradeable, IVersion {
     mapping(address => mapping(address => uint256)) public balances;
     mapping(address => uint256) public nativeBalances;
 
-    event DepositCreated();
-    event WithdrawalCreated(uint256);
+    event Deposit(address indexed from, address token, uint256 amount);
+    event Withdrawal(address indexed to, address token, uint256 amount);
 
     error ErrorInsufficientBalance(uint256);
 
@@ -33,12 +33,12 @@ contract Exchange is UUPSUpgradeable, OwnableUpgradeable, IVersion {
         erc20.transferFrom(msg.sender, address(this), _amount);
 
         balances[msg.sender][_token] += _amount;
-        emit DepositCreated();
+        emit Deposit(msg.sender, _token, _amount);
     }
 
     receive() external payable {
         nativeBalances[msg.sender] += msg.value;
-        emit DepositCreated();
+        emit Deposit(msg.sender, address(0), msg.value);
     }
 
     function withdraw(address _token, uint256 _amount) external {
@@ -55,7 +55,7 @@ contract Exchange is UUPSUpgradeable, OwnableUpgradeable, IVersion {
         erc20.transfer(msg.sender, _amount);
 
         balances[msg.sender][_token] -= _amount;
-        emit WithdrawalCreated(_amount);
+        emit Withdrawal(msg.sender, _token, _amount);
     }
 
     function withdraw(uint256 _amount) external {
@@ -70,6 +70,6 @@ contract Exchange is UUPSUpgradeable, OwnableUpgradeable, IVersion {
         payable(msg.sender).transfer(_amount);
 
         nativeBalances[msg.sender] -= _amount;
-        emit WithdrawalCreated(_amount);
+        emit Withdrawal(msg.sender, address(0), _amount);
     }
 }
