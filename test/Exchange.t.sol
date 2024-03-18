@@ -11,23 +11,26 @@ import "./contracts/ExchangeUpgrade.sol";
 
 contract ExchangeTest is Test {
     Exchange internal exchange;
-    address internal exchangeProxyAddress;
+    address payable internal exchangeProxyAddress;
     address internal wallet1;
     address internal wallet2;
 
     error OwnableUnauthorizedAccount(address account);
+    error ErrorInsufficientBalance(uint256);
 
     function setUp() public {
         Exchange exchangeImplementation = new Exchange();
-        exchangeProxyAddress = address(new ERC1967Proxy(address(exchangeImplementation), ""));
+        exchangeProxyAddress = payable(address(new ERC1967Proxy(address(exchangeImplementation), "")));
         exchange = Exchange(exchangeProxyAddress);
         exchange.initialize();
         assertEq(exchange.getVersion(), 1);
         wallet1 = makeAddr("wallet1");
+        vm.deal(wallet1, 10 ether);
         wallet2 = makeAddr("wallet2");
+        vm.deal(wallet2, 10 ether);
     }
 
-    function test_Deposit() public {
+    function test_ERC20Deposit() public {
         (address usdcAddress, address btcAddress) = setupWallets();
 
         deposit(wallet1, usdcAddress, 1000e6);
@@ -36,7 +39,7 @@ contract ExchangeTest is Test {
         verifyBalances(wallet1, btcAddress, 55e8, 45e8, 55e8);
     }
 
-    function test_MultipleDeposits() public {
+    function test_MultipleERC20Deposits() public {
         (address usdcAddress, address btcAddress) = setupWallets();
 
         deposit(wallet1, usdcAddress, 1000e6);
@@ -50,7 +53,7 @@ contract ExchangeTest is Test {
         verifyBalances(wallet1, btcAddress, 88e8, 12e8, 88e8);
     }
 
-    function test_Withdrawal() public {
+    function test_ERC20Withdrawal() public {
         (address usdcAddress, address btcAddress) = setupWallets();
 
         deposit(wallet1, usdcAddress, 1000e6);
@@ -120,10 +123,50 @@ contract ExchangeTest is Test {
         verifyBalances(wallet2, usdcAddress, 680e6, 4320e6, 1580e6);
     }
 
+    function test_NativeDepositsAndWithdrawals() public {
+        deposit(wallet1, 2e18);
+        verifyBalances(wallet1, 2e18, 8e18, 2e18);
+
+        deposit(wallet2, 3e18);
+        verifyBalances(wallet2, 3e18, 7e18, 5e18);
+
+        withdraw(wallet1, 1e18, 1e18);
+        verifyBalances(wallet1, 1e18, 9e18, 4e18);
+
+        withdraw(wallet2, 1e18, 1e18);
+        verifyBalances(wallet2, 2e18, 8e18, 3e18);
+
+        // test withdrawal all
+        withdraw(wallet2, 0e18, 2e18);
+        verifyBalances(wallet2, 0e18, 10e18, 1e18);
+    }
+
+    function test_ErrorCases() public {
+        (address usdcAddress,) = setupWallets();
+        deposit(wallet1, usdcAddress, 1000e6);
+        vm.expectRevert(abi.encodeWithSelector(ErrorInsufficientBalance.selector, 1000e6));
+        vm.startPrank(wallet1);
+        exchange.withdraw(usdcAddress, 1001e6);
+        vm.stopPrank();
+
+        deposit(wallet1, 2e18);
+        vm.expectRevert(abi.encodeWithSelector(ErrorInsufficientBalance.selector, 2e18));
+        vm.startPrank(wallet1);
+        exchange.withdraw(3e18);
+        vm.stopPrank();
+    }
+
     function deposit(address wallet, address tokenAddress, uint256 amount) internal {
         vm.startPrank(wallet);
         IERC20(tokenAddress).approve(exchangeProxyAddress, amount);
         exchange.deposit(tokenAddress, amount);
+        vm.stopPrank();
+    }
+
+    function deposit(address wallet, uint256 amount) internal {
+        vm.startPrank(wallet);
+        (bool s,) = exchangeProxyAddress.call{value: amount}("");
+        require(s);
         vm.stopPrank();
     }
 
@@ -132,6 +175,14 @@ contract ExchangeTest is Test {
         vm.expectEmit(exchangeProxyAddress);
         emit Exchange.WithdrawalCreated(expectedEmitAmount);
         exchange.withdraw(tokenAddress, amount);
+        vm.stopPrank();
+    }
+
+    function withdraw(address wallet, uint256 amount, uint256 expectedEmitAmount) internal {
+        vm.startPrank(wallet);
+        vm.expectEmit(exchangeProxyAddress);
+        emit Exchange.WithdrawalCreated(expectedEmitAmount);
+        exchange.withdraw(amount);
         vm.stopPrank();
     }
 
@@ -145,6 +196,15 @@ contract ExchangeTest is Test {
         assertEq(exchange.balances(wallet, tokenAddress), expectedBalance);
         assertEq(IERC20(tokenAddress).balanceOf(wallet), walletBalance);
         assertEq(IERC20(tokenAddress).balanceOf(exchangeProxyAddress), exchangeBalance);
+    }
+
+    function verifyBalances(address wallet, uint256 expectedBalance, uint256 walletBalance, uint256 exchangeBalance)
+        internal
+        view
+    {
+        assertEq(exchange.nativeBalances(wallet), expectedBalance);
+        assertEq(wallet.balance, walletBalance);
+        assertEq(exchangeProxyAddress.balance, exchangeBalance);
     }
 
     function setupWallets() internal returns (address, address) {
