@@ -10,9 +10,12 @@ import {UUPSUpgradeable} from "openzeppelin-contracts-upgradeable/contracts/prox
 
 contract Exchange is UUPSUpgradeable, OwnableUpgradeable, IVersion {
     mapping(address => mapping(address => uint256)) public balances;
+    mapping(address => uint256) public nativeBalances;
 
-    event DepositCreated();
-    event WithdrawalCreated(uint256);
+    event Deposit(address indexed from, address token, uint256 amount);
+    event Withdrawal(address indexed to, address token, uint256 amount);
+
+    error ErrorInsufficientBalance(uint256);
 
     function initialize() public initializer {
         __Ownable_init(msg.sender);
@@ -30,13 +33,20 @@ contract Exchange is UUPSUpgradeable, OwnableUpgradeable, IVersion {
         erc20.transferFrom(msg.sender, address(this), _amount);
 
         balances[msg.sender][_token] += _amount;
-        emit DepositCreated();
+        emit Deposit(msg.sender, _token, _amount);
+    }
+
+    receive() external payable {
+        nativeBalances[msg.sender] += msg.value;
+        emit Deposit(msg.sender, address(0), msg.value);
     }
 
     function withdraw(address _token, uint256 _amount) external {
         uint256 balance = balances[msg.sender][_token];
         if (_amount != 0) {
-            require(balance >= _amount);
+            if (balance < _amount) {
+                revert ErrorInsufficientBalance(balance);
+            }
         } else {
             _amount = balance;
         }
@@ -45,6 +55,21 @@ contract Exchange is UUPSUpgradeable, OwnableUpgradeable, IVersion {
         erc20.transfer(msg.sender, _amount);
 
         balances[msg.sender][_token] -= _amount;
-        emit WithdrawalCreated(_amount);
+        emit Withdrawal(msg.sender, _token, _amount);
+    }
+
+    function withdraw(uint256 _amount) external {
+        uint256 balance = nativeBalances[msg.sender];
+        if (_amount != 0) {
+            if (balance < _amount) {
+                revert ErrorInsufficientBalance(balance);
+            }
+        } else {
+            _amount = balance;
+        }
+        payable(msg.sender).transfer(_amount);
+
+        nativeBalances[msg.sender] -= _amount;
+        emit Withdrawal(msg.sender, address(0), _amount);
     }
 }
