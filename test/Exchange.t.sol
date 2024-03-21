@@ -2,7 +2,7 @@
 pragma solidity ^0.8.13;
 
 import {Test, console} from "forge-std/Test.sol";
-import {ERC20Mock} from "openzeppelin-contracts/contracts/mocks/token/ERC20Mock.sol";
+import {MockERC20} from "./contracts/MockERC20.sol";
 import {IERC20} from "openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
 import {Exchange} from "../src/Exchange.sol";
 import {ERC1967Proxy} from "openzeppelin-contracts/contracts/proxy/ERC1967/ERC1967Proxy.sol";
@@ -212,10 +212,10 @@ contract ExchangeTest is Test {
     }
 
     function setupWallets() internal returns (address, address) {
-        ERC20Mock usdcMock = new ERC20Mock();
+        MockERC20 usdcMock = new MockERC20("USD Coin", "USDC");
         usdcMock.mint(wallet1, 5000e6);
         usdcMock.mint(wallet2, 5000e6);
-        ERC20Mock btcMock = new ERC20Mock();
+        MockERC20 btcMock = new MockERC20("Bitcoin", "BTC");
         btcMock.mint(wallet1, 100e8);
         btcMock.mint(wallet2, 100e8);
         return (address(usdcMock), address(btcMock));
