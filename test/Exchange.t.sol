@@ -5,29 +5,34 @@ import {Test, console} from "forge-std/Test.sol";
 import {MockERC20} from "./contracts/MockERC20.sol";
 import {IERC20} from "openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
 import {Exchange} from "../src/Exchange.sol";
+import {IExchange} from "../src/interfaces/IExchange.sol";
 import {ERC1967Proxy} from "openzeppelin-contracts/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {ERC1967Utils} from "openzeppelin-contracts/contracts/proxy/ERC1967/ERC1967Utils.sol";
+import "./utils/SigUtils.sol";
 import "./contracts/ExchangeUpgrade.sol";
 
 contract ExchangeTest is Test {
     Exchange internal exchange;
     address payable internal exchangeProxyAddress;
-    address internal wallet1;
-    address internal wallet2;
+    uint256 internal wallet1PrivateKey = 0x12345678;
+    uint256 internal wallet2PrivateKey = 0x123456789;
+    address internal wallet1 = vm.addr(wallet1PrivateKey);
+    address internal wallet2 = vm.addr(wallet2PrivateKey);
 
     error OwnableUnauthorizedAccount(address account);
-    error ErrorInsufficientBalance(uint256);
+
+    uint256 internal submitterPrivateKey = 0x1234;
+    address internal submitter = vm.addr(submitterPrivateKey);
 
     function setUp() public {
         Exchange exchangeImplementation = new Exchange();
         exchangeProxyAddress = payable(address(new ERC1967Proxy(address(exchangeImplementation), "")));
         exchange = Exchange(exchangeProxyAddress);
-        exchange.initialize();
+        exchange.initialize(submitter);
         assertEq(exchange.getVersion(), 1);
-        wallet1 = makeAddr("wallet1");
         vm.deal(wallet1, 10 ether);
-        wallet2 = makeAddr("wallet2");
         vm.deal(wallet2, 10 ether);
+        vm.deal(submitter, 10 ether);
     }
 
     function test_ERC20Deposit() public {
@@ -141,26 +146,141 @@ contract ExchangeTest is Test {
         verifyBalances(wallet2, 0e18, 10e18, 1e18);
     }
 
+    function test_EIP712Withdrawals() public {
+        (address usdcAddress,) = setupWallets();
+
+        // wallet1 - deposit usdc and native token
+        deposit(wallet1, usdcAddress, 1000e6);
+        verifyBalances(wallet1, usdcAddress, 1000e6, 4000e6, 1000e6);
+        deposit(wallet1, 2e18);
+        verifyBalances(wallet1, 2e18, 8e18, 2e18);
+
+        // wallet2 - deposit USDC
+        deposit(wallet2, usdcAddress, 1000e6);
+        verifyBalances(wallet1, usdcAddress, 1000e6, 4000e6, 2000e6);
+
+        uint64 wallet1Nonce = exchange.nonces(wallet1);
+        bytes memory tx1 = createSignedWithdrawTx(wallet1PrivateKey, usdcAddress, 200e6, wallet1Nonce);
+        bytes memory tx2 = createSignedWithdrawNativeTx(wallet1PrivateKey, 1e18, wallet1Nonce + 1);
+        uint64 wallet2Nonce = exchange.nonces(wallet2);
+        bytes memory tx3 = createSignedWithdrawTx(wallet2PrivateKey, usdcAddress, 300e6, wallet2Nonce);
+
+        uint256 txProcessedCount = exchange.txProcessedCount();
+
+        bytes[] memory txs = new bytes[](3);
+        txs[0] = tx1;
+        txs[1] = tx2;
+        txs[2] = tx3;
+        vm.expectEmit(exchangeProxyAddress);
+        emit IExchange.Withdrawal(wallet1, usdcAddress, 200e6);
+        emit IExchange.Withdrawal(wallet1, address(0), 1e18);
+        emit IExchange.Withdrawal(wallet2, usdcAddress, 300e6);
+        vm.prank(submitter);
+        exchange.submitTransactions(txs);
+
+        // verify nonces
+        assertEq(wallet1Nonce + 2, exchange.nonces(wallet1));
+        assertEq(wallet2Nonce + 1, exchange.nonces(wallet2));
+
+        // verify balances
+        verifyBalances(wallet1, usdcAddress, 800e6, 4200e6, 1500e6);
+        verifyBalances(wallet1, 1e18, 9e18, 1e18);
+        verifyBalances(wallet2, usdcAddress, 700e6, 4300e6, 1500e6);
+
+        assertEq(txProcessedCount + 3, exchange.txProcessedCount());
+    }
+
     function test_ErrorCases() public {
         (address usdcAddress,) = setupWallets();
         deposit(wallet1, usdcAddress, 1000e6);
-        vm.expectRevert(abi.encodeWithSelector(ErrorInsufficientBalance.selector, 1000e6));
+        vm.expectRevert(bytes("Insufficient Balance"));
         vm.startPrank(wallet1);
         exchange.withdraw(usdcAddress, 1001e6);
         vm.stopPrank();
 
         deposit(wallet1, 2e18);
-        vm.expectRevert(abi.encodeWithSelector(ErrorInsufficientBalance.selector, 2e18));
+        vm.expectRevert(bytes("Insufficient Balance"));
         vm.startPrank(wallet1);
         exchange.withdraw(3e18);
         vm.stopPrank();
+    }
+
+    function test_EIP712ErrorCases() public {
+        (address usdcAddress,) = setupWallets();
+
+        // wallet1 - deposit usdc and native token
+        deposit(wallet1, usdcAddress, 1000e6);
+        verifyBalances(wallet1, usdcAddress, 1000e6, 4000e6, 1000e6);
+        deposit(wallet1, 2e18);
+        verifyBalances(wallet1, 2e18, 8e18, 2e18);
+
+        uint64 wallet1Nonce = exchange.nonces(wallet1);
+        bytes memory tx1 = createSignedWithdrawTx(wallet1PrivateKey, usdcAddress, 200e6, wallet1Nonce);
+        bytes memory tx2 = createSignedWithdrawNativeTx(wallet1PrivateKey, 1e18, wallet1Nonce + 2); // bad nonce
+        bytes memory tx3 = createSignedWithdrawNativeTx(wallet1PrivateKey, 3e18, wallet1Nonce + 1); // insufficient balance
+        uint256 txProcessedCount = exchange.txProcessedCount();
+
+        bytes[] memory txs = new bytes[](2);
+        txs[0] = tx1;
+        txs[1] = tx2;
+
+        // check fails if not the submitter
+        vm.prank(wallet1);
+        vm.expectRevert(bytes("Sender is not the submitter"));
+        exchange.submitTransactions(txs);
+
+        // bad nonce
+        vm.prank(submitter);
+        vm.expectRevert(bytes("Invalid Nonce"));
+        exchange.submitTransactions(txs);
+
+        // insufficient balance
+        txs[1] = tx3;
+        vm.prank(submitter);
+        vm.expectRevert(bytes("Insufficient Balance"));
+        exchange.submitTransactions(txs);
+
+        // verify nothing has changed
+        assertEq(wallet1Nonce, exchange.nonces(wallet1));
+        assertEq(txProcessedCount, exchange.txProcessedCount());
+        verifyBalances(wallet1, usdcAddress, 1000e6, 4000e6, 1000e6);
+        verifyBalances(wallet1, 2e18, 8e18, 2e18);
+
+        // must be a valid address
+        vm.expectRevert(bytes("Not a valid address"));
+        exchange.setSubmitter(address(0));
+
+        // only owner can change the submitter and
+        vm.prank(wallet1);
+        vm.expectRevert(abi.encodeWithSelector(OwnableUnauthorizedAccount.selector, wallet1));
+        exchange.setSubmitter(submitter);
+
+        // change the submitter and verify
+        uint256 newSubmitterPrivateKey = 0x123456;
+        address newSubmitter = vm.addr(newSubmitterPrivateKey);
+
+        // change the submitter
+        exchange.setSubmitter(newSubmitter);
+
+        // should fail with old submitter
+        vm.prank(submitter);
+        vm.expectRevert(bytes("Sender is not the submitter"));
+        exchange.submitTransactions(txs);
+
+        // should fail differently with new submitter
+        vm.prank(newSubmitter);
+        vm.expectRevert(bytes("Insufficient Balance"));
+        exchange.submitTransactions(txs);
+
+        // set it back
+        exchange.setSubmitter(submitter);
     }
 
     function deposit(address wallet, address tokenAddress, uint256 amount) internal {
         vm.startPrank(wallet);
         IERC20(tokenAddress).approve(exchangeProxyAddress, amount);
         vm.expectEmit(exchangeProxyAddress);
-        emit Exchange.Deposit(address(wallet), tokenAddress, amount);
+        emit IExchange.Deposit(address(wallet), tokenAddress, amount);
         exchange.deposit(tokenAddress, amount);
         vm.stopPrank();
     }
@@ -168,7 +288,7 @@ contract ExchangeTest is Test {
     function deposit(address wallet, uint256 amount) internal {
         vm.startPrank(wallet);
         vm.expectEmit(exchangeProxyAddress);
-        emit Exchange.Deposit(address(wallet), address(0), amount);
+        emit IExchange.Deposit(address(wallet), address(0), amount);
         (bool s,) = exchangeProxyAddress.call{value: amount}("");
         require(s);
         vm.stopPrank();
@@ -177,15 +297,57 @@ contract ExchangeTest is Test {
     function withdraw(address wallet, address tokenAddress, uint256 amount, uint256 expectedEmitAmount) internal {
         vm.startPrank(wallet);
         vm.expectEmit(exchangeProxyAddress);
-        emit Exchange.Withdrawal(wallet, tokenAddress, expectedEmitAmount);
+        emit IExchange.Withdrawal(wallet, tokenAddress, expectedEmitAmount);
         exchange.withdraw(tokenAddress, amount);
         vm.stopPrank();
+    }
+
+    function createSignedWithdrawTx(uint256 walletPrivateKey, address tokenAddress, uint256 amount, uint64 nonce)
+        internal
+        view
+        returns (bytes memory)
+    {
+        IExchange.Withdraw memory _withdraw =
+            IExchange.Withdraw({sender: vm.addr(walletPrivateKey), token: tokenAddress, amount: amount, nonce: nonce});
+
+        bytes32 digest = SigUtils.getTypedDataHash(exchange.DOMAIN_SEPARATOR(), SigUtils.getStructHash(_withdraw));
+
+        bytes memory signature = sign(walletPrivateKey, digest);
+        return packTx(
+            IExchange.TransactionType.Withdraw,
+            abi.encode(_withdraw.sender, _withdraw.token, _withdraw.amount, _withdraw.nonce, signature)
+        );
+    }
+
+    function createSignedWithdrawNativeTx(uint256 walletPrivateKey, uint256 amount, uint64 nonce)
+        internal
+        view
+        returns (bytes memory)
+    {
+        IExchange.WithdrawNative memory _withdraw =
+            IExchange.WithdrawNative({sender: vm.addr(walletPrivateKey), amount: amount, nonce: nonce});
+
+        bytes32 digest = SigUtils.getTypedDataHash(exchange.DOMAIN_SEPARATOR(), SigUtils.getStructHash(_withdraw));
+
+        bytes memory signature = sign(walletPrivateKey, digest);
+        return packTx(
+            IExchange.TransactionType.WithdrawNative,
+            abi.encode(_withdraw.sender, _withdraw.amount, _withdraw.nonce, signature)
+        );
+    }
+
+    function packTx(IExchange.TransactionType txType, bytes memory data) internal pure returns (bytes memory) {
+        return abi.encodePacked(
+            uint8(txType),
+            uint256(0x20), // offset where data starts
+            data
+        );
     }
 
     function withdraw(address wallet, uint256 amount, uint256 expectedEmitAmount) internal {
         vm.startPrank(wallet);
         vm.expectEmit(exchangeProxyAddress);
-        emit Exchange.Withdrawal(wallet, address(0), expectedEmitAmount);
+        emit IExchange.Withdrawal(wallet, address(0), expectedEmitAmount);
         exchange.withdraw(amount);
         vm.stopPrank();
     }
@@ -219,5 +381,10 @@ contract ExchangeTest is Test {
         btcMock.mint(wallet1, 100e8);
         btcMock.mint(wallet2, 100e8);
         return (address(usdcMock), address(btcMock));
+    }
+
+    function sign(uint256 privateKey, bytes32 digest) internal pure returns (bytes memory) {
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(privateKey, digest);
+        return abi.encodePacked(r, s, v);
     }
 }
