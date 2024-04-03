@@ -4,6 +4,7 @@ pragma solidity ^0.8.13;
 import "./common/Constants.sol";
 import "./interfaces/IVersion.sol";
 import "./interfaces/IExchange.sol";
+import {ERC20} from "openzeppelin-contracts/contracts/token/ERC20/ERC20.sol";
 import {IERC20} from "openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
 import {Initializable} from "openzeppelin-contracts/contracts/proxy/utils/Initializable.sol";
 import {OwnableUpgradeable} from "openzeppelin-contracts-upgradeable/contracts/access/OwnableUpgradeable.sol";
@@ -18,15 +19,26 @@ contract Exchange is EIP712Upgradeable, UUPSUpgradeable, OwnableUpgradeable, IEx
 
     uint256 public txProcessedCount;
     address public submitter;
+    address public feeAccount;
+    mapping(address => uint8) public tokenPrecision;
 
     string constant WITHDRAW_SIGNATURE = "Withdraw(address sender,address token,uint256 amount,uint64 nonce)";
     string constant WITHDRAW_NATIVE_SIGNATURE = "Withdraw(address sender,uint256 amount,uint64 nonce)";
+    string constant ORDER_SIGNATURE =
+        "Order(address sender,address baseToken,address quoteToken,int256 amount,uint256 price,int256 nonce)";
 
-    function initialize(address _submitter) public initializer {
+    function initialize(address _submitter, address _feeAccount, uint8 _nativePrecision) public initializer {
         __Ownable_init(msg.sender);
         __UUPSUpgradeable_init();
         __EIP712_init("ChainRing Labs", "0.0.1");
         submitter = _submitter;
+        feeAccount = _feeAccount;
+        tokenPrecision[address(0)] = _nativePrecision;
+    }
+
+    receive() external payable {
+        nativeBalances[msg.sender] += msg.value;
+        emit Deposit(msg.sender, address(0), msg.value);
     }
 
     function _authorizeUpgrade(address newImplementation) internal override onlyOwner {}
@@ -44,17 +56,17 @@ contract Exchange is EIP712Upgradeable, UUPSUpgradeable, OwnableUpgradeable, IEx
         submitter = _submitter;
     }
 
+    function setFeeAccount(address _feeAccount) external onlyOwner {
+        require(_feeAccount != address(0), "Not a valid address");
+        feeAccount = _feeAccount;
+    }
+
     function deposit(address _token, uint256 _amount) external {
         IERC20 erc20 = IERC20(_token);
         erc20.transferFrom(msg.sender, address(this), _amount);
 
         balances[msg.sender][_token] += _amount;
         emit Deposit(msg.sender, _token, _amount);
-    }
-
-    receive() external payable {
-        nativeBalances[msg.sender] += msg.value;
-        emit Deposit(msg.sender, address(0), msg.value);
     }
 
     function withdraw(address _token, uint256 _amount) external {
@@ -77,7 +89,7 @@ contract Exchange is EIP712Upgradeable, UUPSUpgradeable, OwnableUpgradeable, IEx
         TransactionType txType = TransactionType(uint8(transaction[0]));
         if (txType == TransactionType.Withdraw) {
             WithdrawWithSignature memory signedTx = abi.decode(transaction[1:], (WithdrawWithSignature));
-            validateNonce(signedTx.tx.sender, signedTx.tx.nonce);
+            _validateNonce(signedTx.tx.sender, signedTx.tx.nonce);
             bytes32 digest = _hashTypedDataV4(
                 keccak256(
                     abi.encode(
@@ -89,11 +101,11 @@ contract Exchange is EIP712Upgradeable, UUPSUpgradeable, OwnableUpgradeable, IEx
                     )
                 )
             );
-            validateSignature(signedTx.tx.sender, digest, signedTx.signature);
+            _validateSignature(signedTx.tx.sender, digest, signedTx.signature);
             _withdraw(signedTx.tx.sender, signedTx.tx.token, signedTx.tx.amount);
         } else if (txType == TransactionType.WithdrawNative) {
             WithdrawNativeWithSignature memory signedTx = abi.decode(transaction[1:], (WithdrawNativeWithSignature));
-            validateNonce(signedTx.tx.sender, signedTx.tx.nonce);
+            _validateNonce(signedTx.tx.sender, signedTx.tx.nonce);
             bytes32 digest = _hashTypedDataV4(
                 keccak256(
                     abi.encode(
@@ -104,8 +116,10 @@ contract Exchange is EIP712Upgradeable, UUPSUpgradeable, OwnableUpgradeable, IEx
                     )
                 )
             );
-            validateSignature(signedTx.tx.sender, digest, signedTx.signature);
+            _validateSignature(signedTx.tx.sender, digest, signedTx.signature);
             _withdrawNative(signedTx.tx.sender, signedTx.tx.amount);
+        } else if (txType == TransactionType.SettleTrade) {
+            _settleTrade(abi.decode(transaction[1:], (SettleTrade)));
         }
     }
 
@@ -114,40 +128,154 @@ contract Exchange is EIP712Upgradeable, UUPSUpgradeable, OwnableUpgradeable, IEx
         _;
     }
 
-    function validateNonce(address sender, uint64 nonce) internal virtual {
-        require(nonce == nonces[sender]++, "Invalid Nonce");
+    function _validateNonce(address _sender, uint64 _nonce) internal virtual {
+        require(_nonce == nonces[_sender]++, "Invalid Nonce");
     }
 
-    function validateSignature(address sender, bytes32 digest, bytes memory signature) internal view virtual {
-        address recovered = ECDSA.recover(digest, signature);
-        require(recovered == sender, "Invalid Signature");
+    function _validateSignature(address _sender, bytes32 _digest, bytes memory _signature) internal view virtual {
+        address recovered = ECDSA.recover(_digest, _signature);
+        require(recovered == _sender, "Invalid Signature");
+    }
+
+    function _validateOrder(address _baseToken, address _quoteToken, OrderWithSignature memory _order)
+        internal
+        virtual
+        returns (bytes32)
+    {
+        bytes32 digest = _hashTypedDataV4(
+            keccak256(
+                abi.encode(
+                    keccak256(bytes(ORDER_SIGNATURE)),
+                    _order.tx.sender,
+                    _baseToken,
+                    _quoteToken,
+                    _order.tx.amount,
+                    _order.tx.price,
+                    _order.tx.nonce
+                )
+            )
+        );
+
+        return digest;
     }
 
     function _withdraw(address _sender, address _token, uint256 _amount) internal {
         uint256 balance = balances[_sender][_token];
-        if (_amount != 0) {
-            require(balance >= _amount, "Insufficient Balance");
-        } else {
+        if (_amount == 0) {
             _amount = balance;
         }
+        _adjustBalance(_sender, _token, -int256(_amount));
 
         IERC20 erc20 = IERC20(_token);
         erc20.transfer(_sender, _amount);
 
-        balances[_sender][_token] -= _amount;
         emit Withdrawal(_sender, _token, _amount);
     }
 
     function _withdrawNative(address _sender, uint256 _amount) internal {
         uint256 balance = nativeBalances[_sender];
-        if (_amount != 0) {
-            require(balance >= _amount, "Insufficient Balance");
-        } else {
+        if (_amount == 0) {
             _amount = balance;
         }
+        _adjustNativeBalance(_sender, -int256(_amount));
         payable(_sender).transfer(_amount);
 
-        nativeBalances[_sender] -= _amount;
         emit Withdrawal(_sender, address(0), _amount);
+    }
+
+    function _adjustBalance(address _sender, address _token, int256 _amount) internal {
+        if (_token == address(0)) {
+            _adjustNativeBalance(_sender, _amount);
+        } else {
+            if (_amount < 0) {
+                uint256 balance = balances[_sender][_token];
+                uint256 amount = uint256(-_amount);
+                require(balance >= amount, "Insufficient Balance");
+                balances[_sender][_token] -= amount;
+            } else {
+                balances[_sender][_token] += uint256(_amount);
+            }
+        }
+    }
+
+    function _adjustNativeBalance(address _sender, int256 _amount) internal {
+        if (_amount < 0) {
+            uint256 balance = nativeBalances[_sender];
+            uint256 amount = uint256(-_amount);
+            require(balance >= amount, "Insufficient Balance");
+            nativeBalances[_sender] -= amount;
+        } else {
+            nativeBalances[_sender] += uint256(_amount);
+        }
+    }
+
+    function _settleTrade(SettleTrade memory _trade) internal {
+        // verify the original orders - for now just generates the digest, signatures are not checked
+        bytes32 takerOrderDigest = _validateOrder(_trade.baseToken, _trade.quoteToken, _trade.takerOrder);
+        bytes32 makerOrderDigest = _validateOrder(_trade.baseToken, _trade.quoteToken, _trade.makerOrder);
+
+        //
+        // trade.amount is positive if taker is buying and negative if selling
+        // fee amounts are passed in (can be 0) and are taken in the quote currency from taker and maker.
+        //
+        int256 baseAdjustment = _trade.amount;
+        int256 notional = (_trade.amount * int256(_trade.price)) / int256(10 ** _tokenPrecision(_trade.baseToken));
+        _adjustBalance(_trade.takerOrder.tx.sender, _trade.baseToken, baseAdjustment);
+        _adjustBalance(_trade.makerOrder.tx.sender, _trade.baseToken, -baseAdjustment);
+
+        int256 takerQuoteAdjustment = -notional - int256(_trade.takerFee);
+        int256 makerQuoteAdjustment = notional - int256(_trade.makerFee);
+        _adjustBalance(_trade.takerOrder.tx.sender, _trade.quoteToken, takerQuoteAdjustment);
+        _adjustBalance(_trade.makerOrder.tx.sender, _trade.quoteToken, makerQuoteAdjustment);
+
+        // fees go to a fee account
+        if (_trade.takerFee + _trade.makerFee > 0) {
+            _adjustBalance(feeAccount, _trade.quoteToken, int256(_trade.takerFee + _trade.makerFee));
+        }
+
+        // we emit an order filled event for both the taker and maker orders. This includes the original order and
+        // fill amounts for the trade and balance adjustments. If there were multiple partial fills then the
+        // orderDigest would be the same for each fill for a given order
+        //
+        emit OrderFilled(
+            takerOrderDigest,
+            _trade.takerOrder.tx.sender,
+            _trade.baseToken,
+            _trade.quoteToken,
+            true,
+            _trade.takerOrder.tx,
+            ExecutionInfo({
+                filledAmount: baseAdjustment,
+                executionPrice: _trade.price,
+                fee: _trade.takerFee,
+                baseAdjustment: baseAdjustment,
+                quoteAdjustment: takerQuoteAdjustment
+            })
+        );
+
+        emit OrderFilled(
+            makerOrderDigest,
+            _trade.makerOrder.tx.sender,
+            _trade.baseToken,
+            _trade.quoteToken,
+            false,
+            _trade.makerOrder.tx,
+            ExecutionInfo({
+                filledAmount: -baseAdjustment,
+                executionPrice: _trade.price,
+                fee: _trade.makerFee,
+                baseAdjustment: -baseAdjustment,
+                quoteAdjustment: makerQuoteAdjustment
+            })
+        );
+    }
+
+    function _tokenPrecision(address _token) internal returns (uint8) {
+        uint8 precision = tokenPrecision[_token];
+        if (precision == 0) {
+            precision = ERC20(_token).decimals();
+            tokenPrecision[_token] = precision;
+        }
+        return precision;
     }
 }
