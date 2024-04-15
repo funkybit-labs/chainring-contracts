@@ -164,12 +164,12 @@ contract Exchange is EIP712Upgradeable, UUPSUpgradeable, OwnableUpgradeable, IEx
         if (_amount == 0) {
             _amount = balance;
         }
-        _adjustBalance(_sender, _token, -int256(_amount));
+        uint256 _actual = uint256(-_adjustBalance(_sender, _token, -int256(_amount)));
 
         IERC20 erc20 = IERC20(_token);
-        erc20.transfer(_sender, _amount);
+        erc20.transfer(_sender, _actual);
 
-        emit Withdrawal(_sender, _token, _amount);
+        emit Withdrawal(_sender, _token, _actual);
     }
 
     function _withdrawNative(address _sender, uint256 _amount) internal {
@@ -177,35 +177,49 @@ contract Exchange is EIP712Upgradeable, UUPSUpgradeable, OwnableUpgradeable, IEx
         if (_amount == 0) {
             _amount = balance;
         }
-        _adjustNativeBalance(_sender, -int256(_amount));
-        payable(_sender).transfer(_amount);
+        uint256 _actual = uint256(-_adjustNativeBalance(_sender, -int256(_amount)));
+        payable(_sender).transfer(_actual);
 
-        emit Withdrawal(_sender, address(0), _amount);
+        emit Withdrawal(_sender, address(0), _actual);
     }
 
-    function _adjustBalance(address _sender, address _token, int256 _amount) internal {
+    function _adjustBalance(address _sender, address _token, int256 _amount) internal returns (int256) {
         if (_token == address(0)) {
-            _adjustNativeBalance(_sender, _amount);
+            return _adjustNativeBalance(_sender, _amount);
         } else {
             if (_amount < 0) {
                 uint256 balance = balances[_sender][_token];
                 uint256 amount = uint256(-_amount);
-                require(balance >= amount, "Insufficient Balance");
-                balances[_sender][_token] -= amount;
+                if (amount > balance) {
+                    emit AmountAdjusted(_sender, _token, amount, balance);
+                    balances[_sender][_token] -= balance;
+                    return -int256(balance);
+                } else {
+                    balances[_sender][_token] -= amount;
+                    return _amount;
+                }
             } else {
                 balances[_sender][_token] += uint256(_amount);
+                return _amount;
             }
         }
     }
 
-    function _adjustNativeBalance(address _sender, int256 _amount) internal {
+    function _adjustNativeBalance(address _sender, int256 _amount) internal returns (int256) {
         if (_amount < 0) {
             uint256 balance = nativeBalances[_sender];
             uint256 amount = uint256(-_amount);
-            require(balance >= amount, "Insufficient Balance");
-            nativeBalances[_sender] -= amount;
+            if (amount > balance) {
+                emit AmountAdjusted(_sender, address(0), amount, balance);
+                nativeBalances[_sender] -= balance;
+                return -int256(balance);
+            } else {
+                nativeBalances[_sender] -= amount;
+                return _amount;
+            }
         } else {
             nativeBalances[_sender] += uint256(_amount);
+            return _amount;
         }
     }
 

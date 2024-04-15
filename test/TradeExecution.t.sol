@@ -331,7 +331,10 @@ contract TradeExecutionTest is ExchangeBaseTest {
             bytes[] memory txs = new bytes[](1);
             txs[0] = tx1;
             vm.prank(submitter);
-            vm.expectRevert(bytes("Insufficient Balance"));
+            vm.expectEmit(exchangeProxyAddress);
+            emit IExchange.AmountAdjusted(maker, btcAddress, 3e8, 0);
+            vm.expectEmit(exchangeProxyAddress);
+            emit IExchange.AmountAdjusted(taker, address(0), 210000e6, 0);
             exchange.submitTransactions(txs);
         }
 
@@ -346,7 +349,8 @@ contract TradeExecutionTest is ExchangeBaseTest {
             bytes[] memory txs = new bytes[](1);
             txs[0] = tx1;
             vm.prank(submitter);
-            vm.expectRevert(bytes("Insufficient Balance"));
+            vm.expectEmit(exchangeProxyAddress);
+            emit IExchange.AmountAdjusted(maker, address(0), 420000e6, 210000e6);
             exchange.submitTransactions(txs);
         }
     }

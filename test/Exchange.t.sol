@@ -177,16 +177,22 @@ contract ExchangeTest is ExchangeBaseTest {
         assertEq(txProcessedCount + 3, exchange.txProcessedCount());
     }
 
-    function test_ErrorCases() public {
+    function test_AmountAdjustment() public {
         (address usdcAddress,) = setupWallets();
         deposit(wallet1, usdcAddress, 1000e6);
-        vm.expectRevert(bytes("Insufficient Balance"));
+        vm.expectEmit(exchangeProxyAddress);
+        emit IExchange.AmountAdjusted(wallet1, usdcAddress, 1001e6, 1000e6);
+        vm.expectEmit(exchangeProxyAddress);
+        emit IExchange.Withdrawal(wallet1, usdcAddress, 1000e6);
         vm.startPrank(wallet1);
         exchange.withdraw(usdcAddress, 1001e6);
         vm.stopPrank();
 
         deposit(wallet1, 2e18);
-        vm.expectRevert(bytes("Insufficient Balance"));
+        vm.expectEmit(exchangeProxyAddress);
+        emit IExchange.AmountAdjusted(wallet1, address(0), 3e18, 2e18);
+        vm.expectEmit(exchangeProxyAddress);
+        emit IExchange.Withdrawal(wallet1, address(0), 2e18);
         vm.startPrank(wallet1);
         exchange.withdraw(3e18);
         vm.stopPrank();
@@ -221,12 +227,6 @@ contract ExchangeTest is ExchangeBaseTest {
         vm.expectRevert(bytes("Invalid Nonce"));
         exchange.submitTransactions(txs);
 
-        // insufficient balance
-        txs[1] = tx3;
-        vm.prank(submitter);
-        vm.expectRevert(bytes("Insufficient Balance"));
-        exchange.submitTransactions(txs);
-
         // verify nothing has changed
         assertEq(wallet1Nonce, exchange.nonces(wallet1));
         assertEq(txProcessedCount, exchange.txProcessedCount());
@@ -237,7 +237,7 @@ contract ExchangeTest is ExchangeBaseTest {
         vm.expectRevert(bytes("Not a valid address"));
         exchange.setSubmitter(address(0));
 
-        // only owner can change the submitter and
+        // only owner can change the submitter
         vm.prank(wallet1);
         vm.expectRevert(abi.encodeWithSelector(OwnableUnauthorizedAccount.selector, wallet1));
         exchange.setSubmitter(submitter);
@@ -254,9 +254,13 @@ contract ExchangeTest is ExchangeBaseTest {
         vm.expectRevert(bytes("Sender is not the submitter"));
         exchange.submitTransactions(txs);
 
-        // should fail differently with new submitter
+        // check balance adjusted
+        txs[1] = tx3;
         vm.prank(newSubmitter);
-        vm.expectRevert(bytes("Insufficient Balance"));
+        vm.expectEmit(exchangeProxyAddress);
+        emit IExchange.AmountAdjusted(wallet1, address(0), 3e18, 2e18);
+        vm.expectEmit(exchangeProxyAddress);
+        emit IExchange.Withdrawal(wallet1, address(0), 2e18);
         exchange.submitTransactions(txs);
 
         // set it back

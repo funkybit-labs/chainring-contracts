@@ -77,6 +77,8 @@ interface IExchange is IVersion {
         ExecutionInfo executionInfo
     );
 
+    event AmountAdjusted(address indexed sender, address token, uint256 requested, uint256 actual);
+
     function DOMAIN_SEPARATOR() external view returns (bytes32);
 
     function deposit(address _token, uint256 _amount) external;
