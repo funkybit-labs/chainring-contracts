@@ -1,74 +1,7 @@
-## Foundry
+# ChainRing - Exchange contract
 
-**Foundry is a blazing fast, portable and modular toolkit for Ethereum application development written in Rust.**
+## No License
 
-Foundry consists of:
-
--   **Forge**: Ethereum testing framework (like Truffle, Hardhat and DappTools).
--   **Cast**: Swiss army knife for interacting with EVM smart contracts, sending transactions and getting chain data.
--   **Anvil**: Local Ethereum node, akin to Ganache, Hardhat Network.
--   **Chisel**: Fast, utilitarian, and verbose solidity REPL.
-
-## Installing foundry (and rust)
--   curl -L https://foundry.paradigm.xyz | bash
--   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
--   rustup update stable
--   source "$HOME/.cargo/env"
--   cargo install --git https://github.com/foundry-rs/foundry --profile local --locked forge cast chisel anvil
--   I had to put $HOME/.cargo/env in my PATH for the Intellij foundry plugin to work.
-
-## Documentation
-
-https://book.getfoundry.sh/
-
-## Usage
-
-### Build
-
-```shell
-$ forge build
-```
-
-### Test
-
-```shell
-$ forge test
-```
-
-### Format
-
-```shell
-$ forge fmt
-```
-
-### Gas Snapshots
-
-```shell
-$ forge snapshot
-```
-
-### Anvil
-
-```shell
-$ anvil
-```
-
-### Deploy
-
-```shell
-$ forge script script/Exchange.s.sol:ExchangeScript --rpc-url <your_rpc_url> --private-key <your_private_key>
-```
-
-### Cast
-
-```shell
-$ cast <subcommand>
-```
-
-### Help
-
-```shell
-$ forge --help
-$ anvil --help
-$ cast --help
-```
+This project is not licensed, and no permissions are granted to use, copy, modify, or distribute its
+contents. While the source code is publicly available, you are not authorized to do anything beyond
+viewing and forking the repository.
