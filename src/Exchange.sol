@@ -15,7 +15,9 @@ import {ECDSA} from "openzeppelin-contracts/contracts/utils/cryptography/ECDSA.s
 contract Exchange is EIP712Upgradeable, UUPSUpgradeable, OwnableUpgradeable, IExchange {
     mapping(address => mapping(address => uint256)) public balances;
     mapping(address => uint256) public nativeBalances;
-    uint256 internal unused; // this slot is available for next variable
+    // this storage slot previously held the withdrawal nonces which have been removed. In order to maintain
+    // backward compatibility the slot is left unused. When adding a future variable this slot may be used
+    uint256 internal unused;
 
     uint256 public txProcessedCount;
     address public submitter;
