@@ -146,10 +146,10 @@ contract ExchangeTest is ExchangeBaseTest {
         deposit(wallet2, usdcAddress, 1000e6);
         verifyBalances(wallet1, usdcAddress, 1000e6, 4000e6, 2000e6);
 
-        uint64 wallet1Nonce = exchange.nonces(wallet1);
+        uint64 wallet1Nonce = 1000;
         bytes memory tx1 = createSignedWithdrawTx(wallet1PrivateKey, usdcAddress, 200e6, wallet1Nonce);
-        bytes memory tx2 = createSignedWithdrawNativeTx(wallet1PrivateKey, 1e18, wallet1Nonce + 1);
-        uint64 wallet2Nonce = exchange.nonces(wallet2);
+        bytes memory tx2 = createSignedWithdrawNativeTx(wallet1PrivateKey, 1e18, wallet1Nonce + 200);
+        uint64 wallet2Nonce = 10000;
         bytes memory tx3 = createSignedWithdrawTx(wallet2PrivateKey, usdcAddress, 300e6, wallet2Nonce);
 
         uint256 txProcessedCount = exchange.txProcessedCount();
@@ -164,10 +164,6 @@ contract ExchangeTest is ExchangeBaseTest {
         emit IExchange.Withdrawal(wallet2, usdcAddress, 300e6);
         vm.prank(submitter);
         exchange.submitTransactions(txs);
-
-        // verify nonces
-        assertEq(wallet1Nonce + 2, exchange.nonces(wallet1));
-        assertEq(wallet2Nonce + 1, exchange.nonces(wallet2));
 
         // verify balances
         verifyBalances(wallet1, usdcAddress, 800e6, 4200e6, 1500e6);
@@ -196,6 +192,7 @@ contract ExchangeTest is ExchangeBaseTest {
         vm.startPrank(wallet1);
         exchange.withdraw(3e18);
         vm.stopPrank();
+        verifyBalances(wallet1, 0, 10e18, 0);
     }
 
     function test_EIP712ErrorCases() public {
@@ -207,10 +204,9 @@ contract ExchangeTest is ExchangeBaseTest {
         deposit(wallet1, 2e18);
         verifyBalances(wallet1, 2e18, 8e18, 2e18);
 
-        uint64 wallet1Nonce = exchange.nonces(wallet1);
+        uint64 wallet1Nonce = 22222;
         bytes memory tx1 = createSignedWithdrawTx(wallet1PrivateKey, usdcAddress, 200e6, wallet1Nonce);
-        bytes memory tx2 = createSignedWithdrawNativeTx(wallet1PrivateKey, 1e18, wallet1Nonce + 2); // bad nonce
-        bytes memory tx3 = createSignedWithdrawNativeTx(wallet1PrivateKey, 3e18, wallet1Nonce + 1); // insufficient balance
+        bytes memory tx2 = createSignedWithdrawNativeTx(wallet1PrivateKey, 3e18, wallet1Nonce + 1); // insufficient balance
         uint256 txProcessedCount = exchange.txProcessedCount();
 
         bytes[] memory txs = new bytes[](2);
@@ -221,17 +217,6 @@ contract ExchangeTest is ExchangeBaseTest {
         vm.prank(wallet1);
         vm.expectRevert(bytes("Sender is not the submitter"));
         exchange.submitTransactions(txs);
-
-        // bad nonce
-        vm.prank(submitter);
-        vm.expectRevert(bytes("Invalid Nonce"));
-        exchange.submitTransactions(txs);
-
-        // verify nothing has changed
-        assertEq(wallet1Nonce, exchange.nonces(wallet1));
-        assertEq(txProcessedCount, exchange.txProcessedCount());
-        verifyBalances(wallet1, usdcAddress, 1000e6, 4000e6, 1000e6);
-        verifyBalances(wallet1, 2e18, 8e18, 2e18);
 
         // must be a valid address
         vm.expectRevert(bytes("Not a valid address"));
@@ -254,14 +239,16 @@ contract ExchangeTest is ExchangeBaseTest {
         vm.expectRevert(bytes("Sender is not the submitter"));
         exchange.submitTransactions(txs);
 
-        // check balance adjusted
-        txs[1] = tx3;
+        // check balance adjusted by remaining amounting if too much requested and amount adjusted events emitted
+        txs[1] = tx2;
         vm.prank(newSubmitter);
         vm.expectEmit(exchangeProxyAddress);
         emit IExchange.AmountAdjusted(wallet1, address(0), 3e18, 2e18);
         vm.expectEmit(exchangeProxyAddress);
         emit IExchange.Withdrawal(wallet1, address(0), 2e18);
         exchange.submitTransactions(txs);
+
+        assertEq(txProcessedCount + 2, exchange.txProcessedCount());
 
         // set it back
         exchange.setSubmitter(submitter);

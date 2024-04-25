@@ -15,7 +15,9 @@ import {ECDSA} from "openzeppelin-contracts/contracts/utils/cryptography/ECDSA.s
 contract Exchange is EIP712Upgradeable, UUPSUpgradeable, OwnableUpgradeable, IExchange {
     mapping(address => mapping(address => uint256)) public balances;
     mapping(address => uint256) public nativeBalances;
-    mapping(address => uint64) public nonces;
+    // this storage slot previously held the withdrawal nonces which have been removed. In order to maintain
+    // backward compatibility the slot is left unused. When adding a future variable this slot may be used
+    uint256 internal unused;
 
     uint256 public txProcessedCount;
     address public submitter;
@@ -89,7 +91,6 @@ contract Exchange is EIP712Upgradeable, UUPSUpgradeable, OwnableUpgradeable, IEx
         TransactionType txType = TransactionType(uint8(transaction[0]));
         if (txType == TransactionType.Withdraw) {
             WithdrawWithSignature memory signedTx = abi.decode(transaction[1:], (WithdrawWithSignature));
-            _validateNonce(signedTx.tx.sender, signedTx.tx.nonce);
             bytes32 digest = _hashTypedDataV4(
                 keccak256(
                     abi.encode(
@@ -105,7 +106,6 @@ contract Exchange is EIP712Upgradeable, UUPSUpgradeable, OwnableUpgradeable, IEx
             _withdraw(signedTx.tx.sender, signedTx.tx.token, signedTx.tx.amount);
         } else if (txType == TransactionType.WithdrawNative) {
             WithdrawNativeWithSignature memory signedTx = abi.decode(transaction[1:], (WithdrawNativeWithSignature));
-            _validateNonce(signedTx.tx.sender, signedTx.tx.nonce);
             bytes32 digest = _hashTypedDataV4(
                 keccak256(
                     abi.encode(
@@ -126,10 +126,6 @@ contract Exchange is EIP712Upgradeable, UUPSUpgradeable, OwnableUpgradeable, IEx
     modifier onlySubmitter() {
         require(msg.sender == submitter, "Sender is not the submitter");
         _;
-    }
-
-    function _validateNonce(address _sender, uint64 _nonce) internal virtual {
-        require(_nonce == nonces[_sender]++, "Invalid Nonce");
     }
 
     function _validateSignature(address _sender, bytes32 _digest, bytes memory _signature) internal view virtual {
