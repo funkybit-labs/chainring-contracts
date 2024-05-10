@@ -11,11 +11,6 @@ import "./contracts/ExchangeUpgrade.sol";
 import "./ExchangeBaseTest.sol";
 
 contract ExchangeTest is ExchangeBaseTest {
-    uint256 internal wallet1PrivateKey = 0x12345678;
-    uint256 internal wallet2PrivateKey = 0x123456789;
-    address internal wallet1 = vm.addr(wallet1PrivateKey);
-    address internal wallet2 = vm.addr(wallet2PrivateKey);
-
     function setUp() public override {
         super.setUp();
         vm.deal(wallet1, 10 ether);
@@ -23,21 +18,21 @@ contract ExchangeTest is ExchangeBaseTest {
     }
 
     function test_ERC20Deposit() public {
-        (address usdcAddress, address btcAddress) = setupWallets();
+        setupWallets();
 
         deposit(wallet1, usdcAddress, 1000e6);
-        verifyBalances(wallet1, usdcAddress, 1000e6, 4000e6, 1000e6);
+        verifyBalances(wallet1, usdcAddress, 1000e6, 499000e6, 1000e6);
         deposit(wallet1, btcAddress, 55e8);
         verifyBalances(wallet1, btcAddress, 55e8, 45e8, 55e8);
     }
 
     function test_MultipleERC20Deposits() public {
-        (address usdcAddress, address btcAddress) = setupWallets();
+        setupWallets();
 
         deposit(wallet1, usdcAddress, 1000e6);
-        verifyBalances(wallet1, usdcAddress, 1000e6, 4000e6, 1000e6);
+        verifyBalances(wallet1, usdcAddress, 1000e6, 499000e6, 1000e6);
         deposit(wallet1, usdcAddress, 300e6);
-        verifyBalances(wallet1, usdcAddress, 1300e6, 3700e6, 1300e6);
+        verifyBalances(wallet1, usdcAddress, 1300e6, 498700e6, 1300e6);
 
         deposit(wallet1, btcAddress, 55e8);
         verifyBalances(wallet1, btcAddress, 55e8, 45e8, 55e8);
@@ -46,43 +41,43 @@ contract ExchangeTest is ExchangeBaseTest {
     }
 
     function test_ERC20Withdrawal() public {
-        (address usdcAddress, address btcAddress) = setupWallets();
+        setupWallets();
 
         deposit(wallet1, usdcAddress, 1000e6);
-        verifyBalances(wallet1, usdcAddress, 1000e6, 4000e6, 1000e6);
-        withdraw(wallet1, usdcAddress, 133e6, 133e6);
-        verifyBalances(wallet1, usdcAddress, 867e6, 4133e6, 867e6);
+        verifyBalances(wallet1, usdcAddress, 1000e6, 499000e6, 1000e6);
+        withdraw(wallet1PrivateKey, usdcAddress, 133e6, 133e6);
+        verifyBalances(wallet1, usdcAddress, 867e6, 499133e6, 867e6);
 
         deposit(wallet1, btcAddress, 55e8);
         verifyBalances(wallet1, btcAddress, 55e8, 45e8, 55e8);
-        withdraw(wallet1, btcAddress, 4e8, 4e8);
+        withdraw(wallet1PrivateKey, btcAddress, 4e8, 4e8);
         verifyBalances(wallet1, btcAddress, 51e8, 49e8, 51e8);
 
-        withdraw(wallet1, btcAddress, 0, 51e8);
+        withdraw(wallet1PrivateKey, btcAddress, 0, 51e8);
         verifyBalances(wallet1, btcAddress, 0, 100e8, 0);
     }
 
     function test_MultipleWallets() public {
-        (address usdcAddress,) = setupWallets();
+        setupWallets();
 
         deposit(wallet1, usdcAddress, 1000e6);
-        verifyBalances(wallet1, usdcAddress, 1000e6, 4000e6, 1000e6);
+        verifyBalances(wallet1, usdcAddress, 1000e6, 499000e6, 1000e6);
         deposit(wallet2, usdcAddress, 800e6);
-        verifyBalances(wallet2, usdcAddress, 800e6, 4200e6, 1800e6);
+        verifyBalances(wallet2, usdcAddress, 800e6, 499200e6, 1800e6);
 
-        withdraw(wallet1, usdcAddress, 133e6, 133e6);
-        verifyBalances(wallet1, usdcAddress, 867e6, 4133e6, 1667e6);
-        withdraw(wallet2, usdcAddress, 120e6, 120e6);
-        verifyBalances(wallet2, usdcAddress, 680e6, 4320e6, 1547e6);
+        withdraw(wallet1PrivateKey, usdcAddress, 133e6, 133e6);
+        verifyBalances(wallet1, usdcAddress, 867e6, 499133e6, 1667e6);
+        withdraw(wallet2PrivateKey, usdcAddress, 120e6, 120e6);
+        verifyBalances(wallet2, usdcAddress, 680e6, 499320e6, 1547e6);
     }
 
     function test_Upgrade() public {
-        (address usdcAddress,) = setupWallets();
+        setupWallets();
 
         deposit(wallet1, usdcAddress, 1000e6);
-        verifyBalances(wallet1, usdcAddress, 1000e6, 4000e6, 1000e6);
+        verifyBalances(wallet1, usdcAddress, 1000e6, 499000e6, 1000e6);
         deposit(wallet2, usdcAddress, 800e6);
-        verifyBalances(wallet2, usdcAddress, 800e6, 4200e6, 1800e6);
+        verifyBalances(wallet2, usdcAddress, 800e6, 499200e6, 1800e6);
 
         // test that only the owner can upgrade the contract
         vm.startPrank(wallet1);
@@ -105,52 +100,42 @@ contract ExchangeTest is ExchangeBaseTest {
         assertEq(ExchangeUpgrade(exchangeProxyAddress).value(), 1000);
 
         // check balances are maintained after the upgrade
-        verifyBalances(wallet1, usdcAddress, 1000e6, 4000e6, 1800e6);
-        verifyBalances(wallet2, usdcAddress, 800e6, 4200e6, 1800e6);
+        verifyBalances(wallet1, usdcAddress, 1000e6, 499000e6, 1800e6);
+        verifyBalances(wallet2, usdcAddress, 800e6, 499200e6, 1800e6);
 
         // perform some withdrawals
-        withdraw(wallet1, usdcAddress, 100e6, 100e6);
-        verifyBalances(wallet1, usdcAddress, 900e6, 4100e6, 1700e6);
-        withdraw(wallet2, usdcAddress, 120e6, 120e6);
-        verifyBalances(wallet2, usdcAddress, 680e6, 4320e6, 1580e6);
+        withdraw(wallet1PrivateKey, usdcAddress, 100e6, 100e6);
+        verifyBalances(wallet1, usdcAddress, 900e6, 499100e6, 1700e6);
+        withdraw(wallet2PrivateKey, usdcAddress, 120e6, 120e6);
+        verifyBalances(wallet2, usdcAddress, 680e6, 499320e6, 1580e6);
     }
 
-    function test_NativeDepositsAndWithdrawals() public {
+    function test_NativeDeposits() public {
         deposit(wallet1, 2e18);
         verifyBalances(wallet1, 2e18, 8e18, 2e18);
 
         deposit(wallet2, 3e18);
         verifyBalances(wallet2, 3e18, 7e18, 5e18);
-
-        withdraw(wallet1, 1e18, 1e18);
-        verifyBalances(wallet1, 1e18, 9e18, 4e18);
-
-        withdraw(wallet2, 1e18, 1e18);
-        verifyBalances(wallet2, 2e18, 8e18, 3e18);
-
-        // test withdrawal all
-        withdraw(wallet2, 0e18, 2e18);
-        verifyBalances(wallet2, 0e18, 10e18, 1e18);
     }
 
     function test_EIP712Withdrawals() public {
-        (address usdcAddress,) = setupWallets();
+        setupWallets();
 
         // wallet1 - deposit usdc and native token
         deposit(wallet1, usdcAddress, 1000e6);
-        verifyBalances(wallet1, usdcAddress, 1000e6, 4000e6, 1000e6);
+        verifyBalances(wallet1, usdcAddress, 1000e6, 499000e6, 1000e6);
         deposit(wallet1, 2e18);
         verifyBalances(wallet1, 2e18, 8e18, 2e18);
 
         // wallet2 - deposit USDC
         deposit(wallet2, usdcAddress, 1000e6);
-        verifyBalances(wallet1, usdcAddress, 1000e6, 4000e6, 2000e6);
+        verifyBalances(wallet1, usdcAddress, 1000e6, 499000e6, 2000e6);
 
         uint64 wallet1Nonce = 1000;
-        bytes memory tx1 = createSignedWithdrawTx(wallet1PrivateKey, usdcAddress, 200e6, wallet1Nonce);
-        bytes memory tx2 = createSignedWithdrawNativeTx(wallet1PrivateKey, 1e18, wallet1Nonce + 200);
+        bytes memory tx1 = createSignedWithdrawTx(wallet1PrivateKey, usdcAddress, 200e6, wallet1Nonce, 1);
+        bytes memory tx2 = createSignedWithdrawNativeTx(wallet1PrivateKey, 1e18, wallet1Nonce + 200, 2);
         uint64 wallet2Nonce = 10000;
-        bytes memory tx3 = createSignedWithdrawTx(wallet2PrivateKey, usdcAddress, 300e6, wallet2Nonce);
+        bytes memory tx3 = createSignedWithdrawTx(wallet2PrivateKey, usdcAddress, 300e6, wallet2Nonce, 3);
 
         uint256 txProcessedCount = exchange.txProcessedCount();
 
@@ -158,55 +143,48 @@ contract ExchangeTest is ExchangeBaseTest {
         txs[0] = tx1;
         txs[1] = tx2;
         txs[2] = tx3;
+
+        vm.prank(submitter);
+        exchange.prepareBatch(txs);
+
         vm.expectEmit(exchangeProxyAddress);
         emit IExchange.Withdrawal(wallet1, usdcAddress, 200e6);
         emit IExchange.Withdrawal(wallet1, address(0), 1e18);
         emit IExchange.Withdrawal(wallet2, usdcAddress, 300e6);
         vm.prank(submitter);
-        exchange.submitTransactions(txs);
+        exchange.submitBatch(txs);
 
         // verify balances
-        verifyBalances(wallet1, usdcAddress, 800e6, 4200e6, 1500e6);
+        verifyBalances(wallet1, usdcAddress, 800e6, 499200e6, 1500e6);
         verifyBalances(wallet1, 1e18, 9e18, 1e18);
-        verifyBalances(wallet2, usdcAddress, 700e6, 4300e6, 1500e6);
+        verifyBalances(wallet2, usdcAddress, 700e6, 499300e6, 1500e6);
 
         assertEq(txProcessedCount + 3, exchange.txProcessedCount());
     }
 
     function test_AmountAdjustment() public {
-        (address usdcAddress,) = setupWallets();
+        setupWallets();
         deposit(wallet1, usdcAddress, 1000e6);
-        vm.expectEmit(exchangeProxyAddress);
-        emit IExchange.AmountAdjusted(wallet1, usdcAddress, 1001e6, 1000e6);
-        vm.expectEmit(exchangeProxyAddress);
-        emit IExchange.Withdrawal(wallet1, usdcAddress, 1000e6);
-        vm.startPrank(wallet1);
-        exchange.withdraw(usdcAddress, 1001e6);
+        withdraw(wallet1PrivateKey, usdcAddress, 1001e6, 1000e6);
         vm.stopPrank();
 
         deposit(wallet1, 2e18);
-        vm.expectEmit(exchangeProxyAddress);
-        emit IExchange.AmountAdjusted(wallet1, address(0), 3e18, 2e18);
-        vm.expectEmit(exchangeProxyAddress);
-        emit IExchange.Withdrawal(wallet1, address(0), 2e18);
-        vm.startPrank(wallet1);
-        exchange.withdraw(3e18);
-        vm.stopPrank();
+        withdraw(wallet1PrivateKey, address(0), 3e18, 2e18);
         verifyBalances(wallet1, 0, 10e18, 0);
     }
 
     function test_EIP712ErrorCases() public {
-        (address usdcAddress,) = setupWallets();
+        setupWallets();
 
         // wallet1 - deposit usdc and native token
         deposit(wallet1, usdcAddress, 1000e6);
-        verifyBalances(wallet1, usdcAddress, 1000e6, 4000e6, 1000e6);
+        verifyBalances(wallet1, usdcAddress, 1000e6, 499000e6, 1000e6);
         deposit(wallet1, 2e18);
         verifyBalances(wallet1, 2e18, 8e18, 2e18);
 
         uint64 wallet1Nonce = 22222;
-        bytes memory tx1 = createSignedWithdrawTx(wallet1PrivateKey, usdcAddress, 200e6, wallet1Nonce);
-        bytes memory tx2 = createSignedWithdrawNativeTx(wallet1PrivateKey, 3e18, wallet1Nonce + 1); // insufficient balance
+        bytes memory tx1 = createSignedWithdrawTx(wallet1PrivateKey, usdcAddress, 200e6, wallet1Nonce, 1);
+        bytes memory tx2 = createSignedWithdrawNativeTx(wallet1PrivateKey, 3e18, wallet1Nonce + 1, 2); // insufficient balance
         uint256 txProcessedCount = exchange.txProcessedCount();
 
         bytes[] memory txs = new bytes[](2);
@@ -216,7 +194,7 @@ contract ExchangeTest is ExchangeBaseTest {
         // check fails if not the submitter
         vm.prank(wallet1);
         vm.expectRevert(bytes("Sender is not the submitter"));
-        exchange.submitTransactions(txs);
+        exchange.prepareBatch(txs);
 
         // must be a valid address
         vm.expectRevert(bytes("Not a valid address"));
@@ -237,64 +215,22 @@ contract ExchangeTest is ExchangeBaseTest {
         // should fail with old submitter
         vm.prank(submitter);
         vm.expectRevert(bytes("Sender is not the submitter"));
-        exchange.submitTransactions(txs);
+        exchange.submitBatch(txs);
 
         // check balance adjusted by remaining amounting if too much requested and amount adjusted events emitted
         txs[1] = tx2;
-        vm.prank(newSubmitter);
+        vm.startPrank(newSubmitter);
+        exchange.prepareBatch(txs);
         vm.expectEmit(exchangeProxyAddress);
         emit IExchange.AmountAdjusted(wallet1, address(0), 3e18, 2e18);
         vm.expectEmit(exchangeProxyAddress);
         emit IExchange.Withdrawal(wallet1, address(0), 2e18);
-        exchange.submitTransactions(txs);
+        exchange.submitBatch(txs);
+        vm.stopPrank();
 
         assertEq(txProcessedCount + 2, exchange.txProcessedCount());
 
         // set it back
         exchange.setSubmitter(submitter);
-    }
-
-    function createSignedWithdrawTx(uint256 walletPrivateKey, address tokenAddress, uint256 amount, uint64 nonce)
-        internal
-        view
-        returns (bytes memory)
-    {
-        IExchange.Withdraw memory _withdraw =
-            IExchange.Withdraw({sender: vm.addr(walletPrivateKey), token: tokenAddress, amount: amount, nonce: nonce});
-
-        bytes32 digest = SigUtils.getTypedDataHash(exchange.DOMAIN_SEPARATOR(), SigUtils.getStructHash(_withdraw));
-
-        bytes memory signature = sign(walletPrivateKey, digest);
-        return packTx(
-            IExchange.TransactionType.Withdraw,
-            abi.encode(_withdraw.sender, _withdraw.token, _withdraw.amount, _withdraw.nonce, signature)
-        );
-    }
-
-    function createSignedWithdrawNativeTx(uint256 walletPrivateKey, uint256 amount, uint64 nonce)
-        internal
-        view
-        returns (bytes memory)
-    {
-        IExchange.WithdrawNative memory _withdraw =
-            IExchange.WithdrawNative({sender: vm.addr(walletPrivateKey), amount: amount, nonce: nonce});
-
-        bytes32 digest = SigUtils.getTypedDataHash(exchange.DOMAIN_SEPARATOR(), SigUtils.getStructHash(_withdraw));
-
-        bytes memory signature = sign(walletPrivateKey, digest);
-        return packTx(
-            IExchange.TransactionType.WithdrawNative,
-            abi.encode(_withdraw.sender, _withdraw.amount, _withdraw.nonce, signature)
-        );
-    }
-
-    function setupWallets() internal returns (address, address) {
-        MockERC20 usdcMock = new MockERC20("USD Coin", "USDC", 6);
-        usdcMock.mint(wallet1, 5000e6);
-        usdcMock.mint(wallet2, 5000e6);
-        MockERC20 btcMock = new MockERC20("Bitcoin", "BTC", 8);
-        btcMock.mint(wallet1, 100e8);
-        btcMock.mint(wallet2, 100e8);
-        return (address(usdcMock), address(btcMock));
     }
 }

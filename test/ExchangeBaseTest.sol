@@ -2,10 +2,12 @@
 pragma solidity ^0.8.0;
 
 import {Test, console} from "forge-std/Test.sol";
+import {MockERC20} from "./contracts/MockERC20.sol";
 import {IERC20} from "openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
 import {IExchange} from "../src/interfaces/IExchange.sol";
 import {Exchange} from "../src/Exchange.sol";
 import {ERC1967Proxy} from "openzeppelin-contracts/contracts/proxy/ERC1967/ERC1967Proxy.sol";
+import "./utils/SigUtils.sol";
 
 contract ExchangeBaseTest is Test {
     Exchange internal exchange;
@@ -18,6 +20,14 @@ contract ExchangeBaseTest is Test {
 
     uint256 internal feeAccountPrivateKey = 0x12345;
     address internal feeAccount = vm.addr(feeAccountPrivateKey);
+
+    uint256 internal wallet1PrivateKey = 0x12345678;
+    uint256 internal wallet2PrivateKey = 0x123456789;
+    address internal wallet1 = vm.addr(wallet1PrivateKey);
+    address internal wallet2 = vm.addr(wallet2PrivateKey);
+
+    address internal usdcAddress;
+    address internal btcAddress;
 
     function setUp() public virtual {
         Exchange exchangeImplementation = new Exchange();
@@ -46,11 +56,27 @@ contract ExchangeBaseTest is Test {
         vm.stopPrank();
     }
 
-    function withdraw(address wallet, address tokenAddress, uint256 amount, uint256 expectedEmitAmount) internal {
-        vm.startPrank(wallet);
+    function withdraw(uint256 walletPrivateKey, address tokenAddress, uint256 amount, uint256 expectedEmitAmount)
+        internal
+    {
+        bytes memory tx1;
+        if (tokenAddress == address(0)) {
+            tx1 = createSignedWithdrawNativeTx(walletPrivateKey, amount, 1000, 1);
+        } else {
+            tx1 = createSignedWithdrawTx(walletPrivateKey, tokenAddress, amount, 1000, 1);
+        }
+        bytes[] memory txs = new bytes[](1);
+        txs[0] = tx1;
+
+        vm.startPrank(submitter);
+        exchange.prepareBatch(txs);
+        if (amount != 0 && amount != expectedEmitAmount) {
+            vm.expectEmit(exchangeProxyAddress);
+            emit IExchange.AmountAdjusted(vm.addr(walletPrivateKey), tokenAddress, amount, expectedEmitAmount);
+        }
         vm.expectEmit(exchangeProxyAddress);
-        emit IExchange.Withdrawal(wallet, tokenAddress, expectedEmitAmount);
-        exchange.withdraw(tokenAddress, amount);
+        emit IExchange.Withdrawal(vm.addr(walletPrivateKey), tokenAddress, expectedEmitAmount);
+        exchange.submitBatch(txs);
         vm.stopPrank();
     }
 
@@ -60,14 +86,6 @@ contract ExchangeBaseTest is Test {
             uint256(0x20), // offset where data starts
             data
         );
-    }
-
-    function withdraw(address wallet, uint256 amount, uint256 expectedEmitAmount) internal {
-        vm.startPrank(wallet);
-        vm.expectEmit(exchangeProxyAddress);
-        emit IExchange.Withdrawal(wallet, address(0), expectedEmitAmount);
-        exchange.withdraw(amount);
-        vm.stopPrank();
     }
 
     function verifyBalances(
@@ -86,7 +104,7 @@ contract ExchangeBaseTest is Test {
         internal
         view
     {
-        assertEq(exchange.nativeBalances(wallet), expectedBalance);
+        assertEq(exchange.balances(wallet, address(0)), expectedBalance);
         assertEq(wallet.balance, walletBalance);
         assertEq(exchangeProxyAddress.balance, exchangeBalance);
     }
@@ -94,5 +112,74 @@ contract ExchangeBaseTest is Test {
     function sign(uint256 privateKey, bytes32 digest) internal pure returns (bytes memory) {
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(privateKey, digest);
         return abi.encodePacked(r, s, v);
+    }
+
+    function createSignedWithdrawTx(
+        uint256 walletPrivateKey,
+        address tokenAddress,
+        uint256 amount,
+        uint64 nonce,
+        uint256 sequence
+    ) internal view returns (bytes memory) {
+        IExchange.Withdraw memory _withdraw =
+            IExchange.Withdraw({sender: vm.addr(walletPrivateKey), token: tokenAddress, amount: amount, nonce: nonce});
+
+        bytes32 digest = SigUtils.getTypedDataHash(exchange.DOMAIN_SEPARATOR(), SigUtils.getStructHash(_withdraw));
+
+        bytes memory signature = sign(walletPrivateKey, digest);
+        return packTx(
+            IExchange.TransactionType.Withdraw,
+            abi.encode(sequence, _withdraw.sender, _withdraw.token, _withdraw.amount, _withdraw.nonce, signature)
+        );
+    }
+
+    function createSignedWithdrawNativeTx(uint256 walletPrivateKey, uint256 amount, uint64 nonce, uint256 sequence)
+        internal
+        view
+        returns (bytes memory)
+    {
+        IExchange.WithdrawNative memory _withdraw =
+            IExchange.WithdrawNative({sender: vm.addr(walletPrivateKey), amount: amount, nonce: nonce});
+
+        bytes32 digest = SigUtils.getTypedDataHash(exchange.DOMAIN_SEPARATOR(), SigUtils.getStructHash(_withdraw));
+
+        bytes memory signature = sign(walletPrivateKey, digest);
+        return packTx(
+            IExchange.TransactionType.WithdrawNative,
+            abi.encode(sequence, _withdraw.sender, _withdraw.amount, _withdraw.nonce, signature)
+        );
+    }
+
+    function createSignedWithdrawTxWithInvalidSignature(
+        uint256 walletPrivateKey,
+        address tokenAddress,
+        uint256 amount,
+        uint64 nonce,
+        uint256 sequence
+    ) internal view returns (bytes memory) {
+        IExchange.Withdraw memory _withdraw =
+            IExchange.Withdraw({sender: address(0), token: tokenAddress, amount: amount, nonce: nonce});
+
+        bytes32 digest = SigUtils.getTypedDataHash(exchange.DOMAIN_SEPARATOR(), SigUtils.getStructHash(_withdraw));
+
+        bytes memory signature = sign(walletPrivateKey, digest);
+        return packTx(
+            IExchange.TransactionType.Withdraw,
+            abi.encode(
+                sequence, vm.addr(walletPrivateKey), _withdraw.token, _withdraw.amount, _withdraw.nonce, signature
+            )
+        );
+    }
+
+    function setupWallets() internal {
+        MockERC20 usdcMock = new MockERC20("USD Coin", "USDC", 6);
+        usdcMock.mint(wallet1, 500000e6);
+        usdcMock.mint(wallet2, 500000e6);
+        MockERC20 btcMock = new MockERC20("Bitcoin", "BTC", 8);
+        btcMock.mint(wallet1, 100e8);
+        btcMock.mint(wallet2, 100e8);
+
+        usdcAddress = address(usdcMock);
+        btcAddress = address(btcMock);
     }
 }
