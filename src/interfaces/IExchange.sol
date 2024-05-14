@@ -13,6 +13,11 @@ interface IExchange is IVersion {
         SettleTrade
     }
 
+    enum ErrorCode {
+        InvalidSignature,
+        InsufficientBalance
+    }
+
     struct Withdraw {
         address sender;
         address token;
@@ -21,6 +26,7 @@ interface IExchange is IVersion {
     }
 
     struct WithdrawWithSignature {
+        uint64 sequence;
         Withdraw tx;
         bytes signature;
     }
@@ -32,6 +38,7 @@ interface IExchange is IVersion {
     }
 
     struct WithdrawNativeWithSignature {
+        uint64 sequence;
         WithdrawNative tx;
         bytes signature;
     }
@@ -49,6 +56,7 @@ interface IExchange is IVersion {
     }
 
     struct SettleTrade {
+        uint64 sequence;
         address baseToken;
         address quoteToken;
         int256 amount;
@@ -77,6 +85,8 @@ interface IExchange is IVersion {
         ExecutionInfo executionInfo
     );
 
+    event PrepareTransactionFailed(uint64 sequence, ErrorCode errorCode);
+
     event AmountAdjusted(address indexed sender, address token, uint256 requested, uint256 actual);
 
     function DOMAIN_SEPARATOR() external view returns (bytes32);
@@ -85,11 +95,11 @@ interface IExchange is IVersion {
 
     receive() external payable;
 
-    function withdraw(address _token, uint256 _amount) external;
+    function submitBatch(bytes[] calldata transactions) external;
 
-    function withdraw(uint256 _amount) external;
+    function prepareBatch(bytes[] calldata transactions) external;
 
-    function submitTransactions(bytes[] calldata transactions) external;
+    function rollbackBatch() external;
 
     function setSubmitter(address _submitter) external;
 
