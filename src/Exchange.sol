@@ -90,6 +90,29 @@ contract Exchange is EIP712Upgradeable, UUPSUpgradeable, OwnableUpgradeable, IEx
         batchHash = 0;
     }
 
+    function submitWithdrawals(bytes[] calldata withdrawals) public onlySubmitter {
+        require(batchHash == 0, "Settlement batch in process");
+        for (uint256 i = 0; i < withdrawals.length; i++) {
+            bytes calldata withdrawal = withdrawals[i];
+            processWithdrawal(withdrawal);
+        }
+    }
+
+    function processWithdrawal(bytes calldata withdrawal) internal {
+        TransactionType txType = TransactionType(uint8(withdrawal[0]));
+        if (txType == TransactionType.Withdraw) {
+            WithdrawWithSignature memory signedTx = abi.decode(withdrawal[1:], (WithdrawWithSignature));
+            if (_validateWithdrawal(signedTx)) {
+                _withdraw(signedTx.tx.sender, signedTx.tx.token, signedTx.tx.amount);
+            }
+        } else if (txType == TransactionType.WithdrawNative) {
+            WithdrawNativeWithSignature memory signedTx = abi.decode(withdrawal[1:], (WithdrawNativeWithSignature));
+            if (_validateNativeWithdrawal(signedTx)) {
+                _withdraw(signedTx.tx.sender, address(0), signedTx.tx.amount);
+            }
+        }
+    }
+
     function processTransaction(bytes calldata transaction) internal {
         TransactionType txType = TransactionType(uint8(transaction[0]));
         if (txType == TransactionType.Withdraw) {
@@ -145,6 +168,35 @@ contract Exchange is EIP712Upgradeable, UUPSUpgradeable, OwnableUpgradeable, IEx
         return keccak256(buffer);
     }
 
+    function _validateWithdrawal(WithdrawWithSignature memory signedTx) internal returns (bool) {
+        bytes32 digest = _hashTypedDataV4(
+            keccak256(
+                abi.encode(
+                    keccak256(bytes(WITHDRAW_SIGNATURE)),
+                    signedTx.tx.sender,
+                    signedTx.tx.token,
+                    signedTx.tx.amount,
+                    signedTx.tx.nonce
+                )
+            )
+        );
+        return _validateSignature(signedTx.tx.sender, digest, signedTx.signature, signedTx.sequence);
+    }
+
+    function _validateNativeWithdrawal(WithdrawNativeWithSignature memory signedTx) internal returns (bool) {
+        bytes32 digest = _hashTypedDataV4(
+            keccak256(
+                abi.encode(
+                    keccak256(bytes(WITHDRAW_NATIVE_SIGNATURE)),
+                    signedTx.tx.sender,
+                    signedTx.tx.amount,
+                    signedTx.tx.nonce
+                )
+            )
+        );
+        return _validateSignature(signedTx.tx.sender, digest, signedTx.signature, signedTx.sequence);
+    }
+
     function prepareTransaction(bytes calldata transaction, SavedBalances memory savedBalances)
         internal
         returns (bool)
@@ -153,38 +205,13 @@ contract Exchange is EIP712Upgradeable, UUPSUpgradeable, OwnableUpgradeable, IEx
         if (txType == TransactionType.Withdraw) {
             WithdrawWithSignature memory signedTx = abi.decode(transaction[1:], (WithdrawWithSignature));
             _saveBalance(signedTx.tx.sender, signedTx.tx.token, savedBalances);
-            bytes32 digest = _hashTypedDataV4(
-                keccak256(
-                    abi.encode(
-                        keccak256(bytes(WITHDRAW_SIGNATURE)),
-                        signedTx.tx.sender,
-                        signedTx.tx.token,
-                        signedTx.tx.amount,
-                        signedTx.tx.nonce
-                    )
-                )
-            );
-            if (!_validateSignature(signedTx.tx.sender, digest, signedTx.signature, signedTx.sequence)) {
-                return false;
-            }
-            return _withdrawDryRun(signedTx.tx.sender, signedTx.tx.token, signedTx.tx.amount, signedTx.sequence);
+            return _validateWithdrawal(signedTx)
+                && _withdrawDryRun(signedTx.tx.sender, signedTx.tx.token, signedTx.tx.amount, signedTx.sequence);
         } else if (txType == TransactionType.WithdrawNative) {
             WithdrawNativeWithSignature memory signedTx = abi.decode(transaction[1:], (WithdrawNativeWithSignature));
             _saveBalance(signedTx.tx.sender, address(0), savedBalances);
-            bytes32 digest = _hashTypedDataV4(
-                keccak256(
-                    abi.encode(
-                        keccak256(bytes(WITHDRAW_NATIVE_SIGNATURE)),
-                        signedTx.tx.sender,
-                        signedTx.tx.amount,
-                        signedTx.tx.nonce
-                    )
-                )
-            );
-            if (!_validateSignature(signedTx.tx.sender, digest, signedTx.signature, signedTx.sequence)) {
-                return false;
-            }
-            return _withdrawDryRun(signedTx.tx.sender, address(0), signedTx.tx.amount, signedTx.sequence);
+            return _validateNativeWithdrawal(signedTx)
+                && _withdrawDryRun(signedTx.tx.sender, address(0), signedTx.tx.amount, signedTx.sequence);
         } else if (txType == TransactionType.SettleTrade) {
             return _settleTradeDryRun(abi.decode(transaction[1:], (SettleTrade)), savedBalances);
         } else {

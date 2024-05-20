@@ -137,29 +137,22 @@ contract ExchangeTest is ExchangeBaseTest {
         uint64 wallet2Nonce = 10000;
         bytes memory tx3 = createSignedWithdrawTx(wallet2PrivateKey, usdcAddress, 300e6, wallet2Nonce, 3);
 
-        uint256 txProcessedCount = exchange.txProcessedCount();
-
         bytes[] memory txs = new bytes[](3);
         txs[0] = tx1;
         txs[1] = tx2;
         txs[2] = tx3;
-
-        vm.prank(submitter);
-        exchange.prepareBatch(txs);
 
         vm.expectEmit(exchangeProxyAddress);
         emit IExchange.Withdrawal(wallet1, usdcAddress, 200e6);
         emit IExchange.Withdrawal(wallet1, address(0), 1e18);
         emit IExchange.Withdrawal(wallet2, usdcAddress, 300e6);
         vm.prank(submitter);
-        exchange.submitBatch(txs);
+        exchange.submitWithdrawals(txs);
 
         // verify balances
         verifyBalances(wallet1, usdcAddress, 800e6, 499200e6, 1500e6);
         verifyBalances(wallet1, 1e18, 9e18, 1e18);
         verifyBalances(wallet2, usdcAddress, 700e6, 499300e6, 1500e6);
-
-        assertEq(txProcessedCount + 3, exchange.txProcessedCount());
     }
 
     function test_AmountAdjustment() public {
@@ -185,7 +178,6 @@ contract ExchangeTest is ExchangeBaseTest {
         uint64 wallet1Nonce = 22222;
         bytes memory tx1 = createSignedWithdrawTx(wallet1PrivateKey, usdcAddress, 200e6, wallet1Nonce, 1);
         bytes memory tx2 = createSignedWithdrawNativeTx(wallet1PrivateKey, 3e18, wallet1Nonce + 1, 2); // insufficient balance
-        uint256 txProcessedCount = exchange.txProcessedCount();
 
         bytes[] memory txs = new bytes[](2);
         txs[0] = tx1;
@@ -194,7 +186,7 @@ contract ExchangeTest is ExchangeBaseTest {
         // check fails if not the submitter
         vm.prank(wallet1);
         vm.expectRevert(bytes("Sender is not the submitter"));
-        exchange.prepareBatch(txs);
+        exchange.submitWithdrawals(txs);
 
         // must be a valid address
         vm.expectRevert(bytes("Not a valid address"));
@@ -215,20 +207,17 @@ contract ExchangeTest is ExchangeBaseTest {
         // should fail with old submitter
         vm.prank(submitter);
         vm.expectRevert(bytes("Sender is not the submitter"));
-        exchange.submitBatch(txs);
+        exchange.submitWithdrawals(txs);
 
         // check balance adjusted by remaining amounting if too much requested and amount adjusted events emitted
         txs[1] = tx2;
         vm.startPrank(newSubmitter);
-        exchange.prepareBatch(txs);
         vm.expectEmit(exchangeProxyAddress);
         emit IExchange.AmountAdjusted(wallet1, address(0), 3e18, 2e18);
         vm.expectEmit(exchangeProxyAddress);
         emit IExchange.Withdrawal(wallet1, address(0), 2e18);
-        exchange.submitBatch(txs);
+        exchange.submitWithdrawals(txs);
         vm.stopPrank();
-
-        assertEq(txProcessedCount + 2, exchange.txProcessedCount());
 
         // set it back
         exchange.setSubmitter(submitter);

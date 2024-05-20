@@ -69,14 +69,12 @@ contract ExchangeBaseTest is Test {
         txs[0] = tx1;
 
         vm.startPrank(submitter);
-        exchange.prepareBatch(txs);
+        vm.expectEmit(exchangeProxyAddress);
         if (amount != 0 && amount != expectedEmitAmount) {
-            vm.expectEmit(exchangeProxyAddress);
             emit IExchange.AmountAdjusted(vm.addr(walletPrivateKey), tokenAddress, amount, expectedEmitAmount);
         }
-        vm.expectEmit(exchangeProxyAddress);
         emit IExchange.Withdrawal(vm.addr(walletPrivateKey), tokenAddress, expectedEmitAmount);
-        exchange.submitBatch(txs);
+        exchange.submitWithdrawals(txs);
         vm.stopPrank();
     }
 
