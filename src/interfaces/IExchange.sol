@@ -95,6 +95,8 @@ interface IExchange is IVersion {
 
     receive() external payable;
 
+    function submitWithdrawals(bytes[] calldata withdrawals) external;
+
     function submitBatch(bytes[] calldata transactions) external;
 
     function prepareBatch(bytes[] calldata transactions) external;

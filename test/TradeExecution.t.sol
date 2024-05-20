@@ -443,7 +443,6 @@ contract TradeExecutionTest is ExchangeBaseTest {
         vm.startPrank(submitter);
         vm.expectEmit(exchangeProxyAddress);
         emit IExchange.PrepareTransactionFailed(sequence, IExchange.ErrorCode.InvalidSignature);
-        vm.expectEmit(exchangeProxyAddress);
         emit IExchange.PrepareTransactionFailed(sequence + 2, IExchange.ErrorCode.InsufficientBalance);
         exchange.prepareBatch(batch1);
         assertTrue(exchange.batchHash() == 0);
@@ -452,26 +451,40 @@ contract TradeExecutionTest is ExchangeBaseTest {
         vm.expectRevert(bytes("No batch prepared"));
         exchange.submitBatch(batch1);
 
-        // remove bad ones and prepare a good batch
+        // failed events should also be emitted when submitted via submitWithdrawals
         bytes[] memory batch2 = new bytes[](1);
-        batch2[0] = tx2;
-        exchange.prepareBatch(batch2);
+        batch2[0] = tx1;
+        vm.expectEmit(exchangeProxyAddress);
+        emit IExchange.PrepareTransactionFailed(sequence, IExchange.ErrorCode.InvalidSignature);
+        exchange.submitWithdrawals(batch2);
+
+        // remove bad ones and prepare a good batch
+        bytes[] memory batch3 = new bytes[](1);
+        batch3[0] = tx2;
+        exchange.prepareBatch(batch3);
 
         // check fails if a different batch submitted to what was prepared
-        bytes[] memory batch3 = new bytes[](1);
-        batch3[0] = tx1;
+        bytes[] memory batch4 = new bytes[](1);
+        batch4[0] = tx1;
         vm.expectRevert(bytes("Hash does not match prepared batch"));
-        exchange.submitBatch(batch3);
+        exchange.submitBatch(batch4);
 
         // cannot prepare a different batch before current one is committed or rolled back
         vm.expectRevert(bytes("Batch in progress, submit or rollback"));
-        exchange.prepareBatch(batch2);
+        exchange.prepareBatch(batch3);
 
         // rollback
         exchange.rollbackBatch();
         assertTrue(exchange.batchHash() == 0);
-        exchange.prepareBatch(batch2);
+
+        // good batch should work now
+        exchange.prepareBatch(batch3);
         assertFalse(exchange.batchHash() == 0);
-        exchange.submitBatch(batch2);
+
+        // ensure we cannot withdraw while a batch is pending
+        vm.expectRevert(bytes("Settlement batch in process"));
+        exchange.submitWithdrawals(batch3);
+
+        exchange.submitBatch(batch3);
     }
 }
