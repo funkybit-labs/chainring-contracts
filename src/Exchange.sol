@@ -150,6 +150,85 @@ contract Exchange is EIP712Upgradeable, UUPSUpgradeable, OwnableUpgradeable, IEx
         }
     }
 
+    function prepareSettlementBatch(bytes calldata data) public onlySubmitter {
+        require(batchHash == 0, "Batch in progress, submit or rollback");
+        bool _batchSucceeded = true;
+
+        BatchSettlement memory _batchSettlement = abi.decode(data, (BatchSettlement));
+
+        require(
+            _batchSettlement.walletAddresses.length == _batchSettlement.walletTradeLists.length,
+            "Invalid address and trade lists lengths"
+        );
+
+        // make sure all adjustments net to 0
+        for (uint32 i = 0; i < _batchSettlement.tokenAdjustmentLists.length; i++) {
+            int256 _netAmount = int256(_batchSettlement.tokenAdjustmentLists[i].feeAmount);
+            address _token = _batchSettlement.tokenAdjustmentLists[i].token;
+            for (uint32 j = 0; j < _batchSettlement.tokenAdjustmentLists[i].increments.length; j++) {
+                _netAmount += int256(_batchSettlement.tokenAdjustmentLists[i].increments[j].amount);
+            }
+            for (uint32 j = 0; j < _batchSettlement.tokenAdjustmentLists[i].decrements.length; j++) {
+                uint256 _adjustmentAmount = _batchSettlement.tokenAdjustmentLists[i].decrements[j].amount;
+                _netAmount -= int256(_adjustmentAmount);
+                // see if we can apply the decrement
+                uint32 walletIndex = _batchSettlement.tokenAdjustmentLists[i].decrements[j].walletIndex;
+                address _wallet = _batchSettlement.walletAddresses[walletIndex];
+                if (_adjustmentAmount > balances[_wallet][_token]) {
+                    _batchSucceeded = false;
+                    emit SettlementFailed(
+                        _wallet,
+                        _batchSettlement.walletTradeLists[walletIndex].tradeHashes,
+                        ErrorCode.InsufficientBalance
+                    );
+                }
+            }
+            if (_netAmount != 0) {
+                revert ErrorDidNotNetToZero(_batchSettlement.tokenAdjustmentLists[i].token);
+            }
+        }
+        if (_batchSucceeded) {
+            batchHash = keccak256(data);
+        }
+    }
+
+    function submitSettlementBatch(bytes calldata data) public onlySubmitter {
+        require(batchHash != 0, "No batch prepared");
+        require(batchHash == keccak256(data), "Hash does not match prepared batch");
+
+        BatchSettlement memory _batchSettlement = abi.decode(data, (BatchSettlement));
+        for (uint32 i = 0; i < _batchSettlement.tokenAdjustmentLists.length; i++) {
+            address _token = _batchSettlement.tokenAdjustmentLists[i].token;
+            for (uint32 j = 0; j < _batchSettlement.tokenAdjustmentLists[i].increments.length; j++) {
+                uint256 _adjustmentAmount = _batchSettlement.tokenAdjustmentLists[i].increments[j].amount;
+                address _wallet =
+                    _batchSettlement.walletAddresses[_batchSettlement.tokenAdjustmentLists[i].increments[j].walletIndex];
+                balances[_wallet][_token] += _adjustmentAmount;
+            }
+            for (uint32 j = 0; j < _batchSettlement.tokenAdjustmentLists[i].decrements.length; j++) {
+                uint256 _adjustmentAmount = _batchSettlement.tokenAdjustmentLists[i].decrements[j].amount;
+                address _wallet =
+                    _batchSettlement.walletAddresses[_batchSettlement.tokenAdjustmentLists[i].decrements[j].walletIndex];
+                if (_adjustmentAmount <= balances[_wallet][_token]) {
+                    balances[_wallet][_token] -= _adjustmentAmount;
+                } else {
+                    revert("Insufficient Balance");
+                }
+            }
+            if (_batchSettlement.tokenAdjustmentLists[i].feeAmount != 0) {
+                balances[feeAccount][_token] += _batchSettlement.tokenAdjustmentLists[i].feeAmount;
+            }
+        }
+
+        for (uint32 i = 0; i < _batchSettlement.walletTradeLists.length; i++) {
+            emit IExchange.SettlementCompleted(
+                _batchSettlement.walletAddresses[i], _batchSettlement.walletTradeLists[i].tradeHashes
+            );
+        }
+
+        batchHash = 0;
+    }
+
     function rollbackBatch() external onlySubmitter {
         batchHash = 0;
     }
