@@ -36,10 +36,10 @@ contract BatchSettlementTest is ExchangeBaseTest {
         // taker will buy 2 BTC
         // taker fee will be 100 USDC and maker fee will be 20 USDC
 
-        uint256[] memory takerHashes = new uint256[](1);
-        takerHashes[0] = 1;
-        uint256[] memory makerHashes = new uint256[](1);
-        makerHashes[0] = 2;
+        bytes32[] memory takerHashes = new bytes32[](1);
+        takerHashes[0] = keccak256(bytes("order1:order2"));
+        bytes32[] memory makerHashes = new bytes32[](1);
+        makerHashes[0] = keccak256(bytes("order3:order4"));
         IExchange.BatchSettlement memory batch = IExchange.BatchSettlement(
             new address[](2), new IExchange.WalletTradeList[](2), new IExchange.TokenAdjustmentList[](2)
         );
@@ -81,8 +81,8 @@ contract BatchSettlementTest is ExchangeBaseTest {
 
         // taker will sell 2 BTC, for a price of 70000 USDC per BTC
         // taker fee will be 100 USDC and maker fee will be 20 USDC
-        uint256[] memory hashes = new uint256[](1);
-        hashes[0] = 1;
+        bytes32[] memory hashes = new bytes32[](1);
+        hashes[0] = keccak256(bytes("order1:order2"));
         IExchange.BatchSettlement memory batch = IExchange.BatchSettlement(
             new address[](2), new IExchange.WalletTradeList[](2), new IExchange.TokenAdjustmentList[](2)
         );
@@ -123,8 +123,8 @@ contract BatchSettlementTest is ExchangeBaseTest {
         verifyBalances(maker, 0, 10e18, 3e18);
 
         // taker will buy .1 BTC, price is 20 ETH per BTC so will need to pay 2ETH, takerFee will be .02 ETH and makerFee will be 0.01 ETH
-        uint256[] memory hashes = new uint256[](1);
-        hashes[0] = 1;
+        bytes32[] memory hashes = new bytes32[](1);
+        hashes[0] = keccak256(bytes("order1:order2"));
         IExchange.BatchSettlement memory batch = IExchange.BatchSettlement(
             new address[](2), new IExchange.WalletTradeList[](2), new IExchange.TokenAdjustmentList[](2)
         );
@@ -165,8 +165,8 @@ contract BatchSettlementTest is ExchangeBaseTest {
         verifyBalances(maker, 0, 10e18, 3e18);
 
         // taker will buy .1 BTC, price is 20 ETH per BTC so will need to pay 2ETH, takerFee will be .02 ETH and makerFee will be 0.01 ETH
-        uint256[] memory hashes = new uint256[](1);
-        hashes[0] = 1;
+        bytes32[] memory hashes = new bytes32[](1);
+        hashes[0] = keccak256(bytes("order1:order2"));
         IExchange.BatchSettlement memory batch = IExchange.BatchSettlement(
             new address[](2), new IExchange.WalletTradeList[](2), new IExchange.TokenAdjustmentList[](2)
         );
@@ -197,10 +197,10 @@ contract BatchSettlementTest is ExchangeBaseTest {
         verifyBalances(maker, 0, 10e18, 3e18);
 
         // taker will buy .1 BTC, price is 20 ETH per BTC so will need to pay 2ETH, takerFee will be .02 ETH and makerFee will be 0.01 ETH
-        uint256[] memory takerHashes = new uint256[](1);
-        takerHashes[0] = 1;
-        uint256[] memory makerHashes = new uint256[](1);
-        makerHashes[0] = 2;
+        bytes32[] memory takerHashes = new bytes32[](1);
+        takerHashes[0] = keccak256(bytes("order1:order2"));
+        bytes32[] memory makerHashes = new bytes32[](1);
+        makerHashes[0] = keccak256(bytes("order3:order4"));
         IExchange.BatchSettlement memory batch = IExchange.BatchSettlement(
             new address[](2), new IExchange.WalletTradeList[](2), new IExchange.TokenAdjustmentList[](1)
         );

@@ -63,7 +63,7 @@ interface IExchange is IVersion {
     }
 
     struct WalletTradeList {
-        uint256[] tradeHashes;
+        bytes32[] tradeHashes;
     }
 
     struct TokenAdjustmentList {
@@ -111,9 +111,9 @@ interface IExchange is IVersion {
 
     event PrepareTransactionFailed(uint64 sequence, ErrorCode errorCode);
 
-    event SettlementFailed(address _address, uint256[] tradeHashes, ErrorCode errorCode);
+    event SettlementFailed(address _address, bytes32[] tradeHashes, ErrorCode errorCode);
 
-    event SettlementCompleted(address _address, uint256[] tradeHashes);
+    event SettlementCompleted(address _address, bytes32[] tradeHashes);
 
     event AmountAdjusted(address indexed sender, address token, uint256 requested, uint256 actual);
 
