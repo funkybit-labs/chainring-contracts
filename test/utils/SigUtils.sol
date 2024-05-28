@@ -17,37 +17,6 @@ library SigUtils {
         );
     }
 
-    function getStructHash(IExchange.WithdrawNative memory _withdraw) public pure returns (bytes32) {
-        return keccak256(
-            abi.encode(
-                keccak256("Withdraw(address sender,uint256 amount,uint64 nonce)"),
-                _withdraw.sender,
-                _withdraw.amount,
-                _withdraw.nonce
-            )
-        );
-    }
-
-    function getStructHash(address _baseToken, address _quoteToken, IExchange.Order memory _order)
-        public
-        pure
-        returns (bytes32)
-    {
-        return keccak256(
-            abi.encode(
-                keccak256(
-                    "Order(address sender,address baseToken,address quoteToken,int256 amount,uint256 price,int256 nonce)"
-                ),
-                _order.sender,
-                _baseToken,
-                _quoteToken,
-                _order.amount,
-                _order.price,
-                _order.nonce
-            )
-        );
-    }
-
     // computes the hash of the fully encoded EIP-712 message for the domain, which can be used to recover the signer
     function getTypedDataHash(bytes32 _domainSeparator, bytes32 _structHash) public pure returns (bytes32) {
         return keccak256(abi.encodePacked("\x19\x01", _domainSeparator, _structHash));

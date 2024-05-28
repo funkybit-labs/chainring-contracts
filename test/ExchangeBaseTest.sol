@@ -59,12 +59,7 @@ contract ExchangeBaseTest is Test {
     function withdraw(uint256 walletPrivateKey, address tokenAddress, uint256 amount, uint256 expectedEmitAmount)
         internal
     {
-        bytes memory tx1;
-        if (tokenAddress == address(0)) {
-            tx1 = createSignedWithdrawNativeTx(walletPrivateKey, amount, 1000, 1);
-        } else {
-            tx1 = createSignedWithdrawTx(walletPrivateKey, tokenAddress, amount, 1000, 1);
-        }
+        bytes memory tx1 = createSignedWithdrawTx(walletPrivateKey, tokenAddress, amount, 1000, 1);
         bytes[] memory txs = new bytes[](1);
         txs[0] = tx1;
 
@@ -76,14 +71,6 @@ contract ExchangeBaseTest is Test {
         emit IExchange.Withdrawal(vm.addr(walletPrivateKey), tokenAddress, expectedEmitAmount);
         exchange.submitWithdrawals(txs);
         vm.stopPrank();
-    }
-
-    function packTx(IExchange.TransactionType txType, bytes memory data) internal pure returns (bytes memory) {
-        return abi.encodePacked(
-            uint8(txType),
-            uint256(0x20), // offset where data starts
-            data
-        );
     }
 
     function verifyBalances(
@@ -125,27 +112,10 @@ contract ExchangeBaseTest is Test {
         bytes32 digest = SigUtils.getTypedDataHash(exchange.DOMAIN_SEPARATOR(), SigUtils.getStructHash(_withdraw));
 
         bytes memory signature = sign(walletPrivateKey, digest);
-        return packTx(
-            IExchange.TransactionType.Withdraw,
-            abi.encode(sequence, _withdraw.sender, _withdraw.token, _withdraw.amount, _withdraw.nonce, signature)
-        );
-    }
 
-    function createSignedWithdrawNativeTx(uint256 walletPrivateKey, uint256 amount, uint64 nonce, uint256 sequence)
-        internal
-        view
-        returns (bytes memory)
-    {
-        IExchange.WithdrawNative memory _withdraw =
-            IExchange.WithdrawNative({sender: vm.addr(walletPrivateKey), amount: amount, nonce: nonce});
-
-        bytes32 digest = SigUtils.getTypedDataHash(exchange.DOMAIN_SEPARATOR(), SigUtils.getStructHash(_withdraw));
-
-        bytes memory signature = sign(walletPrivateKey, digest);
-        return packTx(
-            IExchange.TransactionType.WithdrawNative,
-            abi.encode(sequence, _withdraw.sender, _withdraw.amount, _withdraw.nonce, signature)
-        );
+        IExchange.WithdrawWithSignature memory _withdrawWithSignature =
+            IExchange.WithdrawWithSignature(uint64(sequence), _withdraw, signature);
+        return abi.encode(_withdrawWithSignature);
     }
 
     function createSignedWithdrawTxWithInvalidSignature(
@@ -157,16 +127,16 @@ contract ExchangeBaseTest is Test {
     ) internal view returns (bytes memory) {
         IExchange.Withdraw memory _withdraw =
             IExchange.Withdraw({sender: address(0), token: tokenAddress, amount: amount, nonce: nonce});
+        IExchange.Withdraw memory _withdraw2 =
+            IExchange.Withdraw({sender: address(1), token: tokenAddress, amount: amount, nonce: nonce});
 
         bytes32 digest = SigUtils.getTypedDataHash(exchange.DOMAIN_SEPARATOR(), SigUtils.getStructHash(_withdraw));
 
         bytes memory signature = sign(walletPrivateKey, digest);
-        return packTx(
-            IExchange.TransactionType.Withdraw,
-            abi.encode(
-                sequence, vm.addr(walletPrivateKey), _withdraw.token, _withdraw.amount, _withdraw.nonce, signature
-            )
-        );
+
+        IExchange.WithdrawWithSignature memory _withdrawWithSignature =
+            IExchange.WithdrawWithSignature(uint64(sequence), _withdraw2, signature);
+        return abi.encode(_withdrawWithSignature);
     }
 
     function setupWallets() internal {

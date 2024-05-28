@@ -133,7 +133,7 @@ contract ExchangeTest is ExchangeBaseTest {
 
         uint64 wallet1Nonce = 1000;
         bytes memory tx1 = createSignedWithdrawTx(wallet1PrivateKey, usdcAddress, 200e6, wallet1Nonce, 1);
-        bytes memory tx2 = createSignedWithdrawNativeTx(wallet1PrivateKey, 1e18, wallet1Nonce + 200, 2);
+        bytes memory tx2 = createSignedWithdrawTx(wallet1PrivateKey, address(0), 1e18, wallet1Nonce + 200, 2);
         uint64 wallet2Nonce = 10000;
         bytes memory tx3 = createSignedWithdrawTx(wallet2PrivateKey, usdcAddress, 300e6, wallet2Nonce, 3);
 
@@ -177,7 +177,7 @@ contract ExchangeTest is ExchangeBaseTest {
 
         uint64 wallet1Nonce = 22222;
         bytes memory tx1 = createSignedWithdrawTx(wallet1PrivateKey, usdcAddress, 200e6, wallet1Nonce, 1);
-        bytes memory tx2 = createSignedWithdrawNativeTx(wallet1PrivateKey, 3e18, wallet1Nonce + 1, 2); // insufficient balance
+        bytes memory tx2 = createSignedWithdrawTx(wallet1PrivateKey, address(0), 3e18, wallet1Nonce + 1, 2); // insufficient balance
 
         bytes[] memory txs = new bytes[](2);
         txs[0] = tx1;
