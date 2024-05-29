@@ -14,21 +14,18 @@ import {ECDSA} from "openzeppelin-contracts/contracts/utils/cryptography/ECDSA.s
 
 contract Exchange is EIP712Upgradeable, UUPSUpgradeable, OwnableUpgradeable, IExchange {
     mapping(address => mapping(address => uint256)) public balances;
-    uint256 public unused;
     address public submitter;
     address public feeAccount;
-    mapping(address => uint8) public tokenPrecision;
     bytes32 public batchHash;
 
     string constant WITHDRAW_SIGNATURE = "Withdraw(address sender,address token,uint256 amount,uint64 nonce)";
 
-    function initialize(address _submitter, address _feeAccount, uint8 _nativePrecision) public initializer {
+    function initialize(address _submitter, address _feeAccount) public initializer {
         __Ownable_init(msg.sender);
         __UUPSUpgradeable_init();
         __EIP712_init("ChainRing Labs", "0.0.1");
         submitter = _submitter;
         feeAccount = _feeAccount;
-        tokenPrecision[address(0)] = _nativePrecision;
     }
 
     receive() external payable {
@@ -232,14 +229,5 @@ contract Exchange is EIP712Upgradeable, UUPSUpgradeable, OwnableUpgradeable, IEx
             balances[_sender][_token] += uint256(_amount);
             return _amount;
         }
-    }
-
-    function _tokenPrecision(address _token) internal returns (uint8) {
-        uint8 precision = tokenPrecision[_token];
-        if (precision == 0) {
-            precision = ERC20(_token).decimals();
-            tokenPrecision[_token] = precision;
-        }
-        return precision;
     }
 }
