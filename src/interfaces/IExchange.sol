@@ -9,12 +9,6 @@ interface IExchange is IVersion {
 
     error ErrorDidNotNetToZero(address token);
 
-    enum TransactionType {
-        Withdraw,
-        WithdrawNative,
-        SettleTrade
-    }
-
     enum ErrorCode {
         InvalidSignature,
         InsufficientBalance
@@ -30,30 +24,6 @@ interface IExchange is IVersion {
     struct WithdrawWithSignature {
         uint64 sequence;
         Withdraw tx;
-        bytes signature;
-    }
-
-    struct WithdrawNative {
-        address sender;
-        uint256 amount;
-        uint64 nonce;
-    }
-
-    struct WithdrawNativeWithSignature {
-        uint64 sequence;
-        WithdrawNative tx;
-        bytes signature;
-    }
-
-    struct Order {
-        address sender;
-        int256 amount;
-        uint256 price;
-        uint256 nonce;
-    }
-
-    struct OrderWithSignature {
-        Order tx;
         bytes signature;
     }
 
@@ -79,37 +49,7 @@ interface IExchange is IVersion {
         TokenAdjustmentList[] tokenAdjustmentLists;
     }
 
-    struct SettleTrade {
-        uint64 sequence;
-        address baseToken;
-        address quoteToken;
-        int256 amount;
-        uint256 price;
-        uint256 takerFee;
-        uint256 makerFee;
-        OrderWithSignature takerOrder;
-        OrderWithSignature makerOrder;
-    }
-
-    struct ExecutionInfo {
-        int256 filledAmount;
-        uint256 executionPrice;
-        uint256 fee;
-        int256 baseAdjustment;
-        int256 quoteAdjustment;
-    }
-
-    event OrderFilled(
-        bytes32 indexed digest,
-        address indexed sender,
-        address baseToken,
-        address quoteToken,
-        bool isTaker,
-        Order order,
-        ExecutionInfo executionInfo
-    );
-
-    event PrepareTransactionFailed(uint64 sequence, ErrorCode errorCode);
+    event WithdrawalFailed(uint64 sequence, ErrorCode errorCode);
 
     event SettlementFailed(address _address, bytes32[] tradeHashes, ErrorCode errorCode);
 
@@ -124,10 +64,6 @@ interface IExchange is IVersion {
     receive() external payable;
 
     function submitWithdrawals(bytes[] calldata withdrawals) external;
-
-    function submitBatch(bytes[] calldata transactions) external;
-
-    function prepareBatch(bytes[] calldata transactions) external;
 
     function submitSettlementBatch(bytes calldata data) external;
 
