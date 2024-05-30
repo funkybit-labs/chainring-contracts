@@ -17,6 +17,7 @@ contract Exchange is EIP712Upgradeable, UUPSUpgradeable, OwnableUpgradeable, IEx
     address public submitter;
     address public feeAccount;
     bytes32 public batchHash;
+    bytes32 public lastSuccessfulBatchHash;
 
     string constant WITHDRAW_SIGNATURE = "Withdraw(address sender,address token,uint256 amount,uint64 nonce)";
 
@@ -148,6 +149,7 @@ contract Exchange is EIP712Upgradeable, UUPSUpgradeable, OwnableUpgradeable, IEx
             );
         }
 
+        lastSuccessfulBatchHash = batchHash;
         batchHash = 0;
     }
 
