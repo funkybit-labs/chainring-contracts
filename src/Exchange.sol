@@ -181,16 +181,9 @@ contract Exchange is EIP712Upgradeable, UUPSUpgradeable, OwnableUpgradeable, IEx
                 )
             )
         );
-        return _validateSignature(signedTx.tx.sender, digest, signedTx.signature, signedTx.sequence);
-    }
-
-    function _validateSignature(address _sender, bytes32 _digest, bytes memory _signature, uint64 sequence)
-        internal
-        returns (bool)
-    {
-        address recovered = ECDSA.recover(_digest, _signature);
-        if (recovered != _sender) {
-            emit WithdrawalFailed(sequence, ErrorCode.InvalidSignature);
+        address recovered = ECDSA.recover(digest, signedTx.signature);
+        if (recovered != signedTx.tx.sender) {
+            emit WithdrawalFailed(signedTx.sequence, ErrorCode.InvalidSignature);
             return false;
         }
         return true;
