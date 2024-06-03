@@ -61,7 +61,7 @@ contract BatchSettlementTest is ExchangeBaseTest {
         vm.expectEmit(exchangeProxyAddress);
         emit IExchange.SettlementCompleted(maker, makerHashes);
         exchange.submitSettlementBatch(abi.encode(batch));
-        assertEq(exchange.lastSuccessfulBatchHash(), keccak256(abi.encode(batch)));
+        assertEq(exchange.lastSettlementBatchHash(), keccak256(abi.encode(batch)));
         vm.stopPrank();
 
         verifyBalances(taker, btcAddress, 2e8, 100e8, 55e8);
@@ -106,7 +106,7 @@ contract BatchSettlementTest is ExchangeBaseTest {
         vm.expectEmit(exchangeProxyAddress);
         emit IExchange.SettlementCompleted(maker, hashes);
         exchange.submitSettlementBatch(abi.encode(batch));
-        assertEq(exchange.lastSuccessfulBatchHash(), keccak256(abi.encode(batch)));
+        assertEq(exchange.lastSettlementBatchHash(), keccak256(abi.encode(batch)));
         vm.stopPrank();
 
         verifyBalances(taker, btcAddress, 3e8, 95e8, 5e8);

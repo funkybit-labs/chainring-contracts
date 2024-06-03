@@ -11,13 +11,15 @@ import {OwnableUpgradeable} from "openzeppelin-contracts-upgradeable/contracts/a
 import {UUPSUpgradeable} from "openzeppelin-contracts-upgradeable/contracts/proxy/utils/UUPSUpgradeable.sol";
 import {EIP712Upgradeable} from "openzeppelin-contracts-upgradeable/contracts/utils/cryptography/EIP712Upgradeable.sol";
 import {ECDSA} from "openzeppelin-contracts/contracts/utils/cryptography/ECDSA.sol";
+import "forge-std/console.sol";
 
 contract Exchange is EIP712Upgradeable, UUPSUpgradeable, OwnableUpgradeable, IExchange {
     mapping(address => mapping(address => uint256)) public balances;
     address public submitter;
     address public feeAccount;
     bytes32 public batchHash;
-    bytes32 public lastSuccessfulBatchHash;
+    bytes32 public lastSettlementBatchHash;
+    bytes32 public lastWithdrawalBatchHash;
 
     string constant WITHDRAW_SIGNATURE = "Withdraw(address sender,address token,uint256 amount,uint64 nonce)";
 
@@ -71,6 +73,7 @@ contract Exchange is EIP712Upgradeable, UUPSUpgradeable, OwnableUpgradeable, IEx
                 _withdraw(signedTx.tx.sender, signedTx.tx.token, signedTx.tx.amount);
             }
         }
+        lastWithdrawalBatchHash = _calculateWithdrawalBatchHash(withdrawals);
     }
 
     function prepareSettlementBatch(bytes calldata data) public onlySubmitter {
@@ -149,7 +152,7 @@ contract Exchange is EIP712Upgradeable, UUPSUpgradeable, OwnableUpgradeable, IEx
             );
         }
 
-        lastSuccessfulBatchHash = batchHash;
+        lastSettlementBatchHash = batchHash;
         batchHash = 0;
     }
 
@@ -162,11 +165,11 @@ contract Exchange is EIP712Upgradeable, UUPSUpgradeable, OwnableUpgradeable, IEx
         _;
     }
 
-    function _calculateBatchHash(bytes[] calldata transactions) internal pure returns (bytes32) {
+    function _calculateWithdrawalBatchHash(bytes[] calldata withdrawals) internal pure returns (bytes32) {
         bytes memory buffer = new bytes(0);
-        for (uint256 i = 0; i < transactions.length; i++) {
-            bytes calldata transaction = transactions[i];
-            buffer = bytes.concat(buffer, transaction);
+        for (uint256 i = 0; i < withdrawals.length; i++) {
+            bytes32 txHash = keccak256(withdrawals[i]);
+            buffer = bytes.concat(buffer, txHash);
         }
         return keccak256(buffer);
     }

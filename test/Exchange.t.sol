@@ -141,13 +141,17 @@ contract ExchangeTest is ExchangeBaseTest {
         txs[0] = tx1;
         txs[1] = tx2;
         txs[2] = tx3;
-
+        bytes memory buffer = new bytes(0);
+        bytes32 expectedWithdrawalHash =
+            keccak256(bytes.concat(buffer, keccak256(txs[0]), keccak256(txs[1]), keccak256(txs[2])));
         vm.expectEmit(exchangeProxyAddress);
         emit IExchange.Withdrawal(wallet1, usdcAddress, 200e6);
         emit IExchange.Withdrawal(wallet1, address(0), 1e18);
         emit IExchange.Withdrawal(wallet2, usdcAddress, 300e6);
         vm.prank(submitter);
         exchange.submitWithdrawals(txs);
+
+        assertEq(exchange.lastWithdrawalBatchHash(), expectedWithdrawalHash);
 
         // verify balances
         verifyBalances(wallet1, usdcAddress, 800e6, 499200e6, 1500e6);
