@@ -56,19 +56,21 @@ contract ExchangeBaseTest is Test {
         vm.stopPrank();
     }
 
-    function withdraw(uint256 walletPrivateKey, address tokenAddress, uint256 amount, uint256 expectedEmitAmount)
+    function withdraw(uint256 walletPrivateKey, address tokenAddress, uint256 amount, uint256 expectedAmount)
         internal
     {
-        bytes memory tx1 = createSignedWithdrawTx(walletPrivateKey, tokenAddress, amount, 1000, 1);
+        uint64 sequence = 1;
+        bytes memory tx1 = createSignedWithdrawTx(walletPrivateKey, tokenAddress, amount, 1000, sequence);
         bytes[] memory txs = new bytes[](1);
         txs[0] = tx1;
 
         vm.startPrank(submitter);
         vm.expectEmit(exchangeProxyAddress);
-        if (amount != 0 && amount != expectedEmitAmount) {
-            emit IExchange.AmountAdjusted(vm.addr(walletPrivateKey), tokenAddress, amount, expectedEmitAmount);
+        if (amount != 0 && amount != expectedAmount) {
+            emit IExchange.WithdrawalFailed(sequence, IExchange.ErrorCode.InsufficientBalance, amount, expectedAmount);
+        } else {
+            emit IExchange.Withdrawal(vm.addr(walletPrivateKey), tokenAddress, expectedAmount);
         }
-        emit IExchange.Withdrawal(vm.addr(walletPrivateKey), tokenAddress, expectedEmitAmount);
         exchange.submitWithdrawals(txs);
         vm.stopPrank();
     }

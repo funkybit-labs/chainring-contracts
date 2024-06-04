@@ -49,13 +49,11 @@ interface IExchange is IVersion {
         TokenAdjustmentList[] tokenAdjustmentLists;
     }
 
-    event WithdrawalFailed(uint64 sequence, ErrorCode errorCode);
+    event WithdrawalFailed(uint64 sequence, ErrorCode errorCode, uint256 requestedAmount, uint256 balance);
 
-    event SettlementFailed(address _address, bytes32[] tradeHashes, ErrorCode errorCode);
+    event SettlementFailed(address _address, bytes32[] tradeHashes, uint256 requestedAmount, uint256 balance);
 
     event SettlementCompleted(address _address, bytes32[] tradeHashes);
-
-    event AmountAdjusted(address indexed sender, address token, uint256 requested, uint256 actual);
 
     function DOMAIN_SEPARATOR() external view returns (bytes32);
 

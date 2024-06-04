@@ -68,8 +68,8 @@ contract Exchange is EIP712Upgradeable, UUPSUpgradeable, OwnableUpgradeable, IEx
         for (uint256 i = 0; i < withdrawals.length; i++) {
             bytes calldata withdrawal = withdrawals[i];
             WithdrawWithSignature memory signedTx = abi.decode(withdrawal, (WithdrawWithSignature));
-            if (_validateWithdrawal(signedTx)) {
-                _withdraw(signedTx.tx.sender, signedTx.tx.token, signedTx.tx.amount);
+            if (_validateWithdrawalSignature(signedTx)) {
+                _withdraw(signedTx.sequence, signedTx.tx.sender, signedTx.tx.token, signedTx.tx.amount);
             }
         }
         lastWithdrawalBatchHash = _calculateWithdrawalBatchHash(withdrawals);
@@ -104,7 +104,8 @@ contract Exchange is EIP712Upgradeable, UUPSUpgradeable, OwnableUpgradeable, IEx
                     emit SettlementFailed(
                         _wallet,
                         _batchSettlement.walletTradeLists[walletIndex].tradeHashes,
-                        ErrorCode.InsufficientBalance
+                        _adjustmentAmount,
+                        balances[_wallet][_token]
                     );
                 }
             }
@@ -173,7 +174,7 @@ contract Exchange is EIP712Upgradeable, UUPSUpgradeable, OwnableUpgradeable, IEx
         return keccak256(buffer);
     }
 
-    function _validateWithdrawal(WithdrawWithSignature memory signedTx) internal returns (bool) {
+    function _validateWithdrawalSignature(WithdrawWithSignature memory signedTx) internal returns (bool) {
         bytes32 digest = _hashTypedDataV4(
             keccak256(
                 abi.encode(
@@ -187,44 +188,29 @@ contract Exchange is EIP712Upgradeable, UUPSUpgradeable, OwnableUpgradeable, IEx
         );
         address recovered = ECDSA.recover(digest, signedTx.signature);
         if (recovered != signedTx.tx.sender) {
-            emit WithdrawalFailed(signedTx.sequence, ErrorCode.InvalidSignature);
+            emit WithdrawalFailed(signedTx.sequence, ErrorCode.InvalidSignature, 0, 0);
             return false;
         }
         return true;
     }
 
-    function _withdraw(address _sender, address _token, uint256 _amount) internal {
+    function _withdraw(uint64 _sequence, address _sender, address _token, uint256 _amount) internal {
         uint256 balance = balances[_sender][_token];
         if (_amount == 0) {
             _amount = balance;
         }
-        uint256 _actual = uint256(-_adjustBalance(_sender, _token, -int256(_amount)));
-
-        if (_token == address(0)) {
-            payable(_sender).transfer(_actual);
+        if (_amount > balance) {
+            emit WithdrawalFailed(_sequence, ErrorCode.InsufficientBalance, _amount, balance);
         } else {
-            IERC20 erc20 = IERC20(_token);
-            erc20.transfer(_sender, _actual);
-        }
-
-        emit Withdrawal(_sender, _token, _actual);
-    }
-
-    function _adjustBalance(address _sender, address _token, int256 _amount) internal returns (int256) {
-        if (_amount < 0) {
-            uint256 balance = balances[_sender][_token];
-            uint256 amount = uint256(-_amount);
-            if (amount > balance) {
-                emit AmountAdjusted(_sender, _token, amount, balance);
-                balances[_sender][_token] -= balance;
-                return -int256(balance);
+            balances[_sender][_token] -= _amount;
+            if (_token == address(0)) {
+                payable(_sender).transfer(_amount);
             } else {
-                balances[_sender][_token] -= amount;
-                return _amount;
+                IERC20 erc20 = IERC20(_token);
+                erc20.transfer(_sender, _amount);
             }
-        } else {
-            balances[_sender][_token] += uint256(_amount);
-            return _amount;
+
+            emit Withdrawal(_sender, _token, _amount);
         }
     }
 }

@@ -159,14 +159,31 @@ contract ExchangeTest is ExchangeBaseTest {
         verifyBalances(wallet2, usdcAddress, 700e6, 499300e6, 1500e6);
     }
 
-    function test_AmountAdjustment() public {
+    function test_WithdrawalInsufficientBalance() public {
         setupWallets();
+
         deposit(wallet1, usdcAddress, 1000e6);
+        verifyBalances(wallet1, usdcAddress, 1000e6, 500000e6 - 1000e6, 1000e6);
         withdraw(wallet1PrivateKey, usdcAddress, 1001e6, 1000e6);
-        vm.stopPrank();
+        verifyBalances(wallet1, usdcAddress, 1000e6, 500000e6 - 1000e6, 1000e6);
 
         deposit(wallet1, 2e18);
+        verifyBalances(wallet1, 2e18, 10e18 - 2e18, 2e18);
         withdraw(wallet1PrivateKey, address(0), 3e18, 2e18);
+        verifyBalances(wallet1, 2e18, 10e18 - 2e18, 2e18);
+    }
+
+    function test_WithdrawalAll() public {
+        setupWallets();
+
+        deposit(wallet1, usdcAddress, 1000e6);
+        verifyBalances(wallet1, usdcAddress, 1000e6, 500000e6 - 1000e6, 1000e6);
+        withdraw(wallet1PrivateKey, usdcAddress, 0, 1000e6);
+        verifyBalances(wallet1, usdcAddress, 0, 500000e6, 0);
+
+        deposit(wallet1, 2e18);
+        verifyBalances(wallet1, 2e18, 10e18 - 2e18, 2e18);
+        withdraw(wallet1PrivateKey, address(0), 0, 2e18);
         verifyBalances(wallet1, 0, 10e18, 0);
     }
 
@@ -212,16 +229,6 @@ contract ExchangeTest is ExchangeBaseTest {
         vm.prank(submitter);
         vm.expectRevert(bytes("Sender is not the submitter"));
         exchange.submitWithdrawals(txs);
-
-        // check balance adjusted by remaining amounting if too much requested and amount adjusted events emitted
-        txs[1] = tx2;
-        vm.startPrank(newSubmitter);
-        vm.expectEmit(exchangeProxyAddress);
-        emit IExchange.AmountAdjusted(wallet1, address(0), 3e18, 2e18);
-        vm.expectEmit(exchangeProxyAddress);
-        emit IExchange.Withdrawal(wallet1, address(0), 2e18);
-        exchange.submitWithdrawals(txs);
-        vm.stopPrank();
 
         // set it back
         exchange.setSubmitter(submitter);
