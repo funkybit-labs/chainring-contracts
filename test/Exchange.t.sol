@@ -136,18 +136,24 @@ contract ExchangeTest is ExchangeBaseTest {
         bytes memory tx2 = createSignedWithdrawTx(wallet1PrivateKey, address(0), 1e18, wallet1Nonce + 200, 2);
         uint64 wallet2Nonce = 10000;
         bytes memory tx3 = createSignedWithdrawTx(wallet2PrivateKey, usdcAddress, 300e6, wallet2Nonce, 3);
+        bytes memory tx4 = createSignedWithdrawTxWithInvalidSignature(wallet2PrivateKey, usdcAddress, 300e6, wallet2Nonce, 4);
 
-        bytes[] memory txs = new bytes[](3);
+        bytes[] memory txs = new bytes[](4);
         txs[0] = tx1;
         txs[1] = tx2;
         txs[2] = tx3;
+        txs[3] = tx4;
         bytes memory buffer = new bytes(0);
         bytes32 expectedWithdrawalHash =
-            keccak256(bytes.concat(buffer, keccak256(txs[0]), keccak256(txs[1]), keccak256(txs[2])));
+            keccak256(bytes.concat(buffer, keccak256(txs[0]), keccak256(txs[1]), keccak256(txs[2]), keccak256(txs[3])));
         vm.expectEmit(exchangeProxyAddress);
-        emit IExchange.Withdrawal(wallet1, usdcAddress, 200e6);
-        emit IExchange.Withdrawal(wallet1, address(0), 1e18);
-        emit IExchange.Withdrawal(wallet2, usdcAddress, 300e6);
+        emit IExchange.Withdrawal(wallet1, 1, usdcAddress, 200e6);
+        vm.expectEmit(exchangeProxyAddress);
+        emit IExchange.Withdrawal(wallet1, 2, address(0), 1e18);
+        vm.expectEmit(exchangeProxyAddress);
+        emit IExchange.Withdrawal(wallet2, 3, usdcAddress, 300e6);
+        vm.expectEmit(exchangeProxyAddress);
+        emit IExchange.WithdrawalFailed(address(1), 4, usdcAddress, 300e6, 0, IExchange.ErrorCode.InvalidSignature);
         vm.prank(submitter);
         exchange.submitWithdrawals(txs);
 

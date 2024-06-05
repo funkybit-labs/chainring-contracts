@@ -5,7 +5,7 @@ import "./IVersion.sol";
 
 interface IExchange is IVersion {
     event Deposit(address indexed from, address token, uint256 amount);
-    event Withdrawal(address indexed to, address token, uint256 amount);
+    event Withdrawal(address indexed to, uint64 sequence, address token, uint256 amount);
 
     error ErrorDidNotNetToZero(address token);
 
@@ -49,11 +49,11 @@ interface IExchange is IVersion {
         TokenAdjustmentList[] tokenAdjustmentLists;
     }
 
-    event WithdrawalFailed(uint64 sequence, ErrorCode errorCode, uint256 requestedAmount, uint256 balance);
+    event WithdrawalFailed(address indexed _address, uint64 sequence, address token, uint256 amount, uint256 balance, ErrorCode errorCode);
 
-    event SettlementFailed(address _address, bytes32[] tradeHashes, uint256 requestedAmount, uint256 balance);
+    event SettlementFailed(address indexed _address, bytes32[] tradeHashes, uint256 requestedAmount, uint256 balance);
 
-    event SettlementCompleted(address _address, bytes32[] tradeHashes);
+    event SettlementCompleted(address indexed _address, bytes32[] tradeHashes);
 
     function DOMAIN_SEPARATOR() external view returns (bytes32);
 

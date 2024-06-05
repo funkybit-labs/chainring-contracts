@@ -188,7 +188,7 @@ contract Exchange is EIP712Upgradeable, UUPSUpgradeable, OwnableUpgradeable, IEx
         );
         address recovered = ECDSA.recover(digest, signedTx.signature);
         if (recovered != signedTx.tx.sender) {
-            emit WithdrawalFailed(signedTx.sequence, ErrorCode.InvalidSignature, 0, 0);
+            emit WithdrawalFailed(signedTx.tx.sender, signedTx.sequence, signedTx.tx.token, signedTx.tx.amount, 0, ErrorCode.InvalidSignature);
             return false;
         }
         return true;
@@ -200,7 +200,7 @@ contract Exchange is EIP712Upgradeable, UUPSUpgradeable, OwnableUpgradeable, IEx
             _amount = balance;
         }
         if (_amount > balance) {
-            emit WithdrawalFailed(_sequence, ErrorCode.InsufficientBalance, _amount, balance);
+            emit WithdrawalFailed(_sender, _sequence, _token, _amount, balance, ErrorCode.InsufficientBalance);
         } else {
             balances[_sender][_token] -= _amount;
             if (_token == address(0)) {
@@ -210,7 +210,7 @@ contract Exchange is EIP712Upgradeable, UUPSUpgradeable, OwnableUpgradeable, IEx
                 erc20.transfer(_sender, _amount);
             }
 
-            emit Withdrawal(_sender, _token, _amount);
+            emit Withdrawal(_sender, _sequence, _token, _amount);
         }
     }
 }

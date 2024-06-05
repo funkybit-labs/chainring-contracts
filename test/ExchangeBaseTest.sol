@@ -67,9 +67,9 @@ contract ExchangeBaseTest is Test {
         vm.startPrank(submitter);
         vm.expectEmit(exchangeProxyAddress);
         if (amount != 0 && amount != expectedAmount) {
-            emit IExchange.WithdrawalFailed(sequence, IExchange.ErrorCode.InsufficientBalance, amount, expectedAmount);
+            emit IExchange.WithdrawalFailed(vm.addr(walletPrivateKey), sequence, tokenAddress, amount, expectedAmount, IExchange.ErrorCode.InsufficientBalance);
         } else {
-            emit IExchange.Withdrawal(vm.addr(walletPrivateKey), tokenAddress, expectedAmount);
+            emit IExchange.Withdrawal(vm.addr(walletPrivateKey), sequence, tokenAddress, expectedAmount);
         }
         exchange.submitWithdrawals(txs);
         vm.stopPrank();
