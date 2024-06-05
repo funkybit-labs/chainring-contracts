@@ -53,7 +53,7 @@ contract ExchangeTest is ExchangeBaseTest {
         withdraw(wallet1PrivateKey, btcAddress, 4e8, 4e8);
         verifyBalances(wallet1, btcAddress, 51e8, 49e8, 51e8);
 
-        withdraw(wallet1PrivateKey, btcAddress, 0, 51e8);
+        withdraw(wallet1PrivateKey, btcAddress, 0, 51e8, 51e8);
         verifyBalances(wallet1, btcAddress, 0, 100e8, 0);
     }
 
@@ -136,7 +136,8 @@ contract ExchangeTest is ExchangeBaseTest {
         bytes memory tx2 = createSignedWithdrawTx(wallet1PrivateKey, address(0), 1e18, wallet1Nonce + 200, 2);
         uint64 wallet2Nonce = 10000;
         bytes memory tx3 = createSignedWithdrawTx(wallet2PrivateKey, usdcAddress, 300e6, wallet2Nonce, 3);
-        bytes memory tx4 = createSignedWithdrawTxWithInvalidSignature(wallet2PrivateKey, usdcAddress, 300e6, wallet2Nonce, 4);
+        bytes memory tx4 =
+            createSignedWithdrawTxWithInvalidSignature(wallet2PrivateKey, usdcAddress, 300e6, wallet2Nonce, 4);
 
         bytes[] memory txs = new bytes[](4);
         txs[0] = tx1;
@@ -165,7 +166,7 @@ contract ExchangeTest is ExchangeBaseTest {
         verifyBalances(wallet2, usdcAddress, 700e6, 499300e6, 1500e6);
     }
 
-    function test_WithdrawalInsufficientBalance() public {
+    function test_WithdrawInsufficientBalance() public {
         setupWallets();
 
         deposit(wallet1, usdcAddress, 1000e6);
@@ -179,17 +180,25 @@ contract ExchangeTest is ExchangeBaseTest {
         verifyBalances(wallet1, 2e18, 10e18 - 2e18, 2e18);
     }
 
-    function test_WithdrawalAll() public {
+    function test_WithdrawAll() public {
         setupWallets();
 
         deposit(wallet1, usdcAddress, 1000e6);
         verifyBalances(wallet1, usdcAddress, 1000e6, 500000e6 - 1000e6, 1000e6);
-        withdraw(wallet1PrivateKey, usdcAddress, 0, 1000e6);
+        // the withdrawAll amount is equals to balance
+        withdraw(wallet1PrivateKey, usdcAddress, 0, 1000e6, 1000e6);
         verifyBalances(wallet1, usdcAddress, 0, 500000e6, 0);
+
+        deposit(wallet1, usdcAddress, 1000e6);
+        verifyBalances(wallet1, usdcAddress, 1000e6, 500000e6 - 1000e6, 1000e6);
+        // the withdrawAll amount is less than balance, so should withdraw that amount
+        withdraw(wallet1PrivateKey, usdcAddress, 0, 900e6, 900e6);
+        verifyBalances(wallet1, usdcAddress, 100e6, 499900e6, 100e6);
 
         deposit(wallet1, 2e18);
         verifyBalances(wallet1, 2e18, 10e18 - 2e18, 2e18);
-        withdraw(wallet1PrivateKey, address(0), 0, 2e18);
+        // withdrawAll amount greater than balance so should withdraw balance
+        withdraw(wallet1PrivateKey, address(0), 0, 2e18, 3e18);
         verifyBalances(wallet1, 0, 10e18, 0);
     }
 

@@ -59,15 +59,33 @@ contract ExchangeBaseTest is Test {
     function withdraw(uint256 walletPrivateKey, address tokenAddress, uint256 amount, uint256 expectedAmount)
         internal
     {
+        withdraw(walletPrivateKey, tokenAddress, amount, expectedAmount, 0);
+    }
+
+    function withdraw(
+        uint256 walletPrivateKey,
+        address tokenAddress,
+        uint256 amount,
+        uint256 expectedAmount,
+        uint256 withdrawAllAmount
+    ) internal {
         uint64 sequence = 1;
-        bytes memory tx1 = createSignedWithdrawTx(walletPrivateKey, tokenAddress, amount, 1000, sequence);
+        bytes memory tx1 =
+            createSignedWithdrawTx(walletPrivateKey, tokenAddress, amount, 1000, sequence, withdrawAllAmount);
         bytes[] memory txs = new bytes[](1);
         txs[0] = tx1;
 
         vm.startPrank(submitter);
         vm.expectEmit(exchangeProxyAddress);
         if (amount != 0 && amount != expectedAmount) {
-            emit IExchange.WithdrawalFailed(vm.addr(walletPrivateKey), sequence, tokenAddress, amount, expectedAmount, IExchange.ErrorCode.InsufficientBalance);
+            emit IExchange.WithdrawalFailed(
+                vm.addr(walletPrivateKey),
+                sequence,
+                tokenAddress,
+                amount,
+                expectedAmount,
+                IExchange.ErrorCode.InsufficientBalance
+            );
         } else {
             emit IExchange.Withdrawal(vm.addr(walletPrivateKey), sequence, tokenAddress, expectedAmount);
         }
@@ -108,6 +126,17 @@ contract ExchangeBaseTest is Test {
         uint64 nonce,
         uint256 sequence
     ) internal view returns (bytes memory) {
+        return createSignedWithdrawTx(walletPrivateKey, tokenAddress, amount, nonce, sequence, 0);
+    }
+
+    function createSignedWithdrawTx(
+        uint256 walletPrivateKey,
+        address tokenAddress,
+        uint256 amount,
+        uint64 nonce,
+        uint256 sequence,
+        uint256 withdrawAllAmount
+    ) internal view returns (bytes memory) {
         IExchange.Withdraw memory _withdraw =
             IExchange.Withdraw({sender: vm.addr(walletPrivateKey), token: tokenAddress, amount: amount, nonce: nonce});
 
@@ -116,7 +145,7 @@ contract ExchangeBaseTest is Test {
         bytes memory signature = sign(walletPrivateKey, digest);
 
         IExchange.WithdrawWithSignature memory _withdrawWithSignature =
-            IExchange.WithdrawWithSignature(uint64(sequence), _withdraw, signature);
+            IExchange.WithdrawWithSignature(uint64(sequence), _withdraw, signature, withdrawAllAmount);
         return abi.encode(_withdrawWithSignature);
     }
 
@@ -137,7 +166,7 @@ contract ExchangeBaseTest is Test {
         bytes memory signature = sign(walletPrivateKey, digest);
 
         IExchange.WithdrawWithSignature memory _withdrawWithSignature =
-            IExchange.WithdrawWithSignature(uint64(sequence), _withdraw2, signature);
+            IExchange.WithdrawWithSignature(uint64(sequence), _withdraw2, signature, 0);
         return abi.encode(_withdrawWithSignature);
     }
 

@@ -11,6 +11,7 @@ import {OwnableUpgradeable} from "openzeppelin-contracts-upgradeable/contracts/a
 import {UUPSUpgradeable} from "openzeppelin-contracts-upgradeable/contracts/proxy/utils/UUPSUpgradeable.sol";
 import {EIP712Upgradeable} from "openzeppelin-contracts-upgradeable/contracts/utils/cryptography/EIP712Upgradeable.sol";
 import {ECDSA} from "openzeppelin-contracts/contracts/utils/cryptography/ECDSA.sol";
+import "forge-std/console.sol";
 
 contract Exchange is EIP712Upgradeable, UUPSUpgradeable, OwnableUpgradeable, IExchange {
     mapping(address => mapping(address => uint256)) public balances;
@@ -69,7 +70,13 @@ contract Exchange is EIP712Upgradeable, UUPSUpgradeable, OwnableUpgradeable, IEx
             bytes calldata withdrawal = withdrawals[i];
             WithdrawWithSignature memory signedTx = abi.decode(withdrawal, (WithdrawWithSignature));
             if (_validateWithdrawalSignature(signedTx)) {
-                _withdraw(signedTx.sequence, signedTx.tx.sender, signedTx.tx.token, signedTx.tx.amount);
+                _withdraw(
+                    signedTx.sequence,
+                    signedTx.tx.sender,
+                    signedTx.tx.token,
+                    signedTx.tx.amount,
+                    signedTx.withdrawAllAmount
+                );
             }
         }
         lastWithdrawalBatchHash = _calculateWithdrawalBatchHash(withdrawals);
@@ -188,16 +195,25 @@ contract Exchange is EIP712Upgradeable, UUPSUpgradeable, OwnableUpgradeable, IEx
         );
         address recovered = ECDSA.recover(digest, signedTx.signature);
         if (recovered != signedTx.tx.sender) {
-            emit WithdrawalFailed(signedTx.tx.sender, signedTx.sequence, signedTx.tx.token, signedTx.tx.amount, 0, ErrorCode.InvalidSignature);
+            emit WithdrawalFailed(
+                signedTx.tx.sender,
+                signedTx.sequence,
+                signedTx.tx.token,
+                signedTx.tx.amount,
+                0,
+                ErrorCode.InvalidSignature
+            );
             return false;
         }
         return true;
     }
 
-    function _withdraw(uint64 _sequence, address _sender, address _token, uint256 _amount) internal {
+    function _withdraw(uint64 _sequence, address _sender, address _token, uint256 _amount, uint256 _withdrawAllAmount)
+        internal
+    {
         uint256 balance = balances[_sender][_token];
         if (_amount == 0) {
-            _amount = balance;
+            _amount = _withdrawAllAmount == 0 || _withdrawAllAmount > balance ? balance : _withdrawAllAmount;
         }
         if (_amount > balance) {
             emit WithdrawalFailed(_sender, _sequence, _token, _amount, balance, ErrorCode.InsufficientBalance);

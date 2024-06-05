@@ -25,6 +25,7 @@ interface IExchange is IVersion {
         uint64 sequence;
         Withdraw tx;
         bytes signature;
+        uint256 withdrawAllAmount;
     }
 
     struct Adjustment {
@@ -49,7 +50,9 @@ interface IExchange is IVersion {
         TokenAdjustmentList[] tokenAdjustmentLists;
     }
 
-    event WithdrawalFailed(address indexed _address, uint64 sequence, address token, uint256 amount, uint256 balance, ErrorCode errorCode);
+    event WithdrawalFailed(
+        address indexed _address, uint64 sequence, address token, uint256 amount, uint256 balance, ErrorCode errorCode
+    );
 
     event SettlementFailed(address indexed _address, bytes32[] tradeHashes, uint256 requestedAmount, uint256 balance);
 
