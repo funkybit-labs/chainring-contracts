@@ -69,13 +69,11 @@ contract Exchange is EIP712Upgradeable, UUPSUpgradeable, OwnableUpgradeable, IEx
             bytes calldata withdrawal = withdrawals[i];
             WithdrawWithSignature memory signedTx = abi.decode(withdrawal, (WithdrawWithSignature));
             if (_validateWithdrawalSignature(signedTx)) {
-                _withdraw(
-                    signedTx.sequence,
-                    signedTx.tx.sender,
-                    signedTx.tx.token,
-                    signedTx.tx.amount,
-                    signedTx.withdrawAllAmount
-                );
+                if (signedTx.tx.amount == 0) {
+                    _withdrawAll(signedTx.sequence, signedTx.tx.sender, signedTx.tx.token, signedTx.withdrawAllAmount);
+                } else {
+                    _withdraw(signedTx.sequence, signedTx.tx.sender, signedTx.tx.token, signedTx.tx.amount);
+                }
             }
         }
         lastWithdrawalBatchHash = _calculateWithdrawalBatchHash(withdrawals);
@@ -207,13 +205,13 @@ contract Exchange is EIP712Upgradeable, UUPSUpgradeable, OwnableUpgradeable, IEx
         return true;
     }
 
-    function _withdraw(uint64 _sequence, address _sender, address _token, uint256 _amount, uint256 _withdrawAllAmount)
-        internal
-    {
+    function _withdrawAll(uint64 _sequence, address _sender, address _token, uint256 _amount) internal {
         uint256 balance = balances[_sender][_token];
-        if (_amount == 0) {
-            _amount = _withdrawAllAmount == 0 || _withdrawAllAmount > balance ? balance : _withdrawAllAmount;
-        }
+        _withdraw(_sequence, _sender, _token, _amount > balance ? balance : _amount);
+    }
+
+    function _withdraw(uint64 _sequence, address _sender, address _token, uint256 _amount) internal {
+        uint256 balance = balances[_sender][_token];
         if (_amount > balance) {
             emit WithdrawalFailed(_sender, _sequence, _token, _amount, balance, ErrorCode.InsufficientBalance);
         } else {
