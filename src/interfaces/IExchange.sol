@@ -14,6 +14,11 @@ interface IExchange is IVersion {
         InsufficientBalance
     }
 
+    enum TransactionType {
+        Withdraw,
+        WithdrawAll
+    }
+
     struct Withdraw {
         address sender;
         address token;
@@ -25,7 +30,6 @@ interface IExchange is IVersion {
         uint64 sequence;
         Withdraw tx;
         bytes signature;
-        uint256 withdrawAllAmount;
     }
 
     struct Adjustment {

@@ -66,11 +66,11 @@ contract Exchange is EIP712Upgradeable, UUPSUpgradeable, OwnableUpgradeable, IEx
     function submitWithdrawals(bytes[] calldata withdrawals) public onlySubmitter {
         require(batchHash == 0, "Settlement batch in process");
         for (uint256 i = 0; i < withdrawals.length; i++) {
-            bytes calldata withdrawal = withdrawals[i];
-            WithdrawWithSignature memory signedTx = abi.decode(withdrawal, (WithdrawWithSignature));
-            if (_validateWithdrawalSignature(signedTx)) {
-                if (signedTx.tx.amount == 0) {
-                    _withdrawAll(signedTx.sequence, signedTx.tx.sender, signedTx.tx.token, signedTx.withdrawAllAmount);
+            TransactionType txType = TransactionType(uint8(withdrawals[i][0]));
+            WithdrawWithSignature memory signedTx = abi.decode(withdrawals[i][1:], (WithdrawWithSignature));
+            if (_validateWithdrawalSignature(signedTx, txType)) {
+                if (txType == TransactionType.WithdrawAll) {
+                    _withdrawAll(signedTx.sequence, signedTx.tx.sender, signedTx.tx.token, signedTx.tx.amount);
                 } else {
                     _withdraw(signedTx.sequence, signedTx.tx.sender, signedTx.tx.token, signedTx.tx.amount);
                 }
@@ -178,14 +178,17 @@ contract Exchange is EIP712Upgradeable, UUPSUpgradeable, OwnableUpgradeable, IEx
         return keccak256(buffer);
     }
 
-    function _validateWithdrawalSignature(WithdrawWithSignature memory signedTx) internal returns (bool) {
+    function _validateWithdrawalSignature(WithdrawWithSignature memory signedTx, TransactionType txType)
+        internal
+        returns (bool)
+    {
         bytes32 digest = _hashTypedDataV4(
             keccak256(
                 abi.encode(
                     keccak256(bytes(WITHDRAW_SIGNATURE)),
                     signedTx.tx.sender,
                     signedTx.tx.token,
-                    signedTx.tx.amount,
+                    txType == TransactionType.WithdrawAll ? 0 : signedTx.tx.amount,
                     signedTx.tx.nonce
                 )
             )

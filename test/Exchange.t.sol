@@ -53,7 +53,7 @@ contract ExchangeTest is ExchangeBaseTest {
         withdraw(wallet1PrivateKey, btcAddress, 4e8, 4e8);
         verifyBalances(wallet1, btcAddress, 51e8, 49e8, 51e8);
 
-        withdraw(wallet1PrivateKey, btcAddress, 0, 51e8, 51e8);
+        withdrawAll(wallet1PrivateKey, btcAddress, 5e18, 51e8);
         verifyBalances(wallet1, btcAddress, 0, 100e8, 0);
     }
 
@@ -186,19 +186,19 @@ contract ExchangeTest is ExchangeBaseTest {
         deposit(wallet1, usdcAddress, 1000e6);
         verifyBalances(wallet1, usdcAddress, 1000e6, 500000e6 - 1000e6, 1000e6);
         // the withdrawAll amount is equals to balance
-        withdraw(wallet1PrivateKey, usdcAddress, 0, 1000e6, 1000e6);
+        withdrawAll(wallet1PrivateKey, usdcAddress, 1000e6, 1000e6);
         verifyBalances(wallet1, usdcAddress, 0, 500000e6, 0);
 
         deposit(wallet1, usdcAddress, 1000e6);
         verifyBalances(wallet1, usdcAddress, 1000e6, 500000e6 - 1000e6, 1000e6);
         // the withdrawAll amount is less than balance, so should withdraw that amount
-        withdraw(wallet1PrivateKey, usdcAddress, 0, 900e6, 900e6);
+        withdrawAll(wallet1PrivateKey, usdcAddress, 900e6, 900e6);
         verifyBalances(wallet1, usdcAddress, 100e6, 499900e6, 100e6);
 
         deposit(wallet1, 2e18);
         verifyBalances(wallet1, 2e18, 10e18 - 2e18, 2e18);
         // withdrawAll amount greater than balance so should withdraw balance
-        withdraw(wallet1PrivateKey, address(0), 0, 2e18, 3e18);
+        withdrawAll(wallet1PrivateKey, address(0), 3e18, 2e18);
         verifyBalances(wallet1, 0, 10e18, 0);
     }
 
