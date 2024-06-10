@@ -5,13 +5,18 @@ import "./IVersion.sol";
 
 interface IExchange is IVersion {
     event Deposit(address indexed from, address token, uint256 amount);
-    event Withdrawal(address indexed to, address token, uint256 amount);
+    event Withdrawal(address indexed to, uint64 sequence, address token, uint256 amount);
 
     error ErrorDidNotNetToZero(address token);
 
     enum ErrorCode {
         InvalidSignature,
         InsufficientBalance
+    }
+
+    enum TransactionType {
+        Withdraw,
+        WithdrawAll
     }
 
     struct Withdraw {
@@ -49,13 +54,13 @@ interface IExchange is IVersion {
         TokenAdjustmentList[] tokenAdjustmentLists;
     }
 
-    event WithdrawalFailed(uint64 sequence, ErrorCode errorCode);
+    event WithdrawalFailed(
+        address indexed _address, uint64 sequence, address token, uint256 amount, uint256 balance, ErrorCode errorCode
+    );
 
-    event SettlementFailed(address _address, bytes32[] tradeHashes, ErrorCode errorCode);
+    event SettlementFailed(address indexed _address, bytes32[] tradeHashes, uint256 requestedAmount, uint256 balance);
 
-    event SettlementCompleted(address _address, bytes32[] tradeHashes);
-
-    event AmountAdjusted(address indexed sender, address token, uint256 requested, uint256 actual);
+    event SettlementCompleted(address indexed _address, bytes32[] tradeHashes);
 
     function DOMAIN_SEPARATOR() external view returns (bytes32);
 
