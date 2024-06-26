@@ -70,9 +70,21 @@ contract Exchange is EIP712Upgradeable, UUPSUpgradeable, OwnableUpgradeable, IEx
             WithdrawWithSignature memory signedTx = abi.decode(withdrawals[i][1:], (WithdrawWithSignature));
             if (_validateWithdrawalSignature(signedTx, txType)) {
                 if (txType == TransactionType.WithdrawAll) {
-                    _withdrawAll(signedTx.sequence, signedTx.tx.sender, signedTx.tx.token, signedTx.tx.amount);
+                    _withdrawAll(
+                        signedTx.sequence,
+                        signedTx.tx.sender,
+                        signedTx.tx.token,
+                        signedTx.tx.amount,
+                        signedTx.tx.feeAmount
+                    );
                 } else {
-                    _withdraw(signedTx.sequence, signedTx.tx.sender, signedTx.tx.token, signedTx.tx.amount);
+                    _withdraw(
+                        signedTx.sequence,
+                        signedTx.tx.sender,
+                        signedTx.tx.token,
+                        signedTx.tx.amount,
+                        signedTx.tx.feeAmount
+                    );
                 }
             }
         }
@@ -208,25 +220,30 @@ contract Exchange is EIP712Upgradeable, UUPSUpgradeable, OwnableUpgradeable, IEx
         return true;
     }
 
-    function _withdrawAll(uint64 _sequence, address _sender, address _token, uint256 _amount) internal {
+    function _withdrawAll(uint64 _sequence, address _sender, address _token, uint256 _amount, uint256 _fee) internal {
         uint256 balance = balances[_sender][_token];
-        _withdraw(_sequence, _sender, _token, _amount > balance ? balance : _amount);
+        if (_fee > balance) {
+            emit WithdrawalFailed(_sender, _sequence, _token, _amount, balance, ErrorCode.InsufficientBalance);
+        } else {
+            _withdraw(_sequence, _sender, _token, _amount > balance ? balance : _amount, _fee);
+        }
     }
 
-    function _withdraw(uint64 _sequence, address _sender, address _token, uint256 _amount) internal {
+    function _withdraw(uint64 _sequence, address _sender, address _token, uint256 _amount, uint256 _fee) internal {
         uint256 balance = balances[_sender][_token];
         if (_amount > balance) {
             emit WithdrawalFailed(_sender, _sequence, _token, _amount, balance, ErrorCode.InsufficientBalance);
         } else {
             balances[_sender][_token] -= _amount;
+            balances[feeAccount][_token] += _fee;
             if (_token == address(0)) {
-                payable(_sender).transfer(_amount);
+                payable(_sender).transfer(_amount - _fee);
             } else {
                 IERC20 erc20 = IERC20(_token);
-                erc20.transfer(_sender, _amount);
+                erc20.transfer(_sender, _amount - _fee);
             }
 
-            emit Withdrawal(_sender, _sequence, _token, _amount);
+            emit Withdrawal(_sender, _sequence, _token, _amount, _fee);
         }
     }
 }

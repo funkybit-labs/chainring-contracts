@@ -56,16 +56,14 @@ contract ExchangeBaseTest is Test {
         vm.stopPrank();
     }
 
-    function withdrawAll(uint256 walletPrivateKey, address tokenAddress, uint256 amount, uint256 expectedAmount)
-        internal
-    {
-        withdraw(walletPrivateKey, tokenAddress, amount, expectedAmount, true);
-    }
-
-    function withdraw(uint256 walletPrivateKey, address tokenAddress, uint256 amount, uint256 expectedAmount)
-        internal
-    {
-        withdraw(walletPrivateKey, tokenAddress, amount, expectedAmount, false);
+    function withdrawAll(
+        uint256 walletPrivateKey,
+        address tokenAddress,
+        uint256 amount,
+        uint256 expectedAmount,
+        uint256 feeAmount
+    ) internal {
+        withdraw(walletPrivateKey, tokenAddress, amount, expectedAmount, feeAmount, true);
     }
 
     function withdraw(
@@ -73,12 +71,23 @@ contract ExchangeBaseTest is Test {
         address tokenAddress,
         uint256 amount,
         uint256 expectedAmount,
+        uint256 feeAmount
+    ) internal {
+        withdraw(walletPrivateKey, tokenAddress, amount, expectedAmount, feeAmount, false);
+    }
+
+    function withdraw(
+        uint256 walletPrivateKey,
+        address tokenAddress,
+        uint256 amount,
+        uint256 expectedAmount,
+        uint256 feeAmount,
         bool isWithdrawAll
     ) internal {
         uint64 sequence = 1;
         bytes memory tx1 = isWithdrawAll
-            ? createSignedWithdrawAllTx(walletPrivateKey, tokenAddress, amount, 1000, sequence)
-            : createSignedWithdrawTx(walletPrivateKey, tokenAddress, amount, 1000, sequence);
+            ? createSignedWithdrawAllTx(walletPrivateKey, tokenAddress, amount, 1000, sequence, feeAmount)
+            : createSignedWithdrawTx(walletPrivateKey, tokenAddress, amount, 1000, sequence, feeAmount);
         bytes[] memory txs = new bytes[](1);
         txs[0] = tx1;
 
@@ -94,7 +103,7 @@ contract ExchangeBaseTest is Test {
                 IExchange.ErrorCode.InsufficientBalance
             );
         } else {
-            emit IExchange.Withdrawal(vm.addr(walletPrivateKey), sequence, tokenAddress, expectedAmount);
+            emit IExchange.Withdrawal(vm.addr(walletPrivateKey), sequence, tokenAddress, expectedAmount, feeAmount);
         }
         exchange.submitWithdrawals(txs);
         vm.stopPrank();
@@ -135,10 +144,16 @@ contract ExchangeBaseTest is Test {
         address tokenAddress,
         uint256 amount,
         uint64 nonce,
-        uint256 sequence
+        uint256 sequence,
+        uint256 feeAmount
     ) internal view returns (bytes memory) {
-        IExchange.Withdraw memory _withdraw =
-            IExchange.Withdraw({sender: vm.addr(walletPrivateKey), token: tokenAddress, amount: 0, nonce: nonce});
+        IExchange.Withdraw memory _withdraw = IExchange.Withdraw({
+            sender: vm.addr(walletPrivateKey),
+            token: tokenAddress,
+            amount: 0,
+            nonce: nonce,
+            feeAmount: feeAmount
+        });
 
         bytes32 digest = SigUtils.getTypedDataHash(exchange.DOMAIN_SEPARATOR(), SigUtils.getStructHash(_withdraw));
         _withdraw.amount = amount;
@@ -155,10 +170,16 @@ contract ExchangeBaseTest is Test {
         address tokenAddress,
         uint256 amount,
         uint64 nonce,
-        uint256 sequence
+        uint256 sequence,
+        uint256 feeAmount
     ) internal view returns (bytes memory) {
-        IExchange.Withdraw memory _withdraw =
-            IExchange.Withdraw({sender: vm.addr(walletPrivateKey), token: tokenAddress, amount: amount, nonce: nonce});
+        IExchange.Withdraw memory _withdraw = IExchange.Withdraw({
+            sender: vm.addr(walletPrivateKey),
+            token: tokenAddress,
+            amount: amount,
+            nonce: nonce,
+            feeAmount: feeAmount
+        });
 
         bytes32 digest = SigUtils.getTypedDataHash(exchange.DOMAIN_SEPARATOR(), SigUtils.getStructHash(_withdraw));
 
@@ -177,9 +198,9 @@ contract ExchangeBaseTest is Test {
         uint256 sequence
     ) internal view returns (bytes memory) {
         IExchange.Withdraw memory _withdraw =
-            IExchange.Withdraw({sender: address(0), token: tokenAddress, amount: amount, nonce: nonce});
+            IExchange.Withdraw({sender: address(0), token: tokenAddress, amount: amount, nonce: nonce, feeAmount: 0});
         IExchange.Withdraw memory _withdraw2 =
-            IExchange.Withdraw({sender: address(1), token: tokenAddress, amount: amount, nonce: nonce});
+            IExchange.Withdraw({sender: address(1), token: tokenAddress, amount: amount, nonce: nonce, feeAmount: 0});
 
         bytes32 digest = SigUtils.getTypedDataHash(exchange.DOMAIN_SEPARATOR(), SigUtils.getStructHash(_withdraw));
 

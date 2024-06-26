@@ -45,16 +45,18 @@ contract ExchangeTest is ExchangeBaseTest {
 
         deposit(wallet1, usdcAddress, 1000e6);
         verifyBalances(wallet1, usdcAddress, 1000e6, 499000e6, 1000e6);
-        withdraw(wallet1PrivateKey, usdcAddress, 133e6, 133e6);
-        verifyBalances(wallet1, usdcAddress, 867e6, 499133e6, 867e6);
+        withdraw(wallet1PrivateKey, usdcAddress, 133e6, 133e6, 1e6);
+        verifyBalances(wallet1, usdcAddress, 867e6, 499000e6 + 133e6 - 1e6, 1000e6 - 133e6 + 1e6);
+        verifyBalances(feeAccount, usdcAddress, 1e6, 0, 1000e6 - 133e6 + 1e6);
 
         deposit(wallet1, btcAddress, 55e8);
         verifyBalances(wallet1, btcAddress, 55e8, 45e8, 55e8);
-        withdraw(wallet1PrivateKey, btcAddress, 4e8, 4e8);
-        verifyBalances(wallet1, btcAddress, 51e8, 49e8, 51e8);
+        withdraw(wallet1PrivateKey, btcAddress, 4e8, 4e8, 1e5);
+        verifyBalances(wallet1, btcAddress, 51e8, 45e8 + 4e8 - 1e5, 55e8 - 4e8 + 1e5);
+        verifyBalances(feeAccount, btcAddress, 1e5, 0, 55e8 - 4e8 + 1e5);
 
-        withdrawAll(wallet1PrivateKey, btcAddress, 5e18, 51e8);
-        verifyBalances(wallet1, btcAddress, 0, 100e8, 0);
+        withdrawAll(wallet1PrivateKey, btcAddress, 51e8, 51e8, 1e5);
+        verifyBalances(wallet1, btcAddress, 0, 45e8 + 4e8 - 1e5 + 51e8 - 1e5, 2e5);
     }
 
     function test_MultipleWallets() public {
@@ -65,10 +67,11 @@ contract ExchangeTest is ExchangeBaseTest {
         deposit(wallet2, usdcAddress, 800e6);
         verifyBalances(wallet2, usdcAddress, 800e6, 499200e6, 1800e6);
 
-        withdraw(wallet1PrivateKey, usdcAddress, 133e6, 133e6);
-        verifyBalances(wallet1, usdcAddress, 867e6, 499133e6, 1667e6);
-        withdraw(wallet2PrivateKey, usdcAddress, 120e6, 120e6);
-        verifyBalances(wallet2, usdcAddress, 680e6, 499320e6, 1547e6);
+        withdraw(wallet1PrivateKey, usdcAddress, 133e6, 133e6, 1e6);
+        verifyBalances(wallet1, usdcAddress, 867e6, 499000e6 + 133e6 - 1e6, 1800e6 - 133e6 + 1e6);
+        withdraw(wallet2PrivateKey, usdcAddress, 120e6, 120e6, 1e6);
+        verifyBalances(wallet2, usdcAddress, 680e6, 499200e6 + 120e6 - 1e6, 1800e6 - 133e6 - 120e6 + 2e6);
+        verifyBalances(feeAccount, usdcAddress, 2e6, 0, 1800e6 - 133e6 - 120e6 + 2e6);
     }
 
     function test_Upgrade() public {
@@ -104,10 +107,11 @@ contract ExchangeTest is ExchangeBaseTest {
         verifyBalances(wallet2, usdcAddress, 800e6, 499200e6, 1800e6);
 
         // perform some withdrawals
-        withdraw(wallet1PrivateKey, usdcAddress, 100e6, 100e6);
-        verifyBalances(wallet1, usdcAddress, 900e6, 499100e6, 1700e6);
-        withdraw(wallet2PrivateKey, usdcAddress, 120e6, 120e6);
-        verifyBalances(wallet2, usdcAddress, 680e6, 499320e6, 1580e6);
+        withdraw(wallet1PrivateKey, usdcAddress, 100e6, 100e6, 1e6);
+        verifyBalances(wallet1, usdcAddress, 900e6, 499000e6 + 100e6 - 1e6, 1800e6 - 100e6 + 1e6);
+        withdraw(wallet2PrivateKey, usdcAddress, 120e6, 120e6, 1e6);
+        verifyBalances(wallet2, usdcAddress, 680e6, 499200e6 + 120e6 - 1e6, 1800e6 - 100e6 - 120e6 + 2e6);
+        verifyBalances(feeAccount, usdcAddress, 2e6, 0, 1800e6 - 100e6 - 120e6 + 2e6);
     }
 
     function test_NativeDeposits() public {
@@ -132,10 +136,10 @@ contract ExchangeTest is ExchangeBaseTest {
         verifyBalances(wallet1, usdcAddress, 1000e6, 499000e6, 2000e6);
 
         uint64 wallet1Nonce = 1000;
-        bytes memory tx1 = createSignedWithdrawTx(wallet1PrivateKey, usdcAddress, 200e6, wallet1Nonce, 1);
-        bytes memory tx2 = createSignedWithdrawTx(wallet1PrivateKey, address(0), 1e18, wallet1Nonce + 200, 2);
+        bytes memory tx1 = createSignedWithdrawTx(wallet1PrivateKey, usdcAddress, 200e6, wallet1Nonce, 1, 1e6);
+        bytes memory tx2 = createSignedWithdrawTx(wallet1PrivateKey, address(0), 1e18, wallet1Nonce + 200, 2, 1e15);
         uint64 wallet2Nonce = 10000;
-        bytes memory tx3 = createSignedWithdrawTx(wallet2PrivateKey, usdcAddress, 300e6, wallet2Nonce, 3);
+        bytes memory tx3 = createSignedWithdrawTx(wallet2PrivateKey, usdcAddress, 300e6, wallet2Nonce, 3, 1e6);
         bytes memory tx4 =
             createSignedWithdrawTxWithInvalidSignature(wallet2PrivateKey, usdcAddress, 300e6, wallet2Nonce, 4);
 
@@ -148,11 +152,11 @@ contract ExchangeTest is ExchangeBaseTest {
         bytes32 expectedWithdrawalHash =
             keccak256(bytes.concat(buffer, keccak256(txs[0]), keccak256(txs[1]), keccak256(txs[2]), keccak256(txs[3])));
         vm.expectEmit(exchangeProxyAddress);
-        emit IExchange.Withdrawal(wallet1, 1, usdcAddress, 200e6);
+        emit IExchange.Withdrawal(wallet1, 1, usdcAddress, 200e6, 1e6);
         vm.expectEmit(exchangeProxyAddress);
-        emit IExchange.Withdrawal(wallet1, 2, address(0), 1e18);
+        emit IExchange.Withdrawal(wallet1, 2, address(0), 1e18, 1e15);
         vm.expectEmit(exchangeProxyAddress);
-        emit IExchange.Withdrawal(wallet2, 3, usdcAddress, 300e6);
+        emit IExchange.Withdrawal(wallet2, 3, usdcAddress, 300e6, 1e6);
         vm.expectEmit(exchangeProxyAddress);
         emit IExchange.WithdrawalFailed(address(1), 4, usdcAddress, 300e6, 0, IExchange.ErrorCode.InvalidSignature);
         vm.prank(submitter);
@@ -161,9 +165,11 @@ contract ExchangeTest is ExchangeBaseTest {
         assertEq(exchange.lastWithdrawalBatchHash(), expectedWithdrawalHash);
 
         // verify balances
-        verifyBalances(wallet1, usdcAddress, 800e6, 499200e6, 1500e6);
-        verifyBalances(wallet1, 1e18, 9e18, 1e18);
-        verifyBalances(wallet2, usdcAddress, 700e6, 499300e6, 1500e6);
+        verifyBalances(wallet1, usdcAddress, 800e6, 499000e6 + 200e6 - 1e6, 2000e6 - 200e6 - 300e6 + 2e6);
+        verifyBalances(wallet1, 1e18, 8e18 + 1e18 - 1e15, 2e18 - 1e18 + 1e15);
+        verifyBalances(wallet2, usdcAddress, 700e6, 499000e6 + 300e6 - 1e6, 2000e6 - 200e6 - 300e6 + 2e6);
+        verifyBalances(feeAccount, 1e15, 0, 2e18 - 1e18 + 1e15);
+        verifyBalances(feeAccount, usdcAddress, 2e6, 0, 2000e6 - 200e6 - 300e6 + 2e6);
     }
 
     function test_WithdrawInsufficientBalance() public {
@@ -171,12 +177,12 @@ contract ExchangeTest is ExchangeBaseTest {
 
         deposit(wallet1, usdcAddress, 1000e6);
         verifyBalances(wallet1, usdcAddress, 1000e6, 500000e6 - 1000e6, 1000e6);
-        withdraw(wallet1PrivateKey, usdcAddress, 1001e6, 1000e6);
+        withdraw(wallet1PrivateKey, usdcAddress, 1001e6, 1000e6, 1e6);
         verifyBalances(wallet1, usdcAddress, 1000e6, 500000e6 - 1000e6, 1000e6);
 
         deposit(wallet1, 2e18);
         verifyBalances(wallet1, 2e18, 10e18 - 2e18, 2e18);
-        withdraw(wallet1PrivateKey, address(0), 3e18, 2e18);
+        withdraw(wallet1PrivateKey, address(0), 3e18, 2e18, 1e15);
         verifyBalances(wallet1, 2e18, 10e18 - 2e18, 2e18);
     }
 
@@ -185,21 +191,24 @@ contract ExchangeTest is ExchangeBaseTest {
 
         deposit(wallet1, usdcAddress, 1000e6);
         verifyBalances(wallet1, usdcAddress, 1000e6, 500000e6 - 1000e6, 1000e6);
-        // the withdrawAll amount is equals to balance
-        withdrawAll(wallet1PrivateKey, usdcAddress, 1000e6, 1000e6);
-        verifyBalances(wallet1, usdcAddress, 0, 500000e6, 0);
+        // the withdrawAll amount + fee is equal to balance
+        withdrawAll(wallet1PrivateKey, usdcAddress, 1000e6, 1000e6, 1e6);
+        verifyBalances(wallet1, usdcAddress, 0, 500000e6 - 1e6, 1e6);
+        verifyBalances(feeAccount, usdcAddress, 1e6, 0, 1e6);
 
         deposit(wallet1, usdcAddress, 1000e6);
-        verifyBalances(wallet1, usdcAddress, 1000e6, 500000e6 - 1000e6, 1000e6);
-        // the withdrawAll amount is less than balance, so should withdraw that amount
-        withdrawAll(wallet1PrivateKey, usdcAddress, 900e6, 900e6);
-        verifyBalances(wallet1, usdcAddress, 100e6, 499900e6, 100e6);
+        verifyBalances(wallet1, usdcAddress, 1000e6, 500000e6 - 1000e6 - 1e6, 1000e6 + 1e6);
+        // the withdrawAll amount + fee is less than balance, so should withdraw that amount
+        withdrawAll(wallet1PrivateKey, usdcAddress, 900e6, 900e6, 1e6);
+        verifyBalances(wallet1, usdcAddress, 100e6, 500000e6 - 1000e6 - 2e6 + 900e6, 1000e6 - 900e6 + 2e6);
+        verifyBalances(feeAccount, usdcAddress, 2e6, 0, 1000e6 - 900e6 + 2e6);
 
         deposit(wallet1, 2e18);
         verifyBalances(wallet1, 2e18, 10e18 - 2e18, 2e18);
         // withdrawAll amount greater than balance so should withdraw balance
-        withdrawAll(wallet1PrivateKey, address(0), 3e18, 2e18);
-        verifyBalances(wallet1, 0, 10e18, 0);
+        withdrawAll(wallet1PrivateKey, address(0), 3e18, 2e18, 1e15);
+        verifyBalances(wallet1, 0, 10e18 - 1e15, 1e15);
+        verifyBalances(feeAccount, 1e15, 0, 1e15);
     }
 
     function test_EIP712ErrorCases() public {
@@ -212,8 +221,8 @@ contract ExchangeTest is ExchangeBaseTest {
         verifyBalances(wallet1, 2e18, 8e18, 2e18);
 
         uint64 wallet1Nonce = 22222;
-        bytes memory tx1 = createSignedWithdrawTx(wallet1PrivateKey, usdcAddress, 200e6, wallet1Nonce, 1);
-        bytes memory tx2 = createSignedWithdrawTx(wallet1PrivateKey, address(0), 3e18, wallet1Nonce + 1, 2); // insufficient balance
+        bytes memory tx1 = createSignedWithdrawTx(wallet1PrivateKey, usdcAddress, 200e6, wallet1Nonce, 1, 0);
+        bytes memory tx2 = createSignedWithdrawTx(wallet1PrivateKey, address(0), 3e18, wallet1Nonce + 1, 2, 0); // insufficient balance
 
         bytes[] memory txs = new bytes[](2);
         txs[0] = tx1;
