@@ -222,7 +222,7 @@ contract Exchange is EIP712Upgradeable, UUPSUpgradeable, OwnableUpgradeable, IEx
 
     function _withdrawAll(uint64 _sequence, address _sender, address _token, uint256 _amount, uint256 _fee) internal {
         uint256 balance = balances[_sender][_token];
-        if (_fee > balance) {
+        if (_fee >= balance) {
             emit WithdrawalFailed(_sender, _sequence, _token, _amount, balance, ErrorCode.InsufficientBalance);
         } else {
             _withdraw(_sequence, _sender, _token, _amount > balance ? balance : _amount, _fee);
