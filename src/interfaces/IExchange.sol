@@ -5,7 +5,7 @@ import "./IVersion.sol";
 
 interface IExchange is IVersion {
     event Deposit(address indexed from, address token, uint256 amount);
-    event Withdrawal(address indexed to, uint64 sequence, address token, uint256 amount);
+    event Withdrawal(address indexed to, uint64 sequence, address token, uint256 amount, uint256 fee);
 
     error ErrorDidNotNetToZero(address token);
 
@@ -24,6 +24,7 @@ interface IExchange is IVersion {
         address token;
         uint256 amount;
         uint64 nonce;
+        uint256 feeAmount;
     }
 
     struct WithdrawWithSignature {
