@@ -136,10 +136,13 @@ contract ExchangeTest is ExchangeBaseTest {
         verifyBalances(wallet1, usdcAddress, 1000e6, 499000e6, 2000e6);
 
         uint64 wallet1Nonce = 1000;
-        bytes memory tx1 = createSignedWithdrawTx(wallet1PrivateKey, usdcAddress, 200e6, wallet1Nonce, 1, 1e6);
-        bytes memory tx2 = createSignedWithdrawTx(wallet1PrivateKey, address(0), 1e18, wallet1Nonce + 200, 2, 1e15);
+        bytes memory tx1 =
+            createSignedWithdrawTx(wallet1PrivateKey, usdcAddress, 200e6, wallet1Nonce, 1, 1e6, address(0));
+        bytes memory tx2 =
+            createSignedWithdrawTx(wallet1PrivateKey, address(0), 1e18, wallet1Nonce + 200, 2, 1e15, address(0));
         uint64 wallet2Nonce = 10000;
-        bytes memory tx3 = createSignedWithdrawTx(wallet2PrivateKey, usdcAddress, 300e6, wallet2Nonce, 3, 1e6);
+        bytes memory tx3 =
+            createSignedWithdrawTx(wallet2PrivateKey, usdcAddress, 300e6, wallet2Nonce, 3, 1e6, address(0));
         bytes memory tx4 =
             createSignedWithdrawTxWithInvalidSignature(wallet2PrivateKey, usdcAddress, 300e6, wallet2Nonce, 4);
 
@@ -221,8 +224,9 @@ contract ExchangeTest is ExchangeBaseTest {
         verifyBalances(wallet1, 2e18, 8e18, 2e18);
 
         uint64 wallet1Nonce = 22222;
-        bytes memory tx1 = createSignedWithdrawTx(wallet1PrivateKey, usdcAddress, 200e6, wallet1Nonce, 1, 0);
-        bytes memory tx2 = createSignedWithdrawTx(wallet1PrivateKey, address(0), 3e18, wallet1Nonce + 1, 2, 0); // insufficient balance
+        bytes memory tx1 = createSignedWithdrawTx(wallet1PrivateKey, usdcAddress, 200e6, wallet1Nonce, 1, 0, address(0));
+        bytes memory tx2 =
+            createSignedWithdrawTx(wallet1PrivateKey, address(0), 3e18, wallet1Nonce + 1, 2, 0, address(0)); // insufficient balance
 
         bytes[] memory txs = new bytes[](2);
         txs[0] = tx1;
@@ -256,5 +260,46 @@ contract ExchangeTest is ExchangeBaseTest {
 
         // set it back
         exchange.setSubmitter(submitter);
+    }
+
+    function test_LinkedSigner() public {
+        setupWallets();
+
+        uint256 linkedSignerPrivateKey = 0x1234567890ABCDEF;
+
+        linkSigner(wallet1, linkedSignerPrivateKey);
+
+        deposit(wallet1, usdcAddress, 1000e6);
+        verifyBalances(wallet1, usdcAddress, 1000e6, 499000e6, 1000e6);
+        withdraw(wallet1PrivateKey, usdcAddress, 100e6, 100e6, 1e6);
+
+        // link signer can sign for wallet1
+        withdraw(wallet1, linkedSignerPrivateKey, usdcAddress, 50e6, 50e6, 1e6, false);
+
+        // linked signer cannot sign for a different wallet its not linked to
+        withdraw(wallet2, linkedSignerPrivateKey, usdcAddress, 50e6, 0, 1e6, true);
+
+        // change the linked signer
+        uint256 newLinkedSignerPrivateKey = 0x1234567890ABCDEF1234;
+        linkSigner(wallet1, newLinkedSignerPrivateKey);
+
+        // old linked signer fails, new one works
+        withdraw(wallet1, linkedSignerPrivateKey, usdcAddress, 50e6, 0, 1e6, true);
+        withdraw(wallet1, newLinkedSignerPrivateKey, usdcAddress, 50e6, 50e6, 1e6, false);
+
+        // remove linked signer and verify fails
+        removeLinkedSigner(wallet1);
+        withdraw(wallet1, newLinkedSignerPrivateKey, usdcAddress, 50e6, 0, 1e6, true);
+
+        // test bad signature
+        vm.startPrank(wallet1);
+        vm.expectEmit(exchangeProxyAddress);
+        address signerAddress = vm.addr(newLinkedSignerPrivateKey);
+        emit IExchange.LinkSignerFailed(wallet1, signerAddress);
+        bytes32 digest = keccak256(abi.encodePacked(newLinkedSignerPrivateKey));
+        // sign with different private key
+        exchange.linkSigner(signerAddress, digest, sign(linkedSignerPrivateKey, digest));
+        assertEq(exchange.linkedSigners(wallet1), address(0));
+        vm.stopPrank();
     }
 }

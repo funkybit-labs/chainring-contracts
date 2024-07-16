@@ -23,6 +23,8 @@ contract Exchange is EIP712Upgradeable, UUPSUpgradeable, OwnableUpgradeable, IEx
     mapping(address => SovereignWithdrawal) public sovereignWithdrawals;
     uint256 public sovereignWithdrawalDelay;
 
+    mapping(address => address) public linkedSigners;
+
     string constant WITHDRAW_SIGNATURE = "Withdraw(address sender,address token,uint256 amount,uint64 nonce)";
 
     function initialize(address _submitter, address _feeAccount, uint256 _sovereignWithdrawalDelay)
@@ -65,6 +67,21 @@ contract Exchange is EIP712Upgradeable, UUPSUpgradeable, OwnableUpgradeable, IEx
     function setSovereignWithdrawalDelay(uint256 _sovereignWithdrawalDelay) external onlyOwner {
         require(_sovereignWithdrawalDelay >= 1 days, "Not a valid sovereign withdrawal delay");
         sovereignWithdrawalDelay = _sovereignWithdrawalDelay;
+    }
+
+    function linkSigner(address _linkedSigner, bytes32 _digest, bytes calldata _signature) external {
+        address recovered = ECDSA.recover(_digest, _signature);
+        if (recovered == address(0) || (recovered != _linkedSigner)) {
+            emit LinkSignerFailed(msg.sender, _linkedSigner);
+        } else {
+            linkedSigners[msg.sender] = _linkedSigner;
+            emit LinkedSigner(msg.sender, _linkedSigner);
+        }
+    }
+
+    function removeLinkedSigner() external {
+        delete linkedSigners[msg.sender];
+        emit LinkedSigner(msg.sender, address(0));
     }
 
     function deposit(address _token, uint256 _amount) external {
@@ -268,7 +285,10 @@ contract Exchange is EIP712Upgradeable, UUPSUpgradeable, OwnableUpgradeable, IEx
             )
         );
         address recovered = ECDSA.recover(digest, signedTx.signature);
-        if (recovered != signedTx.tx.sender) {
+        if (
+            recovered == address(0)
+                || (recovered != signedTx.tx.sender && recovered != linkedSigners[signedTx.tx.sender])
+        ) {
             emit WithdrawalFailed(
                 signedTx.tx.sender,
                 signedTx.sequence,

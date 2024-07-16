@@ -7,6 +7,8 @@ interface IExchange is IVersion {
     event Deposit(address indexed from, address token, uint256 amount);
     event Withdrawal(address indexed to, uint64 sequence, address token, uint256 amount, uint256 fee);
     event WithdrawalRequested(address indexed from, address token, uint256 amount);
+    event LinkedSigner(address indexed sender, address linkedSigner);
+    event LinkSignerFailed(address indexed sender, address linkedSigner);
 
     error ErrorDidNotNetToZero(address token);
 
@@ -91,4 +93,8 @@ interface IExchange is IVersion {
     function sovereignWithdrawal(address _token, uint256 _amount) external;
 
     function setSovereignWithdrawalDelay(uint256 _sovereignWithdrawalDelay) external;
+
+    function linkSigner(address _linkedSigner, bytes32 _digest, bytes calldata _signature) external;
+
+    function removeLinkedSigner() external;
 }

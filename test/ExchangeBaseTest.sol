@@ -77,6 +77,39 @@ contract ExchangeBaseTest is Test {
     }
 
     function withdraw(
+        address wallet,
+        uint256 linkedSignerPrivateKey,
+        address tokenAddress,
+        uint256 amount,
+        uint256 expectedAmount,
+        uint256 feeAmount,
+        bool expectSignatureFailure
+    ) internal {
+        uint64 sequence = 1;
+        bytes memory tx1 =
+            createSignedWithdrawTx(linkedSignerPrivateKey, tokenAddress, amount, 1000, sequence, feeAmount, wallet);
+        bytes[] memory txs = new bytes[](1);
+        txs[0] = tx1;
+
+        vm.startPrank(submitter);
+        vm.expectEmit(exchangeProxyAddress);
+        if (expectSignatureFailure || amount != expectedAmount) {
+            emit IExchange.WithdrawalFailed(
+                wallet,
+                sequence,
+                tokenAddress,
+                amount,
+                expectedAmount,
+                expectSignatureFailure ? IExchange.ErrorCode.InvalidSignature : IExchange.ErrorCode.InsufficientBalance
+            );
+        } else {
+            emit IExchange.Withdrawal(wallet, sequence, tokenAddress, expectedAmount, feeAmount);
+        }
+        exchange.submitWithdrawals(txs);
+        vm.stopPrank();
+    }
+
+    function withdraw(
         uint256 walletPrivateKey,
         address tokenAddress,
         uint256 amount,
@@ -87,7 +120,7 @@ contract ExchangeBaseTest is Test {
         uint64 sequence = 1;
         bytes memory tx1 = isWithdrawAll
             ? createSignedWithdrawAllTx(walletPrivateKey, tokenAddress, amount, 1000, sequence, feeAmount)
-            : createSignedWithdrawTx(walletPrivateKey, tokenAddress, amount, 1000, sequence, feeAmount);
+            : createSignedWithdrawTx(walletPrivateKey, tokenAddress, amount, 1000, sequence, feeAmount, address(0));
         bytes[] memory txs = new bytes[](1);
         txs[0] = tx1;
 
@@ -106,6 +139,26 @@ contract ExchangeBaseTest is Test {
             emit IExchange.Withdrawal(vm.addr(walletPrivateKey), sequence, tokenAddress, expectedAmount, feeAmount);
         }
         exchange.submitWithdrawals(txs);
+        vm.stopPrank();
+    }
+
+    function linkSigner(address wallet, uint256 linkedSignerPrivateKey) internal {
+        vm.startPrank(wallet);
+        vm.expectEmit(exchangeProxyAddress);
+        address signerAddress = vm.addr(linkedSignerPrivateKey);
+        emit IExchange.LinkedSigner(wallet, signerAddress);
+        bytes32 digest = keccak256(abi.encodePacked(linkedSignerPrivateKey));
+        exchange.linkSigner(signerAddress, digest, sign(linkedSignerPrivateKey, digest));
+        assertEq(exchange.linkedSigners(wallet), signerAddress);
+        vm.stopPrank();
+    }
+
+    function removeLinkedSigner(address wallet) internal {
+        vm.startPrank(wallet);
+        vm.expectEmit(exchangeProxyAddress);
+        emit IExchange.LinkedSigner(wallet, address(0));
+        exchange.removeLinkedSigner();
+        assertEq(exchange.linkedSigners(wallet), address(0));
         vm.stopPrank();
     }
 
@@ -166,15 +219,16 @@ contract ExchangeBaseTest is Test {
     }
 
     function createSignedWithdrawTx(
-        uint256 walletPrivateKey,
+        uint256 signerPrivateKey,
         address tokenAddress,
         uint256 amount,
         uint64 nonce,
         uint256 sequence,
-        uint256 feeAmount
+        uint256 feeAmount,
+        address sender
     ) internal view returns (bytes memory) {
         IExchange.Withdraw memory _withdraw = IExchange.Withdraw({
-            sender: vm.addr(walletPrivateKey),
+            sender: sender != address(0) ? sender : vm.addr(signerPrivateKey),
             token: tokenAddress,
             amount: amount,
             nonce: nonce,
@@ -183,7 +237,7 @@ contract ExchangeBaseTest is Test {
 
         bytes32 digest = SigUtils.getTypedDataHash(exchange.DOMAIN_SEPARATOR(), SigUtils.getStructHash(_withdraw));
 
-        bytes memory signature = sign(walletPrivateKey, digest);
+        bytes memory signature = sign(signerPrivateKey, digest);
 
         IExchange.WithdrawWithSignature memory _withdrawWithSignature =
             IExchange.WithdrawWithSignature(uint64(sequence), _withdraw, signature);
