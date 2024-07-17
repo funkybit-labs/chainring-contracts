@@ -25,7 +25,10 @@ contract Exchange is EIP712Upgradeable, UUPSUpgradeable, OwnableUpgradeable, IEx
 
     string constant WITHDRAW_SIGNATURE = "Withdraw(address sender,address token,uint256 amount,uint64 nonce)";
 
-    function initialize(address _submitter, address _feeAccount, uint256 _sovereignWithdrawalDelay) public initializer {
+    function initialize(address _submitter, address _feeAccount, uint256 _sovereignWithdrawalDelay)
+        public
+        initializer
+    {
         __Ownable_init(msg.sender);
         __UUPSUpgradeable_init();
         __EIP712_init("ChainRing Labs", "0.0.1");
@@ -78,11 +81,8 @@ contract Exchange is EIP712Upgradeable, UUPSUpgradeable, OwnableUpgradeable, IEx
         uint256 balance = balances[msg.sender][_token];
         require(_amount <= balance, "Insufficient balance");
 
-        sovereignWithdrawals[msg.sender] = SovereignWithdrawal({
-            token: _token,
-            amount: _amount,
-            timestamp: block.timestamp
-        });
+        sovereignWithdrawals[msg.sender] =
+            SovereignWithdrawal({token: _token, amount: _amount, timestamp: block.timestamp});
 
         emit WithdrawalRequested(msg.sender, _token, _amount);
     }

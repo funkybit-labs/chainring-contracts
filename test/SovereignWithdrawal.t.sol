@@ -72,8 +72,8 @@ contract SovereignWithdrawalTest is ExchangeBaseTest {
 
         exchange.completeSovereignWithdrawal();
 
-        assertEq(wallet1.balance, 9 ether);  // initial balance - deposit + withdrawal
-        (, uint256 amount, ) = exchange.sovereignWithdrawals(wallet1);
+        assertEq(wallet1.balance, 9 ether); // initial balance - deposit + withdrawal
+        (, uint256 amount,) = exchange.sovereignWithdrawals(wallet1);
         assertEq(amount, 0);
 
         vm.stopPrank();
