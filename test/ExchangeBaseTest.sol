@@ -33,7 +33,7 @@ contract ExchangeBaseTest is Test {
         Exchange exchangeImplementation = new Exchange();
         exchangeProxyAddress = payable(address(new ERC1967Proxy(address(exchangeImplementation), "")));
         exchange = Exchange(exchangeProxyAddress);
-        exchange.initialize(submitter, feeAccount);
+        exchange.initialize(submitter, feeAccount, 1 minutes);
         assertEq(exchange.getVersion(), 1);
         vm.deal(submitter, 10 ether);
     }

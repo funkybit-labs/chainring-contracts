@@ -20,14 +20,18 @@ contract Exchange is EIP712Upgradeable, UUPSUpgradeable, OwnableUpgradeable, IEx
     bytes32 public lastSettlementBatchHash;
     bytes32 public lastWithdrawalBatchHash;
 
+    mapping(address => SovereignWithdrawal) public sovereignWithdrawals;
+    uint256 public sovereignWithdrawalDelay;
+
     string constant WITHDRAW_SIGNATURE = "Withdraw(address sender,address token,uint256 amount,uint64 nonce)";
 
-    function initialize(address _submitter, address _feeAccount) public initializer {
+    function initialize(address _submitter, address _feeAccount, uint256 _sovereignWithdrawalDelay) public initializer {
         __Ownable_init(msg.sender);
         __UUPSUpgradeable_init();
         __EIP712_init("ChainRing Labs", "0.0.1");
         submitter = _submitter;
         feeAccount = _feeAccount;
+        sovereignWithdrawalDelay = _sovereignWithdrawalDelay;
     }
 
     receive() external payable {
@@ -55,6 +59,11 @@ contract Exchange is EIP712Upgradeable, UUPSUpgradeable, OwnableUpgradeable, IEx
         feeAccount = _feeAccount;
     }
 
+    function setSovereignWithdrawalDelay(uint256 _sovereignWithdrawalDelay) external onlyOwner {
+        require(_sovereignWithdrawalDelay > 0, "Not a valid sovereign withdrawal delay");
+        sovereignWithdrawalDelay = _sovereignWithdrawalDelay;
+    }
+
     function deposit(address _token, uint256 _amount) external {
         IERC20 erc20 = IERC20(_token);
         erc20.transferFrom(msg.sender, address(this), _amount);
@@ -63,12 +72,36 @@ contract Exchange is EIP712Upgradeable, UUPSUpgradeable, OwnableUpgradeable, IEx
         emit Deposit(msg.sender, _token, _amount);
     }
 
+    function initiateSovereignWithdrawal(address _token, uint256 _amount) external {
+        require(sovereignWithdrawals[msg.sender].amount == 0, "Uncompleted withdrawal request exists");
+
+        uint256 balance = balances[msg.sender][_token];
+        require(_amount <= balance, "Insufficient balance");
+
+        sovereignWithdrawals[msg.sender] = SovereignWithdrawal({
+            token: _token,
+            amount: _amount,
+            timestamp: block.timestamp
+        });
+
+        emit WithdrawalRequested(msg.sender, _token, _amount);
+    }
+
+    function completeSovereignWithdrawal() external {
+        SovereignWithdrawal memory request = sovereignWithdrawals[msg.sender];
+        require(request.amount > 0, "No active withdrawal request");
+        require(block.timestamp >= request.timestamp + sovereignWithdrawalDelay, "Withdrawal delay not met");
+
+        _withdrawAll(0, msg.sender, request.token, request.amount, 0);
+        delete sovereignWithdrawals[msg.sender];
+    }
+
     function submitWithdrawals(bytes[] calldata withdrawals) public onlySubmitter {
         require(batchHash == 0, "Settlement batch in process");
         for (uint256 i = 0; i < withdrawals.length; i++) {
             TransactionType txType = TransactionType(uint8(withdrawals[i][0]));
             WithdrawWithSignature memory signedTx = abi.decode(withdrawals[i][1:], (WithdrawWithSignature));
-            if (_validateWithdrawalSignature(signedTx, txType)) {
+            if (_isPendingWithdrawal(signedTx) || _validateWithdrawalSignature(signedTx, txType)) {
                 if (txType == TransactionType.WithdrawAll) {
                     _withdrawAll(
                         signedTx.sequence,
@@ -86,6 +119,7 @@ contract Exchange is EIP712Upgradeable, UUPSUpgradeable, OwnableUpgradeable, IEx
                         signedTx.tx.feeAmount
                     );
                 }
+                delete sovereignWithdrawals[signedTx.tx.sender];
             }
         }
         lastWithdrawalBatchHash = _calculateWithdrawalBatchHash(withdrawals);
@@ -144,13 +178,13 @@ contract Exchange is EIP712Upgradeable, UUPSUpgradeable, OwnableUpgradeable, IEx
             for (uint32 j = 0; j < _batchSettlement.tokenAdjustmentLists[i].increments.length; j++) {
                 uint256 _adjustmentAmount = _batchSettlement.tokenAdjustmentLists[i].increments[j].amount;
                 address _wallet =
-                    _batchSettlement.walletAddresses[_batchSettlement.tokenAdjustmentLists[i].increments[j].walletIndex];
+                                    _batchSettlement.walletAddresses[_batchSettlement.tokenAdjustmentLists[i].increments[j].walletIndex];
                 balances[_wallet][_token] += _adjustmentAmount;
             }
             for (uint32 j = 0; j < _batchSettlement.tokenAdjustmentLists[i].decrements.length; j++) {
                 uint256 _adjustmentAmount = _batchSettlement.tokenAdjustmentLists[i].decrements[j].amount;
                 address _wallet =
-                    _batchSettlement.walletAddresses[_batchSettlement.tokenAdjustmentLists[i].decrements[j].walletIndex];
+                                    _batchSettlement.walletAddresses[_batchSettlement.tokenAdjustmentLists[i].decrements[j].walletIndex];
                 if (_adjustmentAmount <= balances[_wallet][_token]) {
                     balances[_wallet][_token] -= _adjustmentAmount;
                 } else {
@@ -218,6 +252,11 @@ contract Exchange is EIP712Upgradeable, UUPSUpgradeable, OwnableUpgradeable, IEx
             return false;
         }
         return true;
+    }
+
+    function _isPendingWithdrawal(WithdrawWithSignature memory signedTx) internal view returns (bool) {
+        SovereignWithdrawal memory request = sovereignWithdrawals[signedTx.tx.sender];
+        return request.amount == signedTx.tx.amount && request.token == signedTx.tx.token;
     }
 
     function _withdrawAll(uint64 _sequence, address _sender, address _token, uint256 _amount, uint256 _fee) internal {

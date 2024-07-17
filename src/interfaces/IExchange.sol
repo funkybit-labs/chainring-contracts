@@ -6,6 +6,7 @@ import "./IVersion.sol";
 interface IExchange is IVersion {
     event Deposit(address indexed from, address token, uint256 amount);
     event Withdrawal(address indexed to, uint64 sequence, address token, uint256 amount, uint256 fee);
+    event WithdrawalRequested(address indexed from, address token, uint256 amount);
 
     error ErrorDidNotNetToZero(address token);
 
@@ -31,6 +32,12 @@ interface IExchange is IVersion {
         uint64 sequence;
         Withdraw tx;
         bytes signature;
+    }
+
+    struct SovereignWithdrawal {
+        address token;
+        uint256 amount;
+        uint256 timestamp;
     }
 
     struct Adjustment {
@@ -80,4 +87,10 @@ interface IExchange is IVersion {
     function setSubmitter(address _submitter) external;
 
     function setFeeAccount(address _feeAccount) external;
+
+    function initiateSovereignWithdrawal(address _token, uint256 _amount) external;
+
+    function completeSovereignWithdrawal() external;
+
+    function setSovereignWithdrawalDelay(uint256 _sovereignWithdrawalDelay) external;
 }
