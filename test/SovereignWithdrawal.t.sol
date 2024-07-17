@@ -19,7 +19,7 @@ contract SovereignWithdrawalTest is ExchangeBaseTest {
         vm.deal(wallet2, 10 ether);
     }
 
-    function test_sovereignWithdrawal_initiate_nativeToken() public {
+    function test_sovereignWithdrawal_initiateNew_nativeToken() public {
         setupWallets();
         deposit(wallet1, 2 ether);
         vm.startPrank(wallet1);
@@ -67,7 +67,7 @@ contract SovereignWithdrawalTest is ExchangeBaseTest {
 
         exchange.sovereignWithdrawal(address(0), 2 ether);
 
-        // Increase EVM time to pass the delay
+        // increase EVM time to pass the delay
         vm.warp(block.timestamp + exchange.sovereignWithdrawalDelay());
 
         exchange.sovereignWithdrawal(address(0), 2 ether);
@@ -79,39 +79,7 @@ contract SovereignWithdrawalTest is ExchangeBaseTest {
         vm.stopPrank();
     }
 
-    function test_sovereignWithdrawal_revertAfterDelayIfAmountDoesNotMatch_nativeToken() public {
-        setupWallets();
-        deposit(wallet1, 3 ether);
-        vm.startPrank(wallet1);
-
-        exchange.sovereignWithdrawal(address(0), 2 ether);
-
-        // Increase EVM time to pass the delay
-        vm.warp(block.timestamp + exchange.sovereignWithdrawalDelay());
-
-        vm.expectRevert("Amount mismatch");
-        exchange.sovereignWithdrawal(address(0), 1 ether);
-
-        vm.stopPrank();
-    }
-
-    function test_sovereignWithdrawal_revertAfterDelayIfTokenDoesNotMatch_nativeToken() public {
-        setupWallets();
-        deposit(wallet1, 3 ether);
-        vm.startPrank(wallet1);
-
-        exchange.sovereignWithdrawal(address(0), 2 ether);
-
-        // Increase EVM time to pass the delay
-        vm.warp(block.timestamp + exchange.sovereignWithdrawalDelay());
-
-        vm.expectRevert("Token mismatch");
-        exchange.sovereignWithdrawal(usdcAddress, 1 ether);
-
-        vm.stopPrank();
-    }
-
-    function test_sovereignWithdrawal_expiry_nativeToken() public {
+    function test_sovereignWithdrawal_initiateNewAfterDelayIfAmountDoesNotMatch_nativeToken() public {
         setupWallets();
         deposit(wallet1, 5 ether);
         vm.startPrank(wallet1);
@@ -120,17 +88,43 @@ contract SovereignWithdrawalTest is ExchangeBaseTest {
         emit IExchange.WithdrawalRequested(address(wallet1), address(0), 2 ether);
         exchange.sovereignWithdrawal(address(0), 2 ether);
 
-        // Increase EVM time to pass the expiry period 2x times
-        vm.warp(block.timestamp + exchange.sovereignWithdrawalDelay() * 2);
+        // increase EVM time to pass the delay
+        vm.warp(block.timestamp + exchange.sovereignWithdrawalDelay());
 
         vm.expectEmit(exchangeProxyAddress);
         emit IExchange.WithdrawalRequested(address(wallet1), address(0), 4 ether);
-        // re-initiate is possible due to expiry
+        // re-initiate due to amount missmatch
         exchange.sovereignWithdrawal(address(0), 4 ether);
 
         (address tokenAddress, uint256 amount, uint256 timestamp) = exchange.sovereignWithdrawals(wallet1);
         assertEq(tokenAddress, address(0));
         assertEq(amount, 4 ether);
+        assertGt(timestamp, 0);
+
+        vm.stopPrank();
+    }
+
+    function test_sovereignWithdrawal_initiateNewAfterDelayIfTokenDoesNotMatch_nativeToken() public {
+        setupWallets();
+        deposit(wallet1, 5 ether);
+        deposit(wallet1, usdcAddress, 1000e6);
+        vm.startPrank(wallet1);
+
+        vm.expectEmit(exchangeProxyAddress);
+        emit IExchange.WithdrawalRequested(address(wallet1), address(0), 2 ether);
+        exchange.sovereignWithdrawal(address(0), 2 ether);
+
+        // increase EVM time to pass the delay
+        vm.warp(block.timestamp + exchange.sovereignWithdrawalDelay());
+
+        vm.expectEmit(exchangeProxyAddress);
+        emit IExchange.WithdrawalRequested(address(wallet1), usdcAddress, 1000e5);
+        // re-initiate due to token missmatch
+        exchange.sovereignWithdrawal(usdcAddress, 1000e5);
+
+        (address tokenAddress, uint256 amount, uint256 timestamp) = exchange.sovereignWithdrawals(wallet1);
+        assertEq(tokenAddress, usdcAddress);
+        assertEq(amount, 1000e5);
         assertGt(timestamp, 0);
 
         vm.stopPrank();

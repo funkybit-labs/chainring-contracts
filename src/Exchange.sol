@@ -78,24 +78,27 @@ contract Exchange is EIP712Upgradeable, UUPSUpgradeable, OwnableUpgradeable, IEx
     function sovereignWithdrawal(address _token, uint256 _amount) external {
         SovereignWithdrawal memory request = sovereignWithdrawals[msg.sender];
 
-        if (request.timestamp == 0 || block.timestamp >= request.timestamp + sovereignWithdrawalDelay * 2) {
-            // Initiate withdrawal
-            uint256 balance = balances[msg.sender][_token];
-            require(_amount <= balance, "Insufficient balance");
-
-            sovereignWithdrawals[msg.sender] =
-                SovereignWithdrawal({token: _token, amount: _amount, timestamp: block.timestamp});
-
-            emit WithdrawalRequested(msg.sender, _token, _amount);
-        } else {
-            // Complete withdrawal
-            require(request.token == _token, "Token mismatch");
-            require(request.amount == _amount, "Amount mismatch");
-            require(block.timestamp >= request.timestamp + sovereignWithdrawalDelay, "Withdrawal delay not met");
-
+        if (request.timestamp == 0) {
+            // no active withdrawal request, initiate new withdrawal
+            _sovereignWithdrawal(_token, _amount);
+        } else if (block.timestamp < request.timestamp + sovereignWithdrawalDelay) {
+            revert("Withdrawal delay not met");
+        } else if (request.token == _token && request.amount == _amount) {
+            // complete withdrawal
             _withdraw(0, msg.sender, request.token, request.amount, 0);
             delete sovereignWithdrawals[msg.sender];
+        } else {
+            // token or amount mismatch, initiate new withdrawal
+            _sovereignWithdrawal(_token, _amount);
         }
+    }
+
+    function _sovereignWithdrawal(address _token, uint256 _amount) internal {
+        uint256 balance = balances[msg.sender][_token];
+        require(_amount <= balance, "Insufficient balance");
+
+        sovereignWithdrawals[msg.sender] = SovereignWithdrawal({token: _token, amount: _amount, timestamp: block.timestamp});
+        emit WithdrawalRequested(msg.sender, _token, _amount);
     }
 
     function submitWithdrawals(bytes[] calldata withdrawals) public onlySubmitter {
