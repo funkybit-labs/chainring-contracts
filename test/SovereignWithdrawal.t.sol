@@ -19,14 +19,14 @@ contract SovereignWithdrawalTest is ExchangeBaseTest {
         vm.deal(wallet2, 10 ether);
     }
 
-    function test_initiateSovereignWithdrawal_nativeToken() public {
+    function test_sovereignWithdrawal_initiate_nativeToken() public {
         setupWallets();
         deposit(wallet1, 2 ether);
         vm.startPrank(wallet1);
 
         vm.expectEmit(exchangeProxyAddress);
         emit IExchange.WithdrawalRequested(address(wallet1), address(0), 2 ether);
-        exchange.initiateSovereignWithdrawal(address(0), 2 ether);
+        exchange.sovereignWithdrawal(address(0), 2 ether);
 
         (address tokenAddress, uint256 amount, uint256 timestamp) = exchange.sovereignWithdrawals(wallet1);
         assertEq(tokenAddress, address(0));
@@ -36,41 +36,41 @@ contract SovereignWithdrawalTest is ExchangeBaseTest {
         vm.stopPrank();
     }
 
-    function test_initiateSovereignWithdrawal_revertIfExistingWithdrawal_nativeToken() public {
-        setupWallets();
-        deposit(wallet1, 3 ether);
-        vm.startPrank(wallet1);
-
-        exchange.initiateSovereignWithdrawal(address(0), 2 ether);
-
-        vm.expectRevert("Uncompleted withdrawal request exists");
-        exchange.initiateSovereignWithdrawal(address(0), 3 ether);
-
-        vm.stopPrank();
-    }
-
-    function test_initiateSovereignWithdrawal_revertIfInsufficientBalance_nativeToken() public {
+    function test_sovereignWithdrawal_revertIfInsufficientBalance_nativeToken() public {
         setupWallets();
         deposit(wallet1, 3 ether);
         vm.startPrank(wallet1);
 
         vm.expectRevert("Insufficient balance");
-        exchange.initiateSovereignWithdrawal(address(0), 4 ether);
+        exchange.sovereignWithdrawal(address(0), 4 ether);
 
         vm.stopPrank();
     }
 
-    function test_completeSovereignWithdrawal_nativeToken() public {
+    function test_sovereignWithdrawal_revertIfWithdrawalDelayNotMet_nativeToken() public {
         setupWallets();
         deposit(wallet1, 3 ether);
         vm.startPrank(wallet1);
 
-        exchange.initiateSovereignWithdrawal(address(0), 2 ether);
+        exchange.sovereignWithdrawal(address(0), 2 ether);
+
+        vm.expectRevert("Withdrawal delay not met");
+        exchange.sovereignWithdrawal(address(0), 2 ether);
+
+        vm.stopPrank();
+    }
+
+    function test_sovereignWithdrawal_complete_nativeToken() public {
+        setupWallets();
+        deposit(wallet1, 3 ether);
+        vm.startPrank(wallet1);
+
+        exchange.sovereignWithdrawal(address(0), 2 ether);
 
         // Increase EVM time to pass the delay
         vm.warp(block.timestamp + exchange.sovereignWithdrawalDelay());
 
-        exchange.completeSovereignWithdrawal();
+        exchange.sovereignWithdrawal(address(0), 2 ether);
 
         assertEq(wallet1.balance, 9 ether); // initial balance - deposit + withdrawal
         (, uint256 amount,) = exchange.sovereignWithdrawals(wallet1);
@@ -79,26 +79,59 @@ contract SovereignWithdrawalTest is ExchangeBaseTest {
         vm.stopPrank();
     }
 
-    function test_completeSovereignWithdrawal_revertIfNoActiveWithdrawal_nativeToken() public {
+    function test_sovereignWithdrawal_revertAfterDelayIfAmountDoesNotMatch_nativeToken() public {
         setupWallets();
         deposit(wallet1, 3 ether);
         vm.startPrank(wallet1);
 
-        vm.expectRevert("No active withdrawal request");
-        exchange.completeSovereignWithdrawal();
+        exchange.sovereignWithdrawal(address(0), 2 ether);
+
+        // Increase EVM time to pass the delay
+        vm.warp(block.timestamp + exchange.sovereignWithdrawalDelay());
+
+        vm.expectRevert("Amount mismatch");
+        exchange.sovereignWithdrawal(address(0), 1 ether);
 
         vm.stopPrank();
     }
 
-    function test_completeSovereignWithdrawal_revertIfDelayNotMet_nativeToken() public {
+    function test_sovereignWithdrawal_revertAfterDelayIfTokenDoesNotMatch_nativeToken() public {
         setupWallets();
         deposit(wallet1, 3 ether);
         vm.startPrank(wallet1);
 
-        exchange.initiateSovereignWithdrawal(address(0), 2 ether);
+        exchange.sovereignWithdrawal(address(0), 2 ether);
 
-        vm.expectRevert("Withdrawal delay not met");
-        exchange.completeSovereignWithdrawal();
+        // Increase EVM time to pass the delay
+        vm.warp(block.timestamp + exchange.sovereignWithdrawalDelay());
+
+        vm.expectRevert("Token mismatch");
+        exchange.sovereignWithdrawal(usdcAddress, 1 ether);
+
+        vm.stopPrank();
+    }
+
+    function test_sovereignWithdrawal_expiry_nativeToken() public {
+        setupWallets();
+        deposit(wallet1, 5 ether);
+        vm.startPrank(wallet1);
+
+        vm.expectEmit(exchangeProxyAddress);
+        emit IExchange.WithdrawalRequested(address(wallet1), address(0), 2 ether);
+        exchange.sovereignWithdrawal(address(0), 2 ether);
+
+        // Increase EVM time to pass the expiry period 2x times
+        vm.warp(block.timestamp + exchange.sovereignWithdrawalDelay() * 2);
+
+        vm.expectEmit(exchangeProxyAddress);
+        emit IExchange.WithdrawalRequested(address(wallet1), address(0), 4 ether);
+        // re-initiate is possible due to expiry
+        exchange.sovereignWithdrawal(address(0), 4 ether);
+
+        (address tokenAddress, uint256 amount, uint256 timestamp) = exchange.sovereignWithdrawals(wallet1);
+        assertEq(tokenAddress, address(0));
+        assertEq(amount, 4 ether);
+        assertGt(timestamp, 0);
 
         vm.stopPrank();
     }

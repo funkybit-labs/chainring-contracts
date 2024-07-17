@@ -75,25 +75,27 @@ contract Exchange is EIP712Upgradeable, UUPSUpgradeable, OwnableUpgradeable, IEx
         emit Deposit(msg.sender, _token, _amount);
     }
 
-    function initiateSovereignWithdrawal(address _token, uint256 _amount) external {
-        require(sovereignWithdrawals[msg.sender].amount == 0, "Uncompleted withdrawal request exists");
-
-        uint256 balance = balances[msg.sender][_token];
-        require(_amount <= balance, "Insufficient balance");
-
-        sovereignWithdrawals[msg.sender] =
-            SovereignWithdrawal({token: _token, amount: _amount, timestamp: block.timestamp});
-
-        emit WithdrawalRequested(msg.sender, _token, _amount);
-    }
-
-    function completeSovereignWithdrawal() external {
+    function sovereignWithdrawal(address _token, uint256 _amount) external {
         SovereignWithdrawal memory request = sovereignWithdrawals[msg.sender];
-        require(request.amount > 0, "No active withdrawal request");
-        require(block.timestamp >= request.timestamp + sovereignWithdrawalDelay, "Withdrawal delay not met");
 
-        _withdrawAll(0, msg.sender, request.token, request.amount, 0);
-        delete sovereignWithdrawals[msg.sender];
+        if (request.timestamp == 0 || block.timestamp >= request.timestamp + sovereignWithdrawalDelay * 2) {
+            // Initiate withdrawal
+            uint256 balance = balances[msg.sender][_token];
+            require(_amount <= balance, "Insufficient balance");
+
+            sovereignWithdrawals[msg.sender] =
+                SovereignWithdrawal({token: _token, amount: _amount, timestamp: block.timestamp});
+
+            emit WithdrawalRequested(msg.sender, _token, _amount);
+        } else {
+            // Complete withdrawal
+            require(request.token == _token, "Token mismatch");
+            require(request.amount == _amount, "Amount mismatch");
+            require(block.timestamp >= request.timestamp + sovereignWithdrawalDelay, "Withdrawal delay not met");
+
+            _withdraw(0, msg.sender, request.token, request.amount, 0);
+            delete sovereignWithdrawals[msg.sender];
+        }
     }
 
     function submitWithdrawals(bytes[] calldata withdrawals) public onlySubmitter {

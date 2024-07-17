@@ -88,9 +88,7 @@ interface IExchange is IVersion {
 
     function setFeeAccount(address _feeAccount) external;
 
-    function initiateSovereignWithdrawal(address _token, uint256 _amount) external;
-
-    function completeSovereignWithdrawal() external;
+    function sovereignWithdrawal(address _token, uint256 _amount) external;
 
     function setSovereignWithdrawalDelay(uint256 _sovereignWithdrawalDelay) external;
 }
