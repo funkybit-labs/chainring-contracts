@@ -97,7 +97,8 @@ contract Exchange is EIP712Upgradeable, UUPSUpgradeable, OwnableUpgradeable, IEx
         uint256 balance = balances[msg.sender][_token];
         require(_amount <= balance, "Insufficient balance");
 
-        sovereignWithdrawals[msg.sender] = SovereignWithdrawal({token: _token, amount: _amount, timestamp: block.timestamp});
+        sovereignWithdrawals[msg.sender] =
+            SovereignWithdrawal({token: _token, amount: _amount, timestamp: block.timestamp});
         emit WithdrawalRequested(msg.sender, _token, _amount);
     }
 
