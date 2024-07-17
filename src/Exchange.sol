@@ -85,7 +85,12 @@ contract Exchange is EIP712Upgradeable, UUPSUpgradeable, OwnableUpgradeable, IEx
             revert("Withdrawal delay not met");
         } else if (request.token == _token && request.amount == _amount) {
             // complete withdrawal
-            _withdraw(0, msg.sender, request.token, request.amount, 0);
+            if (request.amount == 0) {
+                uint256 balance = balances[msg.sender][_token];
+                _withdraw(0, msg.sender, request.token, balance, 0);
+            } else {
+                _withdraw(0, msg.sender, request.token, request.amount, 0);
+            }
             delete sovereignWithdrawals[msg.sender];
         } else {
             // token or amount mismatch, initiate new withdrawal
@@ -107,8 +112,9 @@ contract Exchange is EIP712Upgradeable, UUPSUpgradeable, OwnableUpgradeable, IEx
         for (uint256 i = 0; i < withdrawals.length; i++) {
             TransactionType txType = TransactionType(uint8(withdrawals[i][0]));
             WithdrawWithSignature memory signedTx = abi.decode(withdrawals[i][1:], (WithdrawWithSignature));
-            if (_isPendingWithdrawal(signedTx) || _validateWithdrawalSignature(signedTx, txType)) {
-                if (txType == TransactionType.WithdrawAll) {
+            bool withdrawAll = txType == TransactionType.WithdrawAll;
+            if (_isPendingWithdrawal(signedTx, withdrawAll) || _validateWithdrawalSignature(signedTx, txType)) {
+                if (withdrawAll) {
                     _withdrawAll(
                         signedTx.sequence,
                         signedTx.tx.sender,
@@ -260,9 +266,14 @@ contract Exchange is EIP712Upgradeable, UUPSUpgradeable, OwnableUpgradeable, IEx
         return true;
     }
 
-    function _isPendingWithdrawal(WithdrawWithSignature memory signedTx) internal view returns (bool) {
+    function _isPendingWithdrawal(WithdrawWithSignature memory signedTx, bool withdrawAll)
+        internal
+        view
+        returns (bool)
+    {
         SovereignWithdrawal memory request = sovereignWithdrawals[signedTx.tx.sender];
-        return request.amount == signedTx.tx.amount && request.token == signedTx.tx.token;
+        return (request.amount == signedTx.tx.amount || request.amount == 0 && withdrawAll)
+            && request.token == signedTx.tx.token;
     }
 
     function _withdrawAll(uint64 _sequence, address _sender, address _token, uint256 _amount, uint256 _fee) internal {

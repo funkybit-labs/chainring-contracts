@@ -79,6 +79,25 @@ contract SovereignWithdrawalTest is ExchangeBaseTest {
         vm.stopPrank();
     }
 
+    function test_sovereignWithdrawalAll_complete_nativeToken() public {
+        setupWallets();
+        deposit(wallet1, 3 ether);
+        vm.startPrank(wallet1);
+
+        exchange.sovereignWithdrawal(address(0), 0 ether);
+
+        // increase EVM time to pass the delay
+        vm.warp(block.timestamp + exchange.sovereignWithdrawalDelay());
+
+        exchange.sovereignWithdrawal(address(0), 0 ether);
+
+        assertEq(wallet1.balance, 10 ether); // initial balance - deposit + withdrawal
+        (, uint256 amount,) = exchange.sovereignWithdrawals(wallet1);
+        assertEq(amount, 0);
+
+        vm.stopPrank();
+    }
+
     function test_sovereignWithdrawal_initiateNewAfterDelayIfAmountDoesNotMatch_nativeToken() public {
         setupWallets();
         deposit(wallet1, 5 ether);
