@@ -63,7 +63,7 @@ contract Exchange is EIP712Upgradeable, UUPSUpgradeable, OwnableUpgradeable, IEx
     }
 
     function setSovereignWithdrawalDelay(uint256 _sovereignWithdrawalDelay) external onlyOwner {
-        require(_sovereignWithdrawalDelay > 0, "Not a valid sovereign withdrawal delay");
+        require(_sovereignWithdrawalDelay >= 1 days, "Not a valid sovereign withdrawal delay");
         sovereignWithdrawalDelay = _sovereignWithdrawalDelay;
     }
 
@@ -107,13 +107,27 @@ contract Exchange is EIP712Upgradeable, UUPSUpgradeable, OwnableUpgradeable, IEx
         emit WithdrawalRequested(msg.sender, _token, _amount);
     }
 
+    function _isZeroSignature(bytes memory signature) internal pure returns (bool) {
+        if (signature.length != 65) {
+            return false;
+        }
+        for (uint256 i = 0; i < signature.length; i++) {
+            if (signature[i] != 0) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     function submitWithdrawals(bytes[] calldata withdrawals) public onlySubmitter {
         require(batchHash == 0, "Settlement batch in process");
         for (uint256 i = 0; i < withdrawals.length; i++) {
             TransactionType txType = TransactionType(uint8(withdrawals[i][0]));
             WithdrawWithSignature memory signedTx = abi.decode(withdrawals[i][1:], (WithdrawWithSignature));
             bool withdrawAll = txType == TransactionType.WithdrawAll;
-            if (_isPendingWithdrawal(signedTx, withdrawAll) || _validateWithdrawalSignature(signedTx, txType)) {
+            bool pendingSovereignWithdrawal =
+                _isZeroSignature(signedTx.signature) && _isPendingSovereignWithdrawal(signedTx, withdrawAll);
+            if (pendingSovereignWithdrawal || _validateWithdrawalSignature(signedTx, txType)) {
                 if (withdrawAll) {
                     _withdrawAll(
                         signedTx.sequence,
@@ -131,7 +145,9 @@ contract Exchange is EIP712Upgradeable, UUPSUpgradeable, OwnableUpgradeable, IEx
                         signedTx.tx.feeAmount
                     );
                 }
-                delete sovereignWithdrawals[signedTx.tx.sender];
+                if (pendingSovereignWithdrawal) {
+                    delete sovereignWithdrawals[signedTx.tx.sender];
+                }
             }
         }
         lastWithdrawalBatchHash = _calculateWithdrawalBatchHash(withdrawals);
@@ -266,7 +282,7 @@ contract Exchange is EIP712Upgradeable, UUPSUpgradeable, OwnableUpgradeable, IEx
         return true;
     }
 
-    function _isPendingWithdrawal(WithdrawWithSignature memory signedTx, bool withdrawAll)
+    function _isPendingSovereignWithdrawal(WithdrawWithSignature memory signedTx, bool withdrawAll)
         internal
         view
         returns (bool)

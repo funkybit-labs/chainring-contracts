@@ -173,6 +173,14 @@ contract SovereignWithdrawalTest is ExchangeBaseTest {
         vm.expectRevert(bytes("Not a valid sovereign withdrawal delay"));
         exchange.setSovereignWithdrawalDelay(0);
 
+        vm.expectRevert(bytes("Not a valid sovereign withdrawal delay"));
+        exchange.setSovereignWithdrawalDelay(1 seconds);
+
+        vm.expectRevert(bytes("Not a valid sovereign withdrawal delay"));
+        exchange.setSovereignWithdrawalDelay(23 hours);
+
+        exchange.setSovereignWithdrawalDelay(1 days);
+
         vm.stopPrank();
     }
 }
