@@ -20,14 +20,21 @@ contract Exchange is EIP712Upgradeable, UUPSUpgradeable, OwnableUpgradeable, IEx
     bytes32 public lastSettlementBatchHash;
     bytes32 public lastWithdrawalBatchHash;
 
+    mapping(address => SovereignWithdrawal) public sovereignWithdrawals;
+    uint256 public sovereignWithdrawalDelay;
+
     string constant WITHDRAW_SIGNATURE = "Withdraw(address sender,address token,uint256 amount,uint64 nonce)";
 
-    function initialize(address _submitter, address _feeAccount) public initializer {
+    function initialize(address _submitter, address _feeAccount, uint256 _sovereignWithdrawalDelay)
+        public
+        initializer
+    {
         __Ownable_init(msg.sender);
         __UUPSUpgradeable_init();
         __EIP712_init("ChainRing Labs", "0.0.1");
         submitter = _submitter;
         feeAccount = _feeAccount;
+        sovereignWithdrawalDelay = _sovereignWithdrawalDelay;
     }
 
     receive() external payable {
@@ -55,6 +62,11 @@ contract Exchange is EIP712Upgradeable, UUPSUpgradeable, OwnableUpgradeable, IEx
         feeAccount = _feeAccount;
     }
 
+    function setSovereignWithdrawalDelay(uint256 _sovereignWithdrawalDelay) external onlyOwner {
+        require(_sovereignWithdrawalDelay >= 1 days, "Not a valid sovereign withdrawal delay");
+        sovereignWithdrawalDelay = _sovereignWithdrawalDelay;
+    }
+
     function deposit(address _token, uint256 _amount) external {
         IERC20 erc20 = IERC20(_token);
         erc20.transferFrom(msg.sender, address(this), _amount);
@@ -63,13 +75,60 @@ contract Exchange is EIP712Upgradeable, UUPSUpgradeable, OwnableUpgradeable, IEx
         emit Deposit(msg.sender, _token, _amount);
     }
 
+    function sovereignWithdrawal(address _token, uint256 _amount) external {
+        SovereignWithdrawal memory request = sovereignWithdrawals[msg.sender];
+
+        if (request.timestamp == 0) {
+            // no active withdrawal request, initiate new withdrawal
+            _sovereignWithdrawal(_token, _amount);
+        } else if (block.timestamp < request.timestamp + sovereignWithdrawalDelay) {
+            revert("Withdrawal delay not met");
+        } else if (request.token == _token && request.amount == _amount) {
+            // complete withdrawal
+            if (request.amount == 0) {
+                uint256 balance = balances[msg.sender][_token];
+                _withdraw(0, msg.sender, request.token, balance, 0);
+            } else {
+                _withdraw(0, msg.sender, request.token, request.amount, 0);
+            }
+            delete sovereignWithdrawals[msg.sender];
+        } else {
+            // token or amount mismatch, initiate new withdrawal
+            _sovereignWithdrawal(_token, _amount);
+        }
+    }
+
+    function _sovereignWithdrawal(address _token, uint256 _amount) internal {
+        uint256 balance = balances[msg.sender][_token];
+        require(_amount <= balance, "Insufficient balance");
+
+        sovereignWithdrawals[msg.sender] =
+            SovereignWithdrawal({token: _token, amount: _amount, timestamp: block.timestamp});
+        emit WithdrawalRequested(msg.sender, _token, _amount);
+    }
+
+    function _isZeroSignature(bytes memory signature) internal pure returns (bool) {
+        if (signature.length != 65) {
+            return false;
+        }
+        for (uint256 i = 0; i < signature.length; i++) {
+            if (signature[i] != 0) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     function submitWithdrawals(bytes[] calldata withdrawals) public onlySubmitter {
         require(batchHash == 0, "Settlement batch in process");
         for (uint256 i = 0; i < withdrawals.length; i++) {
             TransactionType txType = TransactionType(uint8(withdrawals[i][0]));
             WithdrawWithSignature memory signedTx = abi.decode(withdrawals[i][1:], (WithdrawWithSignature));
-            if (_validateWithdrawalSignature(signedTx, txType)) {
-                if (txType == TransactionType.WithdrawAll) {
+            bool withdrawAll = txType == TransactionType.WithdrawAll;
+            bool pendingSovereignWithdrawal =
+                _isZeroSignature(signedTx.signature) && _isPendingSovereignWithdrawal(signedTx, withdrawAll);
+            if (pendingSovereignWithdrawal || _validateWithdrawalSignature(signedTx, txType)) {
+                if (withdrawAll) {
                     _withdrawAll(
                         signedTx.sequence,
                         signedTx.tx.sender,
@@ -85,6 +144,9 @@ contract Exchange is EIP712Upgradeable, UUPSUpgradeable, OwnableUpgradeable, IEx
                         signedTx.tx.amount,
                         signedTx.tx.feeAmount
                     );
+                }
+                if (pendingSovereignWithdrawal) {
+                    delete sovereignWithdrawals[signedTx.tx.sender];
                 }
             }
         }
@@ -218,6 +280,16 @@ contract Exchange is EIP712Upgradeable, UUPSUpgradeable, OwnableUpgradeable, IEx
             return false;
         }
         return true;
+    }
+
+    function _isPendingSovereignWithdrawal(WithdrawWithSignature memory signedTx, bool withdrawAll)
+        internal
+        view
+        returns (bool)
+    {
+        SovereignWithdrawal memory request = sovereignWithdrawals[signedTx.tx.sender];
+        return (request.amount == signedTx.tx.amount || request.amount == 0 && withdrawAll)
+            && request.token == signedTx.tx.token;
     }
 
     function _withdrawAll(uint64 _sequence, address _sender, address _token, uint256 _amount, uint256 _fee) internal {
