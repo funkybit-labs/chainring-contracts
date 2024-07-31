@@ -8,6 +8,7 @@ on:
 
 jobs:
   build:
+    name: Evm contract
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -25,3 +26,30 @@ jobs:
 
       - name: Run tests
         run: forge test -vvv
+
+
+  build_arch:
+    name: Arch contract
+    permissions:
+      id-token: write # needed for aws credentials
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+      - name: Setup AWS
+        uses: ./.github/actions/setup-aws
+      - name: Login to Amazon ECR
+        uses: aws-actions/amazon-ecr-login@v2
+      - name: Start Arch and Bitcoin containers
+        run: |
+          make start_ci_containers
+      - name: Install risc0 toolchain
+        run: cargo install cargo-binstall && cargo binstall cargo-risczero@0.21.0 -y && cargo risczero install
+      - name: Build
+        working-directory: "arch"
+        run: make build
+      - name: Test
+        working-directory: "arch"
+        run: make test

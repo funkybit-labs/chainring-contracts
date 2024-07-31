@@ -1,6 +1,7 @@
 # Compiler files
 cache/
 out/
+target/
 
 # Ignores development broadcast logs
 !/broadcast
@@ -16,3 +17,7 @@ docs/
 
 # IDE
 *.iml
+
+# Arch tests
+caller.json
+.arch-data

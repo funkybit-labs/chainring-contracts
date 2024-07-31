@@ -1,0 +1,15 @@
+name: Setup AWS
+description: Setup AWS
+
+runs:
+  using: composite
+  steps:
+    - name: Install aws-cli
+      uses: unfor19/install-aws-cli-action@v1
+      with:
+        arch: amd64
+    - name: Configure AWS Credentials
+      uses: aws-actions/configure-aws-credentials@v4.0.2
+      with:
+        aws-region: us-east-2
+        role-to-assume: arn:aws:iam::851725450525:role/terraform-20240313150351606400000001
