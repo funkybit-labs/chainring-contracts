@@ -1,4 +1,4 @@
-# ChainRing - Exchange contract
+# funkybit - Exchange contract
 
 ## No License
 

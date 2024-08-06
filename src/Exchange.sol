@@ -33,7 +33,7 @@ contract Exchange is EIP712Upgradeable, UUPSUpgradeable, OwnableUpgradeable, IEx
     {
         __Ownable_init(msg.sender);
         __UUPSUpgradeable_init();
-        __EIP712_init("ChainRing Labs", "0.0.1");
+        __EIP712_init("funkybit", "0.1.0");
         submitter = _submitter;
         feeAccount = _feeAccount;
         sovereignWithdrawalDelay = _sovereignWithdrawalDelay;
