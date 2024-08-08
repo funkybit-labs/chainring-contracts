@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Result};
 use sha256::digest;
 use bitcoin::{consensus, Transaction};
-use crate::models::{TokenBalances, Adjustment, Balance, DepositParams, WithdrawBatchParams, SettlementBatchParams, Withdrawal, InitStateParams, ExchangeState, RollbackSettlementParams};
+use crate::models::{TokenBalances, Adjustment, Balance, DepositParams, WithdrawBatchParams, SettlementBatchParams, Withdrawal, InitStateParams, ExchangeState};
 use sdk::UtxoInfo;
 use substring::Substring;
 
@@ -11,7 +11,6 @@ pub fn init_state(utxos: &[UtxoInfo],
     let mut state: ExchangeState = if state_data.is_empty() {
         ExchangeState {
             fee_account: "".to_string(),
-            settlement_batch_hash: "".to_string(),
             last_settlement_batch_hash: "".to_string(),
             last_withdrawal_batch_hash: "".to_string(),
         }
@@ -42,10 +41,6 @@ pub fn deposit(utxos: &[UtxoInfo],
 pub fn withdraw_batch(utxos: &[UtxoInfo], params: WithdrawBatchParams) -> Result<Transaction> {
     let mut existing_state = get_exchange_state(utxos, params.state_utxo_index)?;
 
-    if !existing_state.settlement_batch_hash.is_empty() {
-        return Err(anyhow!("Settlement batch in progress"));
-    }
-
     for token_withdrawals in &params.withdrawals {
         let token_balance_state = get_token_balance_state(utxos, token_withdrawals.utxo_index)?;
         let updated_token_balance_state = handle_withdrawals(
@@ -61,42 +56,7 @@ pub fn withdraw_batch(utxos: &[UtxoInfo], params: WithdrawBatchParams) -> Result
     Ok(consensus::deserialize(&params.tx_hex).unwrap())
 }
 
-pub fn prepare_settlement_batch(utxos: &[UtxoInfo], params: SettlementBatchParams) -> Result<Transaction> {
-    let mut exchange_state = get_exchange_state(utxos, params.state_utxo_index)?;
-
-    if !exchange_state.settlement_batch_hash.is_empty() {
-        return Err(anyhow!("Batch in progress, submit or rollback"));
-    }
-
-    for token_settlements in &params.settlements {
-        let token_balance_state = get_token_balance_state(utxos, token_settlements.utxo_index)?;
-        verify_decrements(token_balance_state, token_settlements.clone().decrements)?;
-    }
-
-    exchange_state.settlement_batch_hash = hash(borsh::to_vec(&params).unwrap());
-    *utxos[params.state_utxo_index].data.borrow_mut() = borsh::to_vec(&exchange_state).unwrap();
-
-    Ok(consensus::deserialize(&params.tx_hex).unwrap())
-}
-
-pub fn rollback_settlement(utxos: &[UtxoInfo], params: RollbackSettlementParams) -> Result<Transaction> {
-    let mut exchange_state = get_exchange_state(utxos, 0)?;
-    exchange_state.settlement_batch_hash = "".to_string();
-    *utxos[0].data.borrow_mut() = borsh::to_vec(&exchange_state).unwrap();
-    Ok(consensus::deserialize(&params.tx_hex).unwrap())
-}
-
 pub fn submit_settlement_batch(utxos: &[UtxoInfo], params: SettlementBatchParams) -> Result<Transaction> {
-    let mut exchange_state = get_exchange_state(utxos, params.state_utxo_index)?;
-
-    if exchange_state.settlement_batch_hash.is_empty() {
-        return Err(anyhow!("No batch prepared"));
-    }
-
-    if exchange_state.settlement_batch_hash != hash(borsh::to_vec(&params).unwrap()) {
-        return Err(anyhow!("Hash does not match prepared batch"));
-    }
-
     for token_settlements in &params.settlements {
         let token_balance_state = get_token_balance_state(utxos, token_settlements.utxo_index)?;
         let token_balance_state_1 = handle_increments(token_balance_state, token_settlements.clone().increments)?;
@@ -104,8 +64,8 @@ pub fn submit_settlement_batch(utxos: &[UtxoInfo], params: SettlementBatchParams
         *utxos[token_settlements.utxo_index].data.borrow_mut() = borsh::to_vec(&token_balance_state_2).unwrap();
     }
 
-    exchange_state.last_settlement_batch_hash = exchange_state.settlement_batch_hash;
-    exchange_state.settlement_batch_hash = "".to_string();
+    let mut exchange_state = get_exchange_state(utxos, params.state_utxo_index)?;
+    exchange_state.last_settlement_batch_hash = hash(borsh::to_vec(&params).unwrap());
     *utxos[params.state_utxo_index].data.borrow_mut() = borsh::to_vec(&exchange_state).unwrap();
 
     Ok(consensus::deserialize(&params.tx_hex).unwrap())

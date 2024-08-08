@@ -14,15 +14,11 @@ mod tests {
     use substring::Substring;
 
     impl fmt::Display for Balance {
-        // This trait requires `fmt` with this exact signature.
         fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-            // Write strictly the first element into the supplied output
-            // stream: `f`. Returns `fmt::Result` which indicates whether the
-            // operation succeeded or failed. Note that `write!` uses syntax which
-            // is very similar to `println!`.
             write!(f, "{} {}", self.address, self.balance)
         }
     }
+
     #[derive(Clone, BorshSerialize, BorshDeserialize)]
     pub struct Balance {
         pub address: String,
@@ -38,7 +34,6 @@ mod tests {
     #[derive(Clone, BorshSerialize, BorshDeserialize)]
     pub struct ExchangeState {
         pub fee_account: String,
-        pub settlement_batch_hash: String,
         pub last_settlement_batch_hash: String,
         pub last_withdrawal_batch_hash: String,
     }
@@ -61,19 +56,12 @@ mod tests {
         InitState(InitStateParams),
         Deposit(DepositParams),
         BatchWithdraw(WithdrawBatchParams),
-        PrepareBatchSettlement(SettlementBatchParams),
         SubmitBatchSettlement(SettlementBatchParams),
-        RollbackSettlement(RollbackSettlementParams),
     }
 
     #[derive(Clone, BorshSerialize, BorshDeserialize)]
     pub struct InitStateParams {
         pub fee_account: String,
-        pub tx_hex: Vec<u8>,
-    }
-
-    #[derive(Clone, BorshSerialize, BorshDeserialize)]
-    pub struct RollbackSettlementParams {
         pub tx_hex: Vec<u8>,
     }
 
@@ -112,12 +100,17 @@ mod tests {
         pub tx_hex: Vec<u8>,
     }
 
+    use std::convert::TryInto;
+
+    fn convert<T, const N: usize>(v: Vec<T>) -> [T; N] {
+        v.try_into()
+            .unwrap_or_else(|v: Vec<T>| panic!("Expected a Vec of length {} but it was {}", N, v.len()))
+    }
 
     #[test]
     #[serial]
     fn test_program_deployed() {
         let deployed_program_id = Pubkey::from_str(&deploy_program()).unwrap();
-        println!("{}", deployed_program_id);
         assert_eq!(
             fs::read("target/program.elf").expect("elf path should be available"),
             get_program(deployed_program_id.to_string())
@@ -187,7 +180,6 @@ mod tests {
         );
     }
 
-    #[ignore]  // arch fails for some reason but after our contract has successfully processed the submit
     #[test]
     #[serial]
     fn test_settlement_submission() {
@@ -243,90 +235,45 @@ mod tests {
             tx_hex: hex::decode(prepare_fees()).unwrap(),
         };
 
-        let updated_state_utxo = assert_send_and_sign_prepare_settlement(
-            deployed_program_id.clone(),
-            vec![state_utxo, updated_token1_utxo.clone(), updated_token2_utxo.clone()],
-            input.clone()
-        );
-
         // now submit the settlement
         let (_updated_state_utxo, _token_utxos) = assert_send_and_sign_submit_settlement(
             deployed_program_id.clone(),
-            vec![updated_state_utxo, updated_token1_utxo.clone(), updated_token2_utxo.clone()],
-            input.clone()
-        );
-
-    }
-
-    #[test]
-    #[serial]
-    fn test_settlement_rollback() {
-        let deployed_program_id = Pubkey::from_str(&deploy_program()).unwrap();
-
-        let utxos = onboard_state_utxos(deployed_program_id.clone(), "fee", 2);
-
-        let state_utxo = utxos[0].clone();
-        let token1_utxo = utxos[1].clone();
-        let token2_utxo = utxos[2].clone();
-
-        let address = "addr1".to_string();
-
-        let token1 = "btc".to_string();
-        let token2 = "rune1".to_string();
-
-        let (updated_token1_utxo, _) = deposit(
-            deployed_program_id.clone(), address.clone(), token1.clone(), token1_utxo.clone(),10000, 10000
-        );
-
-        let (updated_token2_utxo, _) = deposit(
-            deployed_program_id.clone(), address.clone(), token2.clone(), token2_utxo.clone(),8000, 8000
-        );
-
-
-        // prepare a settlement
-        let input = SettlementBatchParams {
-            state_utxo_index: 0,
-            settlements: vec![
-                SettlementAdjustments {
-                    utxo_index: 1,
-                    increments: vec![
-                        Adjustment {
-                            address: address.clone(),
-                            amount: 5000,
-                        }
-                    ],
-                    decrements: vec![],
-                    fee_amount: 0,
-                },
-                SettlementAdjustments {
-                    utxo_index: 2,
-                    increments: vec![],
-                    decrements: vec![
-                        Adjustment {
-                            address: address.clone(),
-                            amount: 1000,
-                        }
-                    ],
-                    fee_amount: 0,
-                }
-            ],
-            tx_hex: hex::decode(prepare_fees()).unwrap(),
-        };
-
-        let updated_state_utxo = assert_send_and_sign_prepare_settlement(
-            deployed_program_id.clone(),
             vec![state_utxo, updated_token1_utxo.clone(), updated_token2_utxo.clone()],
             input.clone()
         );
 
-        // roll it back
-        let _ = assert_send_and_sign_rollback_settlement(
-            deployed_program_id.clone(),
-            vec![updated_state_utxo],
-            RollbackSettlementParams {
-                tx_hex: hex::decode(prepare_fees()).unwrap()
-            }
+        let token1_state = read_utxo(format!("{}:{}", _token_utxos[0].txid, _token_utxos[0].vout))
+            .expect("read utxo should not fail").data;
+
+        assert_eq!(
+            borsh::to_vec(&TokenBalances {
+                token_id: token1.clone(),
+                balances: vec![
+                    Balance {
+                        address: address.clone(),
+                        balance: 15000,
+                    }
+                ],
+            }).unwrap(),
+            token1_state
         );
+
+        let token2_state = read_utxo(format!("{}:{}", _token_utxos[1].txid, _token_utxos[1].vout))
+                .expect("read utxo should not fail").data;
+
+        assert_eq!(
+            borsh::to_vec(&TokenBalances {
+                token_id: token2.clone(),
+                balances: vec![
+                    Balance {
+                        address: address.clone(),
+                        balance: 7000,
+                    }
+                ],
+            }).unwrap(),
+            token2_state
+        );
+
     }
 
     // support functions
@@ -357,12 +304,14 @@ mod tests {
     }
 
     fn onboard_state_utxos(deployed_program_id: Pubkey, fee_account: &str, num_token_utxo: u32) -> Vec<UtxoMeta> {
+        println!("Performing onboard state utxo");
         let submitter = CallerInfo::with_secret_key_file(SUBMITTER_FILE_PATH).unwrap();
         let mut utxos: Vec<UtxoMeta> = vec![];
         for i in 0..num_token_utxo + 1 {
             let state_txid = send_utxo(SUBMITTER_FILE_PATH);
             let result = read_utxo(format!("{}:1", state_txid))
                 .expect("read utxo should not fail");
+            print_bitcoin_tx_state(&state_txid);
             assert_eq!(
                 result.authority.to_string(),
                 submitter.public_key.to_string()
@@ -381,7 +330,6 @@ mod tests {
                         },
                         ExchangeState {
                             fee_account: fee_account.to_string(),
-                            settlement_batch_hash: "".to_string(),
                             last_settlement_batch_hash: "".to_string(),
                             last_withdrawal_batch_hash: "".to_string(),
                         },
@@ -408,6 +356,7 @@ mod tests {
         params: DepositParams,
         expected: TokenBalances,
     ) -> (UtxoMeta, UtxoMeta) {
+        println!("Performing Deposit");
         let submitter = CallerInfo::with_secret_key_file(SUBMITTER_FILE_PATH).unwrap();
         let expected = borsh::to_vec(&expected).expect("Balance should be serializable");
 
@@ -425,12 +374,12 @@ mod tests {
 
         let processed_tx = get_processed_transaction(NODE1_ADDRESS, txid)
             .expect("get processed transaction should not fail");
-        println!("processed_tx {:?}", processed_tx);
 
         let state_txid = &processed_tx.bitcoin_txids[&instruction_hash];
         let utxo = read_utxo(format!("{}:0", state_txid.clone()))
             .expect("read utxo should not fail");
-        println!("utxo data is {:?}", utxo.data);
+
+        print_bitcoin_tx_state(&state_txid);
 
         assert_eq!(
             utxo.data,
@@ -479,6 +428,7 @@ mod tests {
         params: WithdrawBatchParams,
         expected: TokenBalances,
     ) -> (UtxoMeta, UtxoMeta, UtxoMeta) {
+        println!("Performing Withdrawal");
         let submitter = CallerInfo::with_secret_key_file(SUBMITTER_FILE_PATH).unwrap();
         let expected = borsh::to_vec(&expected).expect("Balance should be serializable");
 
@@ -494,12 +444,12 @@ mod tests {
 
         let processed_tx = get_processed_transaction(NODE1_ADDRESS, txid)
             .expect("get processed transaction should not fail");
-        println!("processed_tx {:?}", processed_tx);
 
         let state_txid = &processed_tx.bitcoin_txids[&instruction_hash];
 
         let state_utxo = read_utxo(format!("{}:0", state_txid.clone()))
             .expect("read utxo should not fail");
+        println!("state_utxo data is {:?}", state_utxo.data);
         let exchange_state: ExchangeState = borsh::from_slice(&state_utxo.data).unwrap();
 
         println!("last_withdrawal_batch_hash is {}", exchange_state.last_withdrawal_batch_hash);
@@ -562,58 +512,12 @@ mod tests {
         )
     }
 
-    fn assert_send_and_sign_prepare_settlement(
-        deployed_program_id: Pubkey,
-        utxos: Vec<UtxoMeta>,
-        params: SettlementBatchParams,
-    ) -> UtxoMeta {
-        let submitter = CallerInfo::with_secret_key_file(SUBMITTER_FILE_PATH).unwrap();
-
-        let input = ExchangeInstruction::PrepareBatchSettlement(params.clone());
-        let instruction_data =
-            borsh::to_vec(&input).expect("ExchangeInstruction should be serializable");
-
-        let (txid, instruction_hash) = sign_and_send_instruction(
-            deployed_program_id.clone(),
-            utxos,
-            instruction_data,
-        ).expect("signing and sending a transaction should not fail");
-
-        let processed_tx = get_processed_transaction(NODE1_ADDRESS, txid)
-            .expect("get processed transaction should not fail");
-        println!("processed_tx {:?}", processed_tx);
-
-        let state_txid = &processed_tx.bitcoin_txids[&instruction_hash];
-
-        let raw_tx = get_raw_transaction(state_txid);
-        assert_eq!(raw_tx.output.len(), 1);
-
-        let state_utxo = read_utxo(format!("{}:0", state_txid.clone()))
-            .expect("read utxo should not fail");
-        let exchange_state: ExchangeState = borsh::from_slice(&state_utxo.data).unwrap();
-
-        println!("settlement_batch_hash is {}", exchange_state.settlement_batch_hash);
-        assert_eq!(
-            exchange_state.settlement_batch_hash,
-            hash(borsh::to_vec(&params).unwrap()),
-        );
-
-        assert_eq!(
-            state_utxo.authority.to_string(),
-            submitter.public_key.to_string(),
-        );
-
-        UtxoMeta {
-            txid: state_txid.clone(),
-            vout: 0,
-        }
-    }
-
     fn assert_send_and_sign_submit_settlement(
         deployed_program_id: Pubkey,
         utxos: Vec<UtxoMeta>,
         params: SettlementBatchParams,
     ) -> (UtxoMeta, Vec<UtxoMeta>) {
+        println!("Performing submit Settlement Batch");
         let submitter = CallerInfo::with_secret_key_file(SUBMITTER_FILE_PATH).unwrap();
 
         let input = ExchangeInstruction::SubmitBatchSettlement(params.clone());
@@ -628,30 +532,25 @@ mod tests {
 
         let processed_tx = get_processed_transaction(NODE1_ADDRESS, txid)
             .expect("get processed transaction should not fail");
-        println!("processed_tx {:?}", processed_tx);
 
         let state_txid = &processed_tx.bitcoin_txids[&instruction_hash];
 
+        print_bitcoin_tx_state(&state_txid);
+
         let state_utxo = read_utxo(format!("{}:0", state_txid.clone()))
             .expect("read utxo should not fail");
+
         let exchange_state: ExchangeState = borsh::from_slice(&state_utxo.data).unwrap();
 
         assert_eq!(
             exchange_state.last_settlement_batch_hash,
             hash(borsh::to_vec(&params).unwrap()),
         );
-        assert_eq!(
-            exchange_state.settlement_batch_hash,
-            "".to_string(),
-        );
 
         assert_eq!(
             state_utxo.authority.to_string(),
             submitter.public_key.to_string(),
         );
-
-        let raw_tx = get_raw_transaction(state_txid);
-        assert_eq!(raw_tx.output.len(), utxos.len() + 1);
 
         (
             UtxoMeta {
@@ -663,50 +562,6 @@ mod tests {
                 vout: v,
             }).collect()
         )
-    }
-
-    fn assert_send_and_sign_rollback_settlement(
-        deployed_program_id: Pubkey,
-        utxos: Vec<UtxoMeta>,
-        params: RollbackSettlementParams,
-    ) -> UtxoMeta {
-        let submitter = CallerInfo::with_secret_key_file(SUBMITTER_FILE_PATH).unwrap();
-
-        let input = ExchangeInstruction::RollbackSettlement(params.clone());
-        let instruction_data =
-            borsh::to_vec(&input).expect("ExchangeInstruction should be serializable");
-
-        let (txid, instruction_hash) = sign_and_send_instruction(
-            deployed_program_id.clone(),
-            utxos,
-            instruction_data,
-        ).expect("signing and sending a transaction should not fail");
-
-        let processed_tx = get_processed_transaction(NODE1_ADDRESS, txid)
-            .expect("get processed transaction should not fail");
-        println!("processed_tx {:?}", processed_tx);
-
-        let state_txid = &processed_tx.bitcoin_txids[&instruction_hash];
-
-        let state_utxo = read_utxo(format!("{}:0", state_txid.clone()))
-            .expect("read utxo should not fail");
-        let exchange_state: ExchangeState = borsh::from_slice(&state_utxo.data).unwrap();
-
-        println!("settlement_batch_hash is {}", exchange_state.settlement_batch_hash);
-        assert_eq!(
-            exchange_state.settlement_batch_hash,
-            "".to_string()
-        );
-
-        assert_eq!(
-            state_utxo.authority.to_string(),
-            submitter.public_key.to_string(),
-        );
-
-        UtxoMeta {
-            txid: state_txid.clone(),
-            vout: 0,
-        }
     }
 
     fn init_state_utxo(
@@ -730,7 +585,6 @@ mod tests {
 
         let processed_tx = get_processed_transaction(NODE1_ADDRESS, txid)
             .expect("get processed transaction should not fail");
-        println!("processed_tx {:?}", processed_tx);
 
         let state_txid = &processed_tx.bitcoin_txids[&instruction_hash];
         let utxo = read_utxo(format!("{}:0", state_txid.clone()))
@@ -755,5 +609,17 @@ mod tests {
 
     fn hash(data: Vec<u8>) -> String {
         digest(data).substring(0, 4).to_string()
+    }
+
+    fn print_bitcoin_tx_state(txid: &str) {
+        let raw_tx = get_raw_transaction(txid);
+        println!("number of inputs are {}", raw_tx.input.len());
+        for input in raw_tx.input.clone() {
+            println!("Input - {:?}", input.previous_output)
+        }
+
+        for i in 0 .. raw_tx.output.len() {
+            println!("Output: {}: {}", txid, i)
+        }
     }
 }

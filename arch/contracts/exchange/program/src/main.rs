@@ -1,6 +1,6 @@
 #![no_main]
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use bitcoin::consensus;
 use sdk::{entrypoint, Pubkey, UtxoInfo};
 
@@ -19,9 +19,7 @@ fn handler(_program_id: &Pubkey, utxos: &[UtxoInfo], instruction_data: &[u8]) ->
         ExchangeInstruction::InitState(params) => processor::init_state(utxos, params),
         ExchangeInstruction::Deposit(params) => processor::deposit(utxos, params),
         ExchangeInstruction::BatchWithdraw(params) => processor::withdraw_batch(utxos, params),
-        ExchangeInstruction::PrepareBatchSettlement(params) => processor::prepare_settlement_batch(utxos, params),
         ExchangeInstruction::SubmitBatchSettlement(params) => processor::submit_settlement_batch(utxos, params),
-        ExchangeInstruction::RollbackSettlement(params) => processor::rollback_settlement(utxos, params),
     };
 
     match tx_result {

@@ -15,7 +15,6 @@ pub struct TokenBalances {
 #[derive(Clone, BorshSerialize, BorshDeserialize)]
 pub struct ExchangeState {
     pub fee_account: String,
-    pub settlement_batch_hash: String,
     pub last_settlement_batch_hash: String,
     pub last_withdrawal_batch_hash: String,
 }
@@ -38,19 +37,12 @@ pub enum ExchangeInstruction {
     InitState(InitStateParams),
     Deposit(DepositParams),
     BatchWithdraw(WithdrawBatchParams),
-    PrepareBatchSettlement(SettlementBatchParams),
     SubmitBatchSettlement(SettlementBatchParams),
-    RollbackSettlement(RollbackSettlementParams),
 }
 
 #[derive(Clone, BorshSerialize, BorshDeserialize)]
 pub struct InitStateParams {
     pub fee_account: String,
-    pub tx_hex: Vec<u8>,
-}
-
-#[derive(Clone, BorshSerialize, BorshDeserialize)]
-pub struct RollbackSettlementParams {
     pub tx_hex: Vec<u8>,
 }
 
