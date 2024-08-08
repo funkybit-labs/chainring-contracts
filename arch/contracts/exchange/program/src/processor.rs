@@ -141,19 +141,3 @@ fn handle_withdrawals(mut state: TokenBalances, withdrawals: Vec<Withdrawal>) ->
     }
     Ok(state)
 }
-
-fn verify_decrements(state: TokenBalances, adjustments: Vec<Adjustment>) -> Result<()> {
-    for adjustment in adjustments {
-        match state.balances.clone().into_iter().position(|b| b.address == adjustment.address) {
-            Some(x) => {
-                let current_balance = state.balances[x].balance;
-                if adjustment.amount > current_balance {
-                    return Err(anyhow!("Cannot apply adjustment for {}, token {}, balance {}, amount {}",
-                                adjustment.address, state.token_id, current_balance, adjustment.amount));
-                };
-            }
-            None => return Err(anyhow!("Cannot apply adjustment for {}, no balance found", adjustment.address))
-        }
-    }
-    Ok(())
-}

@@ -1,6 +1,6 @@
 #![no_main]
 
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use bitcoin::consensus;
 use sdk::{entrypoint, Pubkey, UtxoInfo};
 
