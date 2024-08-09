@@ -12,6 +12,12 @@ test:
 bitcoin_image:
 	cd docker/bitcoin && make build && cd ../..
 
+fulcrum_image:
+	cd docker/fulcrum && make build && cd ../..
+
+stop_containers:
+	cd docker/bitcoin && make build && cd ../..
+
 stop_containers:
 	docker compose -p arch-bitcoin-network down --remove-orphans
 

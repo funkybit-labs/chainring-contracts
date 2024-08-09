@@ -21,3 +21,5 @@ docs/
 # Arch tests
 caller.json
 .arch-data
+.datapi
+.DS_Store
