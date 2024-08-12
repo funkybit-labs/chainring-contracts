@@ -71,6 +71,7 @@ pub fn submit_settlement_batch(utxos: &[UtxoInfo], params: SettlementBatchParams
     Ok(consensus::deserialize(&params.tx_hex).unwrap())
 }
 
+//TODO - this is 4 chars dues to state bug that only allows up 32 bytes in state UTXO - remove the substring once that is fixed.
 fn hash(data: Vec<u8>) -> String {
     digest(data).substring(0, 4).to_string()
 }
@@ -115,10 +116,17 @@ fn handle_adjustments(mut state: TokenBalances, adjustments: Vec<Adjustment>, in
                     };
                 }
             }
-            None => state.balances.push(Balance {
-                address: adjustment.address,
-                balance: adjustment.amount,
-            })
+            None => {
+                if increment {
+                    state.balances.push(Balance {
+                        address: adjustment.address,
+                        balance: adjustment.amount,
+                    })
+                } else {
+                    return Err(anyhow!("Decrementing from wallet with no balance"))
+                }
+
+            }
         }
     }
     Ok(state)

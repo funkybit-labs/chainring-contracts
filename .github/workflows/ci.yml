@@ -7,7 +7,7 @@ on:
     branches: [ "main" ]
 
 jobs:
-  build:
+  build_evm:
     name: Evm contract
     runs-on: ubuntu-latest
     steps:
