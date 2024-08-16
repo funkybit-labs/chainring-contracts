@@ -12,6 +12,9 @@ test:
 bitcoin_image:
 	cd docker/bitcoin && make build && cd ../..
 
+fulcrum_image:
+	cd docker/fulcrum && make build && cd ../..
+
 stop_containers:
 	docker compose -p arch-bitcoin-network down --remove-orphans
 
@@ -23,3 +26,6 @@ stop_ci_containers:
 
 start_ci_containers: stop_ci_containers
 	docker compose -p arch-bitcoin-network -f docker-compose-ci.yaml up -d
+
+start_ci_all_containers: stop_ci_containers
+	docker compose -p arch-bitcoin-network -f docker-compose-ci-all.yaml up -d
