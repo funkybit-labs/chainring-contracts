@@ -1,13 +1,16 @@
 .PHONY: test
 
+build:
+	cd evm && make build && cd ../arch && make build && cd ..
+
 lint:
-	forge fmt --check
+	cd evm && make lint && cd ..
 
 format:
-	forge fmt
+	cd evm && make fmt && cd ..
 
 test:
-	forge test -vvvv
+	cd evm && make test && cd ../arch && make test && cd ..
 
 bitcoin_image:
 	cd docker/bitcoin && make build && cd ../..

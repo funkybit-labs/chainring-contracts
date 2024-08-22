@@ -19,12 +19,15 @@ jobs:
         uses: foundry-rs/foundry-toolchain@v1.2.0
 
       - name: Lint
+        working-directory: "evm"
         run: forge fmt --check
 
       - name: Build
+        working-directory: "evm"
         run: forge build --deny-warnings
 
       - name: Run tests
+        working-directory: "evm"
         run: forge test -vvv
 
 
