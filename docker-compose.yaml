@@ -102,14 +102,14 @@ services:
     restart: always
     stop_grace_period: 10s
 
-  mempool-web:
+  mempool-frontend:
     environment:
       FRONTEND_HTTP_PORT: "8080"
-      BACKEND_MAINNET_HTTP_HOST: "mempool-api"
+      BACKEND_MAINNET_HTTP_HOST: "mempool-backend"
     image: mempool/frontend:latest
     depends_on:
-      - mempool-api
-    container_name: mempool-web
+      - mempool-backend
+    container_name: mempool-frontend
     user: "1000:1000"
     restart: always
     stop_grace_period: 5s
@@ -117,7 +117,7 @@ services:
     ports:
       - 1080:8080
 
-  mempool-api:
+  mempool-backend:
     environment:
       MEMPOOL_BACKEND: "electrum"
       ELECTRUM_HOST: "fulcrum"
@@ -136,7 +136,7 @@ services:
     image: mempool/backend:latest
     depends_on:
       - mempool-db
-    container_name: mempool-api
+    container_name: mempool-backend
     user: "1000:1000"
     restart: on-failure
     stop_grace_period: 5s
