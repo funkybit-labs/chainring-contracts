@@ -1,8 +1,3 @@
-[workspace]
-members = [
-    "program",
-]
-
 [package]
 name = "exchange"
 version = "0.1.0"
@@ -10,18 +5,16 @@ edition = "2021"
 
 [dependencies]
 common = { path = "../common" }
-sdk = { path = "../../sdk" }
-bitcoincore-rpc = "0.18.0"
+arch_program = { path = "../../program" }
 hex = "0.4.3"
 borsh = { version = "1.4.0", features = ["derive"] }
+bitcoin = { version = "0.31.0", features = ["serde", "rand"] }
+bitcoincore-rpc = "0.18.0"
 sha256 = "1.5.0"
-substring = "1.4.5"
-
-[build-dependencies]
-risc0-build = { version = "0.21.0" }
+log = "0.4.22"
+env_logger = "0.11.5"
+lazy_static = "1.5.0"
+ctor = { version = "0.2.8", features = [] }
 
 [dev-dependencies]
 serial_test = "3.1.1"
-
-[package.metadata.risc0]
-methods = ["program"]

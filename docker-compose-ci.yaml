@@ -1,88 +1,106 @@
-
 version: '3.7'
 
 x-environment: &common-arch-environment
-  LOG_LEVEL: "debug" # debug, info, error, warn, trace, off
+  RUST_LOG: "info, validator=debug" # debug, info, error, warn, trace, off
   RUST_BACKTRACE: "1" # enable error stack traces
-  NETWORK_MODE: "devnet" # devnet, testnet, mainnet
+  NETWORK_MODE: "localnet" # devnet, testnet, mainnet
   PRIVATE_KEY_PASSWORD: "" # Provide a password if you'd like to encrypt the local node keys.
   RPC_BIND_IP: "0.0.0.0" # bind to all IPs
-  BITCOIN_RPC_ENDPOINT: "bitcoin" # Replace with your bitcoin node's RPC endpoint
+  LEADER_PEERID: "16Uiu2HAkwZ1Qt1W71Jv5SrQpskVDze6zMckRkYwDaw3QveL8yQ7K"
+  BITCOIN_RPC_ENDPOINT: "bitcoin-node.dev.aws.archnetwork.xyz" # Replace with your bitcoin node's RPC endpoint
   BITCOIN_RPC_PORT: "18443" # Replace with your bitcoin node's RPC port
-  BITCOIN_RPC_USERNAME: "user" # Replace with your bitcoin node's RPC username (if any)
-  BITCOIN_RPC_PASSWORD: "password" # Replace with your bitcoin node's RPC password (if any)
-  BITCOIN_RPC_WALLET: "testwallet"   # Replace with the name of the wallet to be used by arch-node
-  RISC0_DEV_MODE: "1"
+  BITCOIN_RPC_USERNAME: "bitcoin" # Replace with your bitcoin node's RPC username (if any)
+  BITCOIN_RPC_PASSWORD: "428bae8f3c94f8c39c50757fc89c39bc7e6ebc70ebf8f618" # Replace with your bitcoin node's RPC password (if any)
+  BITCOIN_RPC_WALLET: "devwallet"   # Replace with the name of the wallet to be used by arch-node
+  BOOT_NODE_ENDPOINT: "/ip4/172.30.0.10/tcp/19001/p2p/16Uiu2HAmA5DZfSpvcEqpuYyPjDSgx5G3e7bJLbgK5m5LBc6rnLes"
   DATA_DIR: "/arch-data"
-
 
 services:
   bootnode:
-    image: ghcr.io/arch-network/node:latest
     platform: linux/amd64
-    container_name: bootnode
-    restart: always
+    image: ghcr.io/arch-network/bootnode:latest
     ports:
-      - 9001:9001
+      - 19001:19001
     environment:
-      <<: *common-arch-environment
-      ARCH_NODES: http://bootnode:9001,http://arch-node:9002,http://zkvm:9003
-      PROVER_ENDPOINT: http://zkvm:8001
-      IS_BOOT_NODE: "true"
-      RPC_BIND_PORT: "9001"
-    volumes:
-      - ./.arch-data/0:/arch-data
+      RUST_LOG: "info" # debug, info, error, warn, trace, off
+      RUST_BACKTRACE: "1" # enable error stack traces
 
-  arch-node:
-    image: ghcr.io/arch-network/node:latest
+      NETWORK_MODE: "localnet" # localnet, devnet, testnet, mainnet
+      DATA_DIR: "/arch-data" # directory where data will be stored
+    volumes:
+      - ./arch/data/bootnode:/arch-data
+    networks:
+      arch-network:
+        ipv4_address: 172.30.0.10 # If you change this IP, make sure to update the validator endpoint below.
+
+  leader:
     platform: linux/amd64
-    container_name: arch-node
-    restart: always
+    image: ghcr.io/arch-network/validator:latest
     ports:
+      - 19002:19002
       - 9002:9002
     environment:
       <<: *common-arch-environment
-      BOOT_NODE_ENDPOINT: "http://bootnode:9001"
-      PROVER_ENDPOINT: "http://zkvm:8001"
-      RPC_BIND_PORT: "9002"
+      RPC_BIND_PORT: "9002" # TCP 9002
+      P2P_BIND_PORT: "19002"
+    volumes:
+      - ./arch/data/leader:/arch-data
     depends_on:
       - bootnode
-    volumes:
-      - ./.arch-data/1:/arch-data
-
-  zkvm:
-    image: ghcr.io/arch-network/zkvm:latest
-    platform: linux/amd64
-    container_name: zkvm
     restart: always
+    networks:
+      - arch-network
+
+  validator-1:
+    platform: linux/amd64
+    image: ghcr.io/arch-network/validator:latest
     ports:
+      - 19003:19003
       - 9003:9003
-      - 8001:8001
     environment:
       <<: *common-arch-environment
-      BOOT_NODE_ENDPOINT: "http://bootnode:9001"
-      PROVER_ENDPOINT: "http://zkvm:8001"
-      RPC_BIND_PORT: "9003"
-      ZKVM_RPC_BIND_IP: "0.0.0.0" # bind to all IPs
-      ZKVM_RPC_BIND_PORT: "8001" # TCP 8001
-      ARCH_BOOT_NODE_URL: "http://bootnode:9001"
+      RPC_BIND_PORT: "9003" # TCP 9002
+      P2P_BIND_PORT: "19003"
+    volumes:
+      - ./arch/data/validator-1:/arch-data
     depends_on:
       - bootnode
-    volumes:
-      - ./.arch-data/2:/arch-data
-
-  init-bootnode:
-    build: ./docker/init
-    depends_on:
-      bootnode:
-        condition: service_started
-
-  bitcoin:
-    image: 851725450525.dkr.ecr.us-east-2.amazonaws.com/bitcoin:latest
-    platform: linux/amd64
-    container_name: bitcoin
     restart: always
+    networks:
+      - arch-network
+
+  validator-2:
+    platform: linux/amd64
+    image: ghcr.io/arch-network/validator:latest
     ports:
-      - 18443:18443
-      - 18444:18444
-      - 18445:18445
+      - 19004:19004
+      - 9004:9004
+    environment:
+      <<: *common-arch-environment
+      RPC_BIND_PORT: "9004" # TCP 9004
+      P2P_BIND_PORT: "19004"
+    volumes:
+      - ./arch/data/validator-2:/arch-data
+    depends_on:
+      - bootnode
+    restart: always
+    networks:
+      - arch-network
+
+networks:
+  arch-network:
+    ipam:
+      driver: default # bridge
+      config:
+        - subnet: 172.30.0.0/24 # If you change the subnet, make sure to update the bootnode ip above.
+          gateway: 172.30.0.1
+
+#  bitcoin:
+#    image: 851725450525.dkr.ecr.us-east-2.amazonaws.com/bitcoin:latest
+#    platform: linux/amd64
+#    container_name: bitcoin
+#    restart: always
+#    ports:
+#      - 18443:18443
+#      - 18444:18444
+#      - 18445:18445

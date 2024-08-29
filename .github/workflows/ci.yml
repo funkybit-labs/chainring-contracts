@@ -38,9 +38,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Install gcc-multilib
+        run: |
+          sudo apt-get update
+          sudo apt-get -y install gcc-multilib
       - uses: actions-rs/toolchain@v1
         with:
           toolchain: stable
+      - uses: metadaoproject/setup-solana@v1.0
+        with:
+          solana-cli-version: '1.18.18'
       - name: Setup AWS
         uses: ./.github/actions/setup-aws
       - name: Login to Amazon ECR
@@ -48,8 +55,6 @@ jobs:
       - name: Start Arch and Bitcoin containers
         run: |
           make start_ci_containers
-      - name: Install risc0 toolchain
-        run: cargo install cargo-binstall && cargo binstall cargo-risczero@0.21.0 -y && cargo risczero install
       - name: Build
         working-directory: "arch"
         run: make build
