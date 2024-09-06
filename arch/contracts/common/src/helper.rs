@@ -1,42 +1,30 @@
 //! This module contains helper methods for interacting with the HelloWorld program
-
 use anyhow::{anyhow, Result};
-use bitcoin::{absolute::LockTime, address::Address, key::{TapTweak, TweakedKeypair}, opcodes::all::OP_RETURN, secp256k1::{self, Secp256k1}, sighash::{Prevouts, SighashCache}, transaction::Version, Amount, OutPoint, ScriptBuf, Sequence, TapSighashType, Transaction, TxIn, TxOut, Witness, Txid};
+use bitcoin::{absolute::LockTime, address::Address, key::{TapTweak, TweakedKeypair}, secp256k1::{self, Secp256k1}, sighash::{Prevouts, SighashCache}, transaction::Version, Amount, OutPoint, ScriptBuf, Sequence, TapSighashType, Transaction, TxIn, Witness, TxOut, Txid};
 use bitcoincore_rpc::{Auth, Client, RawTx, RpcApi};
-use serde::{Serialize, Deserialize};
-use borsh::{BorshSerialize, BorshDeserialize};
+use env_logger;
+use log::{debug, error, info, warn};
+use serde::Deserialize;
+use serde::Serialize;
 use serde_json::{from_str, json, Value};
-use std::collections::HashMap;
+use std::env;
 use std::fs;
+use std::process::Child;
+use std::process::Command;
 use std::str::FromStr;
-use risc0_zkvm::Receipt;
 
-use sdk::{Pubkey, Instruction, UtxoMeta, RuntimeTransaction, Message, Signature};
+use sdk::processed_transaction::ProcessedTransaction;
 
-use crate::constants::{BITCOIN_NODE_ENDPOINT, BITCOIN_NODE_PASSWORD, BITCOIN_NODE_USERNAME, CALLER_FILE_PATH, FAUCET_ADDR, GET_BEST_BLOCK_HASH, GET_BLOCK, GET_CONTRACT_ADDRESS, GET_PROCESSED_TRANSACTION, GET_PROGRAM, NODE1_ADDRESS, READ_UTXO, SUBMITTER_FILE_PATH, TRANSACTION_NOT_FOUND_CODE, ASSIGN_AUTHORITY};
-use crate::models::{AssignAuthorityParams, AuthorityMessage, CallerInfo, DeployProgramParams, ReadUtxoParams, Utxo};
-
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
-pub struct ReadUtxoResult {
-    pub utxo_id: String,
-    pub data: Vec<u8>,
-    pub authority: Pubkey,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize, BorshDeserialize, BorshSerialize)]
-pub enum Status {
-    Processing,
-    Success,
-    Failed,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize)]
-pub struct ProcessedTransaction {
-    pub runtime_transaction: RuntimeTransaction,
-    pub receipts: HashMap<String, Receipt>,
-    pub status: Status,
-    pub bitcoin_txids: HashMap<String, String>,
-}
+use crate::constants::{
+    BITCOIN_NODE_ENDPOINT, BITCOIN_NODE_PASSWORD, BITCOIN_NODE_USERNAME, CALLER_FILE_PATH,
+    GET_ACCOUNT_ADDRESS, GET_BEST_BLOCK_HASH, GET_BLOCK, GET_PROCESSED_TRANSACTION, GET_PROGRAM,
+    NODE1_ADDRESS, READ_ACCOUNT_INFO, TRANSACTION_NOT_FOUND_CODE,
+};
+use crate::models::{BitcoinRpcInfo, CallerInfo};
+use sdk::arch_program::message::Message;
+use sdk::arch_program::pubkey::Pubkey;
+use sdk::runtime_transaction::RuntimeTransaction;
+use sdk::signature::Signature;
 
 fn process_result(response: String) -> Result<Value> {
     let result = from_str::<Value>(&response).expect("result should be Value parseable");
@@ -100,44 +88,140 @@ fn post_data<T: Serialize + std::fmt::Debug>(url: &str, method: &str, params: T)
             "method": method,
             "params": params,
         }))
-        .send()
-        .expect("post method should not fail");
+        .send();
 
-    res.text().expect("result should be text decodable")
+    res.expect("post method should not fail")
+        .text()
+        .expect("result should be text decodable")
+}
+
+/// Returns a caller information using the secret key file specified
+fn get_trader(trader_id: u64) -> Result<CallerInfo> {
+    let file_path = &format!("../../.arch/trader{}.json", trader_id);
+    Ok(CallerInfo::with_secret_key_file(file_path)?)
+}
+
+use crate::helper::secp256k1::SecretKey;
+use bitcoin::key::UntweakedKeypair;
+use bitcoin::XOnlyPublicKey;
+use rand_core::OsRng;
+
+pub fn with_secret_key_file(file_path: &str) -> Result<(UntweakedKeypair, Pubkey)> {
+    let secp = Secp256k1::new();
+    let secret_key = match fs::read_to_string(file_path) {
+        Ok(key) => SecretKey::from_str(&key).unwrap(),
+        Err(_) => {
+            let (key, _) = secp.generate_keypair(&mut OsRng);
+            fs::write(file_path, &key.display_secret().to_string())
+                .map_err(|_| anyhow!("Unable to write file"))?;
+            key
+        }
+    };
+    let keypair = UntweakedKeypair::from_secret_key(&secp, &secret_key);
+    let pubkey = Pubkey::from_slice(&XOnlyPublicKey::from_keypair(&keypair).0.serialize());
+    Ok((keypair, pubkey))
+}
+
+use sdk::arch_program::system_instruction::SystemInstruction;
+use sdk::runtime_transaction::RUNTIME_TX_SIZE_LIMIT;
+
+fn extend_bytes_max_len() -> usize {
+    let message = Message {
+        signers: vec![Pubkey::system_program()],
+        instructions: vec![SystemInstruction::new_extend_bytes_instruction(
+            vec![0_u8; 8],
+            Pubkey::system_program(),
+        )],
+    };
+
+    RUNTIME_TX_SIZE_LIMIT
+        - RuntimeTransaction {
+            version: 0,
+            signatures: vec![Signature([0_u8; 64].to_vec())],
+            message,
+        }
+        .serialize()
+        .len()
 }
 
 /// Creates an instruction, signs it as a message
 /// and sends the signed message as a transaction
 pub fn sign_and_send_instruction(
-    program_id: Pubkey,
-    utxos: Vec<UtxoMeta>,
-    instruction_data: Vec<u8>,
+    instruction: Instruction,
+    signers: Vec<UntweakedKeypair>,
 ) -> Result<(String, String)> {
-    mine();
-
-    let caller = CallerInfo::with_secret_key_file(SUBMITTER_FILE_PATH)?;
-
-    let instruction = Instruction {
-        program_id,
-        utxos,
-        data: instruction_data,
-    };
+    let pubkeys = signers
+        .iter()
+        .map(|signer| Pubkey::from_slice(&XOnlyPublicKey::from_keypair(signer).0.serialize()))
+        .collect::<Vec<Pubkey>>();
 
     let message = Message {
-        signers: vec![Pubkey::from_slice(&caller.public_key.serialize())],
+        signers: pubkeys,
         instructions: vec![instruction.clone()],
     };
-    let digest_slice = hex::decode(message.hash().expect("message should be hashable"))
-        .expect("hashed message should be decodable");
+    let digest_slice = hex::decode(message.hash()).expect("hashed message should be decodable");
     let sig_message = secp256k1::Message::from_digest_slice(&digest_slice)
         .expect("signed message should be gotten from digest slice");
 
     let secp = Secp256k1::new();
-    let sig = secp.sign_schnorr(&sig_message, &caller.key_pair);
+    let signatures = signers
+        .iter()
+        .map(|signer| {
+            Signature(
+                secp.sign_schnorr(&sig_message, &signer)
+                    .serialize()
+                    .to_vec(),
+            )
+        })
+        .collect::<Vec<Signature>>();
 
     let params = RuntimeTransaction {
         version: 0,
-        signatures: vec![Signature(sig.serialize().to_vec())],
+        signatures,
+        message,
+    };
+
+    debug!("RuntimeTransaction Params: {:?} size={}", params, params.serialize().len());
+
+    let result = process_result(post_data(NODE1_ADDRESS, "send_transaction", params))
+        .expect("send_transaction should not fail")
+        .as_str()
+        .expect("cannot convert result to string")
+        .to_string();
+    let hashed_instruction = instruction.hash();
+
+    Ok((result, hashed_instruction))
+}
+
+use sdk::arch_program::instruction::Instruction;
+use sdk::arch_program::utxo::UtxoMeta;
+
+pub fn sign_and_send_transaction(
+    instructions: Vec<Instruction>,
+    signers: Vec<UntweakedKeypair>,
+) -> Result<String> {
+    let pubkeys = signers
+        .iter()
+        .map(|signer| Pubkey::from_slice(&XOnlyPublicKey::from_keypair(signer).0.serialize()))
+        .collect::<Vec<Pubkey>>();
+
+    let message = Message {
+        signers: pubkeys,
+        instructions,
+    };
+    let digest_slice = hex::decode(message.hash()).expect("hashed message should be decodable");
+    let sig_message = secp256k1::Message::from_digest_slice(&digest_slice)
+        .expect("signed message should be gotten from digest slice");
+
+    let secp = Secp256k1::new();
+    let signatures = signers
+        .iter()
+        .map(|signer| Signature(secp.sign_schnorr(&sig_message, signer).serialize().to_vec()))
+        .collect::<Vec<Signature>>();
+
+    let params = RuntimeTransaction {
+        version: 0,
+        signatures,
         message,
     };
     let result = process_result(post_data(NODE1_ADDRESS, "send_transaction", params))
@@ -145,101 +229,163 @@ pub fn sign_and_send_instruction(
         .as_str()
         .expect("cannot convert result to string")
         .to_string();
-    let hashed_instruction = instruction
-        .hash()
-        .expect("instruction hashing should not fail");
-
-    Ok((result, hashed_instruction))
-}
-
-/// Creates an instruction, signs it as a message
-/// and sends the signed message as a transaction
-pub fn assign_authority(
-    program_id: Pubkey,
-    utxo: UtxoMeta,
-    value: u64
-) -> Result<String> {
-    let caller = CallerInfo::with_secret_key_file(SUBMITTER_FILE_PATH)?;
-
-    let message = AuthorityMessage {
-        utxo: Utxo {
-            txid: utxo.txid,
-            vout: utxo.vout,
-            value: value
-        },
-        data: vec![],
-        authority: program_id,
-    };
-    let digest_slice = hex::decode(message.hash().unwrap())
-        .expect("hashed message should be decodable");
-    let sig_message = secp256k1::Message::from_digest_slice(&digest_slice)
-        .expect("signed message should be gotten from digest slice");
-
-    let secp = Secp256k1::new();
-    let sig = secp.sign_schnorr(&sig_message, &caller.key_pair);
-
-    let params = AssignAuthorityParams {
-        signature: Signature(sig.serialize().to_vec()),
-        message: message,
-    };
-
-    let result = process_result(post_data(NODE1_ADDRESS, ASSIGN_AUTHORITY, params))
-        .expect("assign_autority should not fail")
-        .as_str()
-        .expect("assign_authority should not fail")
-        .to_string();
 
     Ok(result)
 }
 
 /// Deploys the HelloWorld program using the compiled ELF
-pub fn deploy_program() -> String {
-    let elf = fs::read("target/program.elf").expect("elf path should be available");
-    let params = DeployProgramParams { elf };
-    process_result(post_data(NODE1_ADDRESS, "deploy_program", params))
-        .expect("deploy_program should not fail")
-        .as_str()
-        .expect("cannot convert result to string")
-        .to_string()
+pub fn deploy_program_txs(program_keypair: UntweakedKeypair, elf_path: &str) -> Vec<String> {
+    info!("Starting program deployment");
+    let program_pubkey =
+        Pubkey::from_slice(&XOnlyPublicKey::from_keypair(&program_keypair).0.serialize());
+    let elf = fs::read(elf_path).expect("Failed to read ELF file");
+    info!("ELF file size: {} bytes", elf.len());
+    let txs = elf
+        .chunks(extend_bytes_max_len())
+        .enumerate()
+        .map(|(i, chunk)| {
+            let mut bytes = vec![];
+            let offset: u32 = (i * extend_bytes_max_len()) as u32;
+            let len: u32 = chunk.len() as u32;
+            bytes.extend(offset.to_le_bytes());
+            bytes.extend(len.to_le_bytes());
+            bytes.extend(chunk);
+            let message = Message {
+                signers: vec![program_pubkey.clone()],
+                instructions: vec![SystemInstruction::new_extend_bytes_instruction(
+                    bytes,
+                    program_pubkey.clone(),
+                )],
+            };
+            let digest_slice =
+                hex::decode(message.hash()).expect("hashed message should be decodable");
+            let sig_message = secp256k1::Message::from_digest_slice(&digest_slice)
+                .expect("signed message should be gotten from digest slice");
+            let secp = Secp256k1::new();
+            RuntimeTransaction {
+                version: 0,
+                signatures: vec![Signature(
+                    secp.sign_schnorr(&sig_message, &program_keypair)
+                        .serialize()
+                        .to_vec(),
+                )],
+                message,
+            }
+        })
+        .collect::<Vec<RuntimeTransaction>>();
+
+    info!("Deploying program with {} transactions", txs.len());
+
+    let txids: Vec<String> = txs
+        .chunks(100)
+        .enumerate()
+        .map(|(i, chunk)| {
+            info!("Sending tx batch {}", i);
+            let ids = process_result(post_data(NODE1_ADDRESS, "send_transactions", chunk))
+                .expect("send_transaction should not fail")
+                .as_array()
+                .expect("cannot convert result to array")
+                .iter()
+                .map(|r| {
+                    r.as_str()
+                        .expect("cannot convert object to string")
+                        .to_string()
+                })
+                .collect::<Vec<String>>();
+            std::thread::sleep(std::time::Duration::from_secs(5));
+            ids
+        })
+        .collect::<Vec<Vec<String>>>().into_iter().flatten().collect();
+
+    info!(
+        "Successfully sent {} transactions for program deployment",
+        txids.len()
+    );
+
+    for (i, txid) in txids.iter().enumerate() {
+        match get_processed_transaction(NODE1_ADDRESS, txid.clone(), 0) {
+            Ok(_) => debug!(
+                "Transaction {} (ID: {}) processed successfully",
+                i + 1,
+                txid
+            ),
+            Err(e) => warn!(
+                "Failed to process transaction {} (ID: {}): {:?}",
+                i + 1,
+                txid,
+                e
+            ),
+        }
+    }
+
+    std::thread::sleep(std::time::Duration::from_secs(5));
+    txids
 }
 
 /// Starts Key Exchange by calling the RPC method
 pub fn start_key_exchange() {
     match process_result(post(NODE1_ADDRESS, "start_key_exchange")) {
-        Err(err) => println!("Error starting Key Exchange: {:?}", err),
-        Ok(val) => assert!(val.as_bool().unwrap())
+        Err(err) => error!("Failed to initiate Key Exchange: {:?}", err),
+        Ok(val) => {
+            if val.as_bool().unwrap_or(false) {
+                info!("Key Exchange initiated successfully");
+            } else {
+                warn!("Key Exchange initiation returned unexpected result");
+            }
+        }
     };
 }
 
 /// Starts a Distributed Key Generation round by calling the RPC method
 pub fn start_dkg() {
-    if let Err(err) = process_result(post(NODE1_ADDRESS, "start_dkg")) {
-        println!("Error starting DKG: {:?}", err);
-    };
+    match process_result(post(NODE1_ADDRESS, "start_dkg")) {
+        Ok(_) => info!("Distributed Key Generation (DKG) initiated successfully"),
+        Err(err) => error!("Failed to initiate Distributed Key Generation: {:?}", err),
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AccountInfoResult {
+    pub owner: Pubkey,
+    pub data: Vec<u8>,
+    pub utxo: String,
+    pub is_executable: bool,
 }
 
 /// Read Utxo given the utxo ID
-pub fn read_utxo(utxo_id: String) -> Result<ReadUtxoResult> {
-    let params = ReadUtxoParams { utxo_id };
-    let result = process_result(post_data(NODE1_ADDRESS, READ_UTXO, params))
-        .expect("read_utxo should not fail");
-    serde_json::from_value(result).map_err(|_| anyhow!("Unable to decode read_utxo result"))
+pub fn read_account_info(url: &str, pubkey: Pubkey) -> Result<AccountInfoResult> {
+    // Perform the POST request and get the raw response
+    let raw_response = post_data(url, READ_ACCOUNT_INFO, pubkey);
+
+    // Process the result
+    let result = process_result(raw_response.clone())
+        .map_err(|e| anyhow!("Error processing result: {:?}", e))?;
+
+    // Attempt to deserialize into AccountInfoResult
+    let account_info: AccountInfoResult = serde_json::from_value(result)
+        .map_err(|e| anyhow!("Unable to decode read_account_info result: {:?}", e))?;
+
+    info!("Retrieved account info for pubkey: {:?}", pubkey);
+    debug!(
+        "Account info details: Owner: {:?}, Data length: {} bytes, Executable: {}",
+        account_info.owner,
+        account_info.data.len(),
+        account_info.is_executable
+    );
+
+    Ok(account_info)
 }
 
 /// Returns a program given the program ID
-pub fn get_program(program_id: String) -> Vec<u8> {
-    use std::convert::TryFrom;
-    process_result(post_data(NODE1_ADDRESS, GET_PROGRAM, program_id))
+pub fn get_program(url: &str, program_id: String) -> String {
+    process_result(post_data(url, GET_PROGRAM, program_id))
         .expect("get_program should not fail")
-        .as_array()
-        .expect("cannot convert result to array")
-        .into_iter()
-        .map(|v| u8::try_from(v.as_u64().unwrap()).ok().unwrap())
-        .collect()
+        .as_str()
+        .expect("cannot convert result to string")
+        .to_string()
 }
 
 /// Returns the best block
-#[allow(dead_code)]
 fn get_best_block() -> String {
     let best_block_hash = process_result(post(NODE1_ADDRESS, GET_BEST_BLOCK_HASH))
         .expect("best_block_hash should not fail")
@@ -255,53 +401,40 @@ fn get_best_block() -> String {
 
 /// Returns a processed transaction given the txid
 /// Keeps trying for a maximum of 60 seconds if the processed transaction is not available
-pub fn get_processed_transaction(url: &str, tx_id: String) -> Result<ProcessedTransaction> {
-    let mut processed_tx = process_get_transaction_result(post_data(url, GET_PROCESSED_TRANSACTION, tx_id.clone()));
+pub fn get_processed_transaction(url: &str, tx_id: String, sleep_after: u64) -> Result<ProcessedTransaction> {
+    let mut processed_tx =
+        process_get_transaction_result(post_data(url, GET_PROCESSED_TRANSACTION, tx_id.clone()));
     if let Err(e) = processed_tx {
         return Err(anyhow!("{}", e));
     }
 
     let interval = 2;
-    let mut wait_time = 2;
+    let mut wait_time = 0;
     while let Ok(Value::Null) = processed_tx {
-        println!("Processed transaction is not yet in the database. Retrying...");
+        debug!(
+            "Transaction not yet processed. Retrying in {} seconds...",
+            interval
+        );
         std::thread::sleep(std::time::Duration::from_secs(interval));
-        processed_tx = process_get_transaction_result(post_data(url, GET_PROCESSED_TRANSACTION, tx_id.clone()));
+        processed_tx = process_get_transaction_result(post_data(
+            url,
+            GET_PROCESSED_TRANSACTION,
+            tx_id.clone(),
+        ));
         wait_time += interval;
-        if wait_time >= 10 {
-            println!("get_processed_transaction has run for more than 60 seconds");
-            return Err(anyhow!("Failed to retrieve processed transaction"));
+        if wait_time >= 120 {
+            error!("Failed to retrieve processed transaction after 60 seconds");
+            return Err(anyhow!("Timeout: Failed to retrieve processed transaction"));
         }
     }
 
-    wait_time = 2;
-    if let Ok(ref tx) = processed_tx {
-        let mut p = tx.clone();
-        while p["status"].as_str().unwrap() != "Success" {
-            println!("Processed transaction is not yet finalized. Retrying...");
-            std::thread::sleep(std::time::Duration::from_secs(interval));
-            p = process_get_transaction_result(post_data(url, GET_PROCESSED_TRANSACTION, tx_id.clone())).unwrap();
-            wait_time += interval;
-            if wait_time >= 10 {
-                println!("get_processed_transaction has run for more than 60 seconds");
-                return Err(anyhow!("Failed to retrieve processed transaction"));
-            }
-        }
-        processed_tx = Ok(p);
-    }
-
-    Ok(serde_json::from_value::<ProcessedTransaction>(processed_tx?).unwrap())
-}
-
-pub fn mine() {
-    let userpass = Auth::UserPass(
-        BITCOIN_NODE_USERNAME.to_string(),
-        BITCOIN_NODE_PASSWORD.to_string(),
+    let processed_tx: ProcessedTransaction = serde_json::from_value(processed_tx?).unwrap();
+    info!(
+        "Successfully retrieved and processed transaction: {}, status = {:?}",
+        tx_id, processed_tx.status
     );
-    let rpc =
-        Client::new(BITCOIN_NODE_ENDPOINT, userpass).expect("rpc shouldn not fail to be initiated");
-
-    let _ = rpc.generate_to_address(1, &Address::from_str(FAUCET_ADDR).unwrap().require_network(bitcoin::Network::Regtest).unwrap());
+    std::thread::sleep(std::time::Duration::from_secs(sleep_after));
+    Ok(processed_tx)
 }
 
 pub fn prepare_fees() -> String {
@@ -338,8 +471,6 @@ pub fn prepare_fees() -> String {
             vout = index as u32;
         }
     }
-
-    mine();
 
     let mut tx = Transaction {
         version: Version::TWO,
@@ -381,13 +512,7 @@ pub fn prepare_fees() -> String {
     tx.raw_hex()
 }
 
-pub fn prepare_deposit(
-    signer: &str,
-    amount: u64,
-    estimated_fee: u64,
-    _program_id: Pubkey,
-) -> String {
-
+pub fn send_utxo(pubkey: Pubkey) -> (String, u32) {
     let userpass = Auth::UserPass(
         BITCOIN_NODE_USERNAME.to_string(),
         BITCOIN_NODE_PASSWORD.to_string(),
@@ -395,205 +520,18 @@ pub fn prepare_deposit(
     let rpc =
         Client::new(BITCOIN_NODE_ENDPOINT, userpass).expect("rpc shouldn not fail to be initiated");
 
-    let caller = CallerInfo::with_secret_key_file(signer)
-        .expect("getting caller info should not fail");
+    let address = get_account_address(pubkey);
 
-    let submitter = CallerInfo::with_secret_key_file(SUBMITTER_FILE_PATH)
-        .expect("getting submitter info should not fail");
+    let account_address = Address::from_str(&address)
+        .unwrap()
+        .require_network(bitcoin::Network::Regtest)
+        .unwrap();
+
+    info!("Sending UTXO to account address: {}", address);
 
     let txid = rpc
         .send_to_address(
-            &caller.address,
-            Amount::from_sat(amount + estimated_fee),
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-        )
-        .expect("SATs should be sent to address");
-
-    let sent_tx = rpc
-        .get_raw_transaction(&txid, None)
-        .expect("should get raw transaction");
-    let mut vout = 0;
-
-    for (index, output) in sent_tx.output.iter().enumerate() {
-        if output.script_pubkey == caller.address.script_pubkey() {
-            vout = index as u32;
-        }
-    }
-
-    let network_address = get_arch_bitcoin_address();
-
-    let mut tx = Transaction {
-        version: Version::TWO,
-        input: vec![TxIn {
-            previous_output: OutPoint { txid, vout },
-            script_sig: ScriptBuf::new(),
-            sequence: Sequence::MAX,
-            witness: Witness::new(),
-        }],
-        output: vec![
-            TxOut {
-                value: Amount::from_sat(0),
-                script_pubkey: ScriptBuf::builder()
-                    .push_opcode(OP_RETURN)
-                    .push_x_only_key(&submitter.public_key)
-                    .into_script()
-            },
-            TxOut {
-                value: Amount::from_sat(amount),
-                script_pubkey: network_address.script_pubkey(),
-            },
-        ],
-        lock_time: LockTime::ZERO,
-    };
-
-    let sighash_type = TapSighashType::NonePlusAnyoneCanPay;
-    let raw_tx = rpc
-        .get_raw_transaction(&txid, None)
-        .expect("raw transaction should not fail");
-    let prevouts = vec![raw_tx.output[vout as usize].clone()];
-    let prevouts = Prevouts::All(&prevouts);
-
-    let mut sighasher = SighashCache::new(&mut tx);
-    let sighash = sighasher
-        .taproot_key_spend_signature_hash(0, &prevouts, sighash_type)
-        .expect("should not fail to construct sighash");
-
-    // Sign the sighash using the secp256k1 library (exported by rust-bitcoin).
-    let secp = Secp256k1::new();
-    let tweaked: TweakedKeypair = caller.key_pair.tap_tweak(&secp, None);
-    let msg = secp256k1::Message::from(sighash);
-    let signature = secp.sign_schnorr(&msg, &tweaked.to_inner());
-
-    // Update the witness stack.
-    let signature = bitcoin::taproot::Signature {
-        sig: signature,
-        hash_ty: sighash_type,
-    };
-    tx.input[0].witness.push(signature.to_vec());
-
-    tx.raw_hex()
-}
-
-pub fn prepare_withdrawal(
-    wallet: &str,
-    amount: u64,
-    estimated_fee: u64,
-    utxo_meta: UtxoMeta
-) -> String {
-
-    let userpass = Auth::UserPass(
-        BITCOIN_NODE_USERNAME.to_string(),
-        BITCOIN_NODE_PASSWORD.to_string(),
-    );
-    let rpc =
-        Client::new(BITCOIN_NODE_ENDPOINT, userpass).expect("rpc shouldn not fail to be initiated");
-
-    let wallet = CallerInfo::with_secret_key_file(wallet)
-        .expect("getting caller info should not fail");
-
-    let submitter = CallerInfo::with_secret_key_file(SUBMITTER_FILE_PATH)
-        .expect("getting submitter info should not fail");
-
-    let network_address = get_arch_bitcoin_address();
-
-    let txid = Txid::from_str(&utxo_meta.txid).unwrap();
-    let raw_tx = rpc
-        .get_raw_transaction(&txid, None)
-        .expect("raw transaction should not fail");
-
-    let prev_output = raw_tx.output[utxo_meta.vout as usize].clone();
-
-    if amount + estimated_fee > prev_output.value.to_sat() {
-        panic!("not enough in utxo to cover amount and fee")
-    }
-
-    let mut outputs = vec![
-        TxOut {
-            value: Amount::from_sat(amount),
-            script_pubkey: wallet.address.script_pubkey(),
-        },
-    ];
-    if amount + estimated_fee < prev_output.value.to_sat() {
-        outputs.push(TxOut {
-            value: Amount::from_sat(0),
-            script_pubkey: ScriptBuf::builder()
-                .push_opcode(OP_RETURN)
-                .push_x_only_key(&submitter.public_key)
-                .into_script(),
-        });
-        outputs.push(
-            TxOut {
-                value: Amount::from_sat(prev_output.value.to_sat() - amount - estimated_fee),
-                script_pubkey: network_address.script_pubkey(),
-            }
-        );
-    }
-
-    let mut tx = Transaction {
-        version: Version::TWO,
-        input: vec![TxIn {
-            previous_output: OutPoint {
-                txid: txid,
-                vout: utxo_meta.vout
-            },
-            script_sig: ScriptBuf::new(),
-            sequence: Sequence::MAX,
-            witness: Witness::new(),
-        }],
-        output: outputs,
-        lock_time: LockTime::ZERO,
-    };
-
-
-    let sighash_type = TapSighashType::NonePlusAnyoneCanPay;
-    let prevouts = vec![prev_output];
-    let prevouts = Prevouts::All(&prevouts);
-
-    let mut sighasher = SighashCache::new(&mut tx);
-    let sighash = sighasher
-        .taproot_key_spend_signature_hash(0, &prevouts, sighash_type)
-        .expect("should not fail to construct sighash");
-
-    // Sign the sighash using the secp256k1 library (exported by rust-bitcoin).
-    let secp = Secp256k1::new();
-    let tweaked: TweakedKeypair = submitter.key_pair.tap_tweak(&secp, None);
-    let msg = secp256k1::Message::from(sighash);
-    let signature = secp.sign_schnorr(&msg, &tweaked.to_inner());
-
-    // Update the witness stack.
-    let signature = bitcoin::taproot::Signature {
-        sig: signature,
-        hash_ty: sighash_type,
-    };
-    tx.input[0].witness.push(signature.to_vec());
-
-    tx.raw_hex()
-}
-
-
-pub fn send_utxo(
-    signer: &str
-) -> String {
-
-    mine();
-    let userpass = Auth::UserPass(
-        BITCOIN_NODE_USERNAME.to_string(),
-        BITCOIN_NODE_PASSWORD.to_string(),
-    );
-    let rpc =
-        Client::new(BITCOIN_NODE_ENDPOINT, userpass).expect("rpc shouldn not fail to be initiated");
-
-    let caller = CallerInfo::with_secret_key_file(signer)
-        .expect("getting caller info should not fail");
-
-    let txid = rpc
-        .send_to_address(
-            &caller.address,
+            &account_address,
             Amount::from_sat(3000),
             None,
             None,
@@ -602,7 +540,7 @@ pub fn send_utxo(
             None,
             None,
         )
-        .expect("SATs should be sent to address");
+        .expect("Failed to send SATs to address");
 
     let sent_tx = rpc
         .get_raw_transaction(&txid, None)
@@ -610,104 +548,27 @@ pub fn send_utxo(
     let mut vout = 0;
 
     for (index, output) in sent_tx.output.iter().enumerate() {
-        if output.script_pubkey == caller.address.script_pubkey() {
+        if output.script_pubkey == account_address.script_pubkey() {
             vout = index as u32;
+            println!("Found a matching UTXO")
         }
     }
 
-    let network_address = get_network_address("");
-
-    let mut tx = Transaction {
-        version: Version::TWO,
-        input: vec![TxIn {
-            previous_output: OutPoint { txid, vout },
-            script_sig: ScriptBuf::new(),
-            sequence: Sequence::MAX,
-            witness: Witness::new(),
-        }],
-        output: vec![
-            TxOut {
-                value: Amount::from_sat(0),
-                script_pubkey: ScriptBuf::builder()
-                    .push_opcode(OP_RETURN)
-                    .push_x_only_key(&caller.public_key)
-                    .into_script(),
-            },
-            TxOut {
-                value: Amount::from_sat(1500),
-                script_pubkey: Address::from_str(&network_address)
-                    .unwrap()
-                    .require_network(bitcoin::Network::Regtest)
-                    .unwrap()
-                    .script_pubkey(),
-            },
-        ],
-        lock_time: LockTime::ZERO,
-    };
-
-    let sighash_type = TapSighashType::NonePlusAnyoneCanPay;
-    let raw_tx = rpc
-        .get_raw_transaction(&txid, None)
-        .expect("raw transaction should not fail");
-    let prevouts = vec![raw_tx.output[vout as usize].clone()];
-    let prevouts = Prevouts::All(&prevouts);
-
-    let mut sighasher = SighashCache::new(&mut tx);
-    let sighash = sighasher
-        .taproot_key_spend_signature_hash(0, &prevouts, sighash_type)
-        .expect("should not fail to construct sighash");
-
-    // Sign the sighash using the secp256k1 library (exported by rust-bitcoin).
-    let secp = Secp256k1::new();
-    let tweaked: TweakedKeypair = caller.key_pair.tap_tweak(&secp, None);
-    let msg = secp256k1::Message::from(sighash);
-    let signature = secp.sign_schnorr(&msg, &tweaked.to_inner());
-
-    // Update the witness stack.
-    let signature = bitcoin::taproot::Signature {
-        sig: signature,
-        hash_ty: sighash_type,
-    };
-    tx.input[0].witness.push(signature.to_vec());
-
-    // BOOM! Transaction signed and ready to broadcast.
-    rpc.send_raw_transaction(tx.raw_hex())
-        .expect("sending raw transaction should not fail")
-        .to_string()
-}
-
-pub fn get_raw_transaction(state_txid: &str) -> Transaction {
-    let userpass = Auth::UserPass(
-        BITCOIN_NODE_USERNAME.to_string(),
-        BITCOIN_NODE_PASSWORD.to_string(),
+    info!(
+        "UTXO sent successfully. Transaction ID: {}, Output Index: {}",
+        txid, vout
     );
-    let rpc =
-        Client::new(BITCOIN_NODE_ENDPOINT, userpass).expect("rpc shouldn not fail to be initiated");
-    let raw_tx = rpc
-        .get_raw_transaction(&Txid::from_str(state_txid).unwrap(), None)
-        .expect("raw transaction should not fail");
-
-    raw_tx
+    (txid.to_string(), vout)
 }
 
-fn get_network_address(data: &str) -> String {
-    let mut params = HashMap::new();
-    params.insert("data", data.as_bytes());
-    process_result(post_data(NODE1_ADDRESS, GET_CONTRACT_ADDRESS, params))
-        .expect("get_contract_address should not fail")
+pub fn get_account_address(pubkey: Pubkey) -> String {
+    process_result(post_data(NODE1_ADDRESS, GET_ACCOUNT_ADDRESS, pubkey))
+        .expect("get_account_address should not fail")
         .as_str()
         .expect("cannot convert result to string")
         .to_string()
 }
 
-pub fn get_arch_bitcoin_address() -> Address {
-    Address::from_str(&get_network_address(""))
-        .unwrap()
-        .require_network(bitcoin::Network::Regtest)
-        .unwrap()
-}
-
-#[allow(dead_code)]
 fn get_address_utxos(rpc: &Client, address: String) -> Vec<Value> {
     let client = reqwest::blocking::Client::new();
 
@@ -733,3 +594,70 @@ fn get_address_utxos(rpc: &Client, address: String) -> Vec<Value> {
         .collect()
 }
 
+pub fn start_boot_node(port: u16, arch_nodes: &str, bitcoin_rpc_info: &BitcoinRpcInfo) -> Child {
+    std::env::set_var("RISC0_DEV_MODE", "1");
+
+    let mut command = Command::new("cargo");
+    command.current_dir(env::current_dir().unwrap().parent().unwrap());
+
+    command.args([
+        "run",
+        "-p",
+        "zkvm",
+        "--",
+        "--is-boot-node",
+        "--arch-nodes",
+        arch_nodes,
+        "--rpc-bind-port",
+        &port.to_string(),
+        "--bitcoin-rpc-endpoint",
+        &bitcoin_rpc_info.endpoint,
+        "--bitcoin-rpc-port",
+        &bitcoin_rpc_info.port.to_string(),
+        "--bitcoin-rpc-username",
+        &bitcoin_rpc_info.username,
+        "--bitcoin-rpc-password",
+        &bitcoin_rpc_info.password,
+    ]);
+
+    info!("Starting boot node on port {}", port);
+    command.spawn().expect("Failed to start boot node process")
+}
+
+pub fn start_node(port: u16, bitcoin_rpc_info: &BitcoinRpcInfo) -> Child {
+    env::set_var("RISC0_DEV_MODE", "1");
+
+    let mut command = Command::new("cargo");
+    command.current_dir(env::current_dir().unwrap().parent().unwrap());
+
+    command.args([
+        "run",
+        "-p",
+        "arch-node",
+        "--",
+        "--rpc-bind-port",
+        &port.to_string(),
+        "--bitcoin-rpc-endpoint",
+        &bitcoin_rpc_info.endpoint,
+        "--bitcoin-rpc-port",
+        &bitcoin_rpc_info.port.to_string(),
+        "--bitcoin-rpc-username",
+        &bitcoin_rpc_info.username,
+        "--bitcoin-rpc-password",
+        &bitcoin_rpc_info.password,
+        "--data-dir",
+        &format!(".participant{}", port),
+    ]);
+
+    info!("Starting node on port {}", port);
+    command.spawn().expect("Failed to start node process")
+}
+
+async fn stop_node(mut child: Child) {
+    match child.kill() {
+        Ok(_) => info!("Node stopped successfully"),
+        Err(e) => error!("Failed to stop node: {}", e),
+    }
+
+    let _ = child.wait();
+}

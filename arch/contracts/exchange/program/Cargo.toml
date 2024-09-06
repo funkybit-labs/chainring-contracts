@@ -1,18 +1,16 @@
+[workspace]
 [package]
-name = "program"
+name = "exchangeprogram"
 version = "0.1.0"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-hex = "0.4.3"
-anyhow = "1.0.82"
+arch_program = { path = "../../../program" }
+borsh = { version = "1.5.1", features = ["derive"] }
 sha256 = "1.5.0"
-serde_json = "1.0.108"
-borsh = { version = "1.4.0", features = ["derive"] }
-serde = { version = "1.0", features = ["derive"], default-features = false  }
-bitcoin = { git = "https://github.com/Arch-Network/bitcoin-arch-v2" }
-risc0-zkvm = { version = "0.21.0", default-features = false, features = ["std"] }
-sdk = { path = "../../../sdk" }
-substring = "1.4.5"
+bitcoin = { version = "0.31.0", features = ["serde"] }
+
+[lib]
+crate-type = ["cdylib", "lib"]

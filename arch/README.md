@@ -19,22 +19,20 @@ An init node is started which sends some commands to configure the arch network 
 ```bash
 make bitcoin_image
 ```
-- To start the arch network and bitcoine node:
+- To start the arch network and bitcoin node:
 ```bash
 make start_containers
 ```
-- The nodes store data in `./.arch-data` off the root of the project. You might need to wipe these directories sometimes
+- The nodes store data in `./arch/data` off the root of the project. You might need to wipe these directories sometimes. There is a clean_state.sh script
 
 ### 2 - Compile and Test
 
 ### 2.1 - Install RISC0-Toolchain
 
-To compile , the risc0 Rust toolchain must be installed. Execute the following commands to install the toolchain to your local system.
+To compile , the solana must be installed. Execute the following commands to install the toolchain to your local system.
 
 ```bash
-cargo install cargo-binstall
-cargo binstall -y cargo-risczero@0.21.0
-cargo risczero install
+sh -c "$(curl -sSfL https://release.solana.com/v1.18.18/install)"
 ```
 
 ### 2.2 - Compile and run the exchange program
@@ -42,17 +40,18 @@ cargo risczero install
 ```bash
 make build
 ```
-- This will compile the exchange program into an RISC-V ELF file (the executable format expected by the ZKVM). You'll find the generated file at `./target/program.elf`
+- This will compile the exchange program into an eBPF file. You'll find the generated file at `arch/contracts/exchange/program/target/sbf-solana-solana/release/exchangeprogram.so`
 - To run the unit tests:
 ```bash
-make build
+make test
 ```
-- to run individual tests you can go to  `arch/contracts/exchange` folder and run: `cargo test <test_name> -- --nocapture`
+- to run individual tests you can go to  `arch/contracts/exchange` folder and run: `RUST_BACKTRACE=1 RUST_LOG=debug cargo test <test_name> -- --test-threads 1 --nocapture`
 
 ## General approach
 
-- All state is stored in state utxos. There is a process for onboarding the state utxos onto the arch network
-- The process involves sending a bitcoin transaction to the arch network with the uxto to be used to hold state. Part of that transactions allows us to specify who the authprity is for this utxo.
+- To deploy the program we must first create a keypair, and then use that to create an account. Th
+- All state is stored in accounts. There is a process for onboarding the account onto the arch network
+- The process involves sending a bitcoin transaction to the arch network with the uxto to be used to hold state. The account must be create byu calling the system program and then ownership assigned to our program.
 - In our case the authority would be our submitter. This means any arch transactions to change state on these utxos must be signed by our submitter key
 - The initial implementation is using one utxo to hold exchange state like fee account, settlement batch hash, last settlement or withdrawal hash
 - We then have a state utxo per asset type that holds each wallets balance for that asset type. We will have to see how this scales and can be optimized.
