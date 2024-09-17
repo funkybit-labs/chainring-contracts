@@ -1,8 +1,0 @@
-# Ignore validator testnet files
-validator-1/
-validator-2/
-leader/testnet/*
-*json
-
-# Except the one containing the private key
-!leader/testnet/arch-secret

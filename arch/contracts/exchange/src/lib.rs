@@ -29,13 +29,13 @@ mod tests {
     use sha256::digest;
     use common::models::CallerInfo;
 
-    const TOKEN_FILE_PATHS: &'static [&'static str] = &["../../data/token1.json", "../../data/token2.json"];
-    pub const SUBMITTER_FILE_PATH: &str = "../../data/submitter.json";
-    pub const WALLET1_FILE_PATH: &str = "../../data/wallet1.json";
-    pub const WALLET2_FILE_PATH: &str = "../../data/wallet2.json";
-    pub const FEE_ACCOUNT_FILE_PATH: &str = "../../data/fee_account.json";
+    const TOKEN_FILE_PATHS: &'static [&'static str] = &["../../.arch-data/token1.json", "../../.arch-data/token2.json"];
+    pub const SUBMITTER_FILE_PATH: &str = "../../.arch-data/submitter.json";
+    pub const WALLET1_FILE_PATH: &str = "../../.arch-data/wallet1.json";
+    pub const WALLET2_FILE_PATH: &str = "../../.arch-data/wallet2.json";
+    pub const FEE_ACCOUNT_FILE_PATH: &str = "../../.arch-data/fee_account.json";
 
-    const WAIT_AFTER_PROCESSED: u64 = 2;
+    const WAIT_AFTER_PROCESSED: u64 = 0;
 
     impl fmt::Display for Balance {
         fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {

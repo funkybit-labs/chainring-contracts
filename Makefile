@@ -22,8 +22,9 @@ stop_containers:
 	docker compose -p arch-bitcoin-network down --remove-orphans
 
 start_containers: stop_containers
-	cd arch/data && ./clear_state.sh && cd ../..
+	cd arch && rm -rf .arch-data/ && cd ..
 	docker compose -p arch-bitcoin-network up -d
+	arch/scripts/start_dkg.sh
 
 stop_ci_containers:
 	docker compose -p arch-bitcoin-network -f docker-compose-ci.yaml down --remove-orphans
