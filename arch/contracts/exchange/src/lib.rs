@@ -29,11 +29,11 @@ mod tests {
     use sha256::digest;
     use common::models::CallerInfo;
 
-    const TOKEN_FILE_PATHS: &'static [&'static str] = &["../../.arch-data/token1.json", "../../.arch-data/token2.json"];
-    pub const SUBMITTER_FILE_PATH: &str = "../../.arch-data/submitter.json";
-    pub const WALLET1_FILE_PATH: &str = "../../.arch-data/wallet1.json";
-    pub const WALLET2_FILE_PATH: &str = "../../.arch-data/wallet2.json";
-    pub const FEE_ACCOUNT_FILE_PATH: &str = "../../.arch-data/fee_account.json";
+    const TOKEN_FILE_PATHS: &'static [&'static str] = &["token1.json", "token2.json"];
+    pub const SUBMITTER_FILE_PATH: &str = "submitter.json";
+    pub const WALLET1_FILE_PATH: &str = "wallet1.json";
+    pub const WALLET2_FILE_PATH: &str = "wallet2.json";
+    pub const FEE_ACCOUNT_FILE_PATH: &str = "fee_account.json";
 
     const WAIT_AFTER_PROCESSED: u64 = 0;
 

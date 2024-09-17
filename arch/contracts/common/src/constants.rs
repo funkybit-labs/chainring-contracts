@@ -2,7 +2,7 @@
 
 /// The file path where the caller stores information
 pub const CALLER_FILE_PATH: &str = "caller.json";
-pub const PROGRAM_FILE_PATH: &str = "../../.arch-data/program.json";
+pub const PROGRAM_FILE_PATH: &str = "program.json";
 
 /// Local address for node 1
 pub const NODE1_ADDRESS: &str = "http://127.0.0.1:9002/";
