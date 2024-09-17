@@ -35,7 +35,7 @@ mod tests {
     pub const WALLET2_FILE_PATH: &str = "wallet2.json";
     pub const FEE_ACCOUNT_FILE_PATH: &str = "fee_account.json";
 
-    const WAIT_AFTER_PROCESSED: u64 = 0;
+    const WAIT_AFTER_PROCESSED: u64 = 2;
 
     impl fmt::Display for Balance {
         fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
