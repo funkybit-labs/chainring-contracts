@@ -9,7 +9,7 @@ mod tests {
     use std::{fmt, fs};
     use std::str::FromStr;
     use bitcoin::key::UntweakedKeypair;
-    use bitcoin::{Address, Amount, OutPoint, ScriptBuf, Sequence, Transaction, Txid, TxIn, TxOut, Witness};
+    use bitcoin::{Address, Amount, OutPoint, ScriptBuf, Sequence, Transaction, Txid, TxIn, Witness};
     use bitcoin::absolute::LockTime;
     use bitcoin::transaction::Version;
     use bitcoincore_rpc::{Auth, Client, RawTx, RpcApi};
@@ -44,6 +44,18 @@ mod tests {
     }
 
     #[derive(Clone, BorshSerialize, BorshDeserialize)]
+    pub enum NetworkType {
+        /// Mainnet Bitcoin.
+        Bitcoin,
+        /// Bitcoin's testnet network.
+        Testnet,
+        /// Bitcoin's signet network.
+        Signet,
+        /// Bitcoin's regtest network.
+        Regtest,
+    }
+
+    #[derive(Clone, BorshSerialize, BorshDeserialize)]
     pub struct Balance {
         pub address: String,
         pub balance: u64,
@@ -61,6 +73,8 @@ mod tests {
     pub struct ProgramState {
         pub version: u16,
         pub fee_account_address: String,
+        pub program_change_address: String,
+        pub network_type: NetworkType,
         pub settlement_batch_hash: String,
         pub last_settlement_batch_hash: String,
         pub last_withdrawal_batch_hash: String,
@@ -100,6 +114,8 @@ mod tests {
     #[derive(Clone, BorshSerialize, BorshDeserialize)]
     pub struct InitProgramStateParams {
         pub fee_account: String,
+        pub program_change_address: String,
+        pub network_type: NetworkType,
     }
 
     #[derive(Clone, BorshSerialize, BorshDeserialize)]
@@ -132,6 +148,7 @@ mod tests {
     #[derive(Clone, BorshSerialize, BorshDeserialize)]
     pub struct WithdrawBatchParams {
         pub token_withdrawals: Vec<TokenWithdrawals>,
+        pub change_amount: u64,
         pub tx_hex: Vec<u8>,
     }
 
@@ -208,9 +225,7 @@ mod tests {
         );
 
 
-        let withdraw_tx = prepare_withdrawal(
-            WALLET1_FILE_PATH,
-            PROGRAM_FILE_PATH,
+        let (withdraw_tx, change_amount) = prepare_withdrawal(
             5000,
             1500,
             &txid,
@@ -227,6 +242,7 @@ mod tests {
                     fee_amount: 500,
                 }],
             }],
+            change_amount,
             tx_hex: hex::decode(withdraw_tx).unwrap()
         };
         let expected = TokenBalances {
@@ -452,13 +468,20 @@ mod tests {
         assign_ownership(submitter_keypair, submitter_pubkey, SETUP.program_pubkey.clone());
         debug!("Assigned ownership for program state account");
 
+        let program_change_address = get_account_address(SETUP.program_pubkey);
+
         init_program_state_account(
             InitProgramStateParams {
-                fee_account: fee_account.address.to_string()
+                fee_account: fee_account.address.to_string(),
+                program_change_address: program_change_address.clone(),
+                network_type: NetworkType::Regtest
+
             },
             ProgramState {
                 version: 0,
                 fee_account_address: fee_account.address.to_string(),
+                program_change_address,
+                network_type: NetworkType::Regtest,
                 settlement_batch_hash: "".to_string(),
                 last_settlement_batch_hash: "".to_string(),
                 last_withdrawal_batch_hash: "".to_string(),
@@ -542,7 +565,10 @@ mod tests {
         let (submitter_keypair, submitter_pubkey)  = with_secret_key_file(SUBMITTER_FILE_PATH).unwrap();
         let expected = borsh::to_vec(&expected).expect("Balance should be serializable");
         let wallet  = CallerInfo::with_secret_key_file(WALLET1_FILE_PATH).unwrap();
-        let program  = CallerInfo::with_secret_key_file(PROGRAM_FILE_PATH).unwrap();
+        let program_change_address = Address::from_str(&get_account_address(SETUP.program_pubkey))
+            .unwrap()
+            .require_network(bitcoin::Network::Regtest)
+            .unwrap();
 
         let (txid, _) = sign_and_send_instruction(
             Instruction {
@@ -593,7 +619,7 @@ mod tests {
             if output.script_pubkey == wallet.address.script_pubkey() {
                 wallet_amount = output.value.to_sat();
             }
-            if output.script_pubkey == program.address.script_pubkey() {
+            if output.script_pubkey == program_change_address.script_pubkey() {
                 change_amount = output.value.to_sat();
             }
         }
@@ -984,13 +1010,11 @@ mod tests {
     }
 
     fn prepare_withdrawal(
-        wallet: &str,
-        program: &str,
         amount: u64,
         estimated_fee: u64,
         txid: &str,
         vout: u32
-    ) -> String {
+    ) -> (String, u64) {
 
         let userpass = Auth::UserPass(
             BITCOIN_NODE_USERNAME.to_string(),
@@ -998,13 +1022,6 @@ mod tests {
         );
         let rpc =
             Client::new(BITCOIN_NODE_ENDPOINT, userpass).expect("rpc shouldn not fail to be initiated");
-
-        let wallet = CallerInfo::with_secret_key_file(wallet)
-            .expect("getting caller info should not fail");
-
-        let program = CallerInfo::with_secret_key_file(program)
-            .expect("getting submitter info should not fail");
-
 
         let txid = Txid::from_str(txid).unwrap();
         let raw_tx = rpc
@@ -1017,20 +1034,7 @@ mod tests {
             panic!("not enough in utxo to cover amount and fee")
         }
 
-        let mut outputs = vec![
-            TxOut {
-                value: Amount::from_sat(amount),
-                script_pubkey: wallet.address.script_pubkey(),
-            },
-        ];
-        if amount + estimated_fee < prev_output.value.to_sat() {
-            outputs.push(
-                TxOut {
-                    value: Amount::from_sat(prev_output.value.to_sat() - amount - estimated_fee),
-                    script_pubkey: program.address.script_pubkey(),
-                }
-            );
-        }
+        let change_amount = prev_output.value.to_sat() - amount - estimated_fee;
 
         let tx = Transaction {
             version: Version::TWO,
@@ -1043,11 +1047,11 @@ mod tests {
                 sequence: Sequence::MAX,
                 witness: Witness::new(),
             }],
-            output: outputs,
+            output: vec![],
             lock_time: LockTime::ZERO,
         };
 
-        tx.raw_hex()
+        (tx.raw_hex(), change_amount)
     }
 
     fn delete_secret_file(file_path: &str) {
