@@ -6,11 +6,13 @@ use arch_program::{
     transaction_to_sign::TransactionToSign,
     program::set_transaction_to_sign,
     input_to_sign::InputToSign,
+    msg,
 
 };
 use borsh::{BorshDeserialize, BorshSerialize};
 use sha256::digest;
-use bitcoin::{self, Transaction};
+use bitcoin::{address::Address, Amount, Transaction, TxOut};
+use std::str::FromStr;
 
 const ERROR_INVALID_ADDRESS_INDEX: u32 = 601;
 const ERROR_INVALID_ACCOUNT_INDEX: u32 = 602;
@@ -22,6 +24,8 @@ const ERROR_SETTLEMENT_BATCH_MISMATCH: u32 = 607;
 const ERROR_NETTING: u32 = 608;
 const ERROR_ALREADY_INITIALIZED: u32 = 609;
 const ERROR_PROGRAM_STATE_MISMATCH: u32 = 610;
+const ERROR_NO_OUTPUTS_ALLOWED: u32 = 611;
+const ERROR_INVALID_ADDRESS: u32 = 612;
 
 
 entrypoint!(process_instruction);
@@ -45,6 +49,18 @@ pub fn process_instruction(
 }
 
 #[derive(Clone, BorshSerialize, BorshDeserialize)]
+pub enum NetworkType {
+    /// Mainnet Bitcoin.
+    Bitcoin,
+    /// Bitcoin's testnet network.
+    Testnet,
+    /// Bitcoin's signet network.
+    Signet,
+    /// Bitcoin's regtest network.
+    Regtest,
+}
+
+#[derive(Clone, BorshSerialize, BorshDeserialize)]
 pub struct Balance {
     pub address: String,
     pub balance: u64,
@@ -62,6 +78,8 @@ pub struct TokenBalances {
 pub struct ProgramState {
     pub version: u16,
     pub fee_account_address: String,
+    pub program_change_address: String,
+    pub network_type: NetworkType,
     pub settlement_batch_hash: String,
     pub last_settlement_batch_hash: String,
     pub last_withdrawal_batch_hash: String,
@@ -101,6 +119,8 @@ pub enum ProgramInstruction {
 #[derive(Clone, BorshSerialize, BorshDeserialize)]
 pub struct InitProgramStateParams {
     pub fee_account: String,
+    pub program_change_address: String,
+    pub network_type: NetworkType,
 }
 
 #[derive(Clone, BorshSerialize, BorshDeserialize)]
@@ -133,6 +153,7 @@ pub struct TokenWithdrawals {
 #[derive(Clone, BorshSerialize, BorshDeserialize)]
 pub struct WithdrawBatchParams {
     pub token_withdrawals: Vec<TokenWithdrawals>,
+    pub change_amount: u64,
     pub tx_hex: Vec<u8>,
 }
 
@@ -158,9 +179,12 @@ pub fn init_program_state(accounts: &[AccountInfo],
     if !state_data.is_empty() {
         return Err(ProgramError::Custom(ERROR_ALREADY_INITIALIZED));
     }
+    validate_bitcoin_address(&params.program_change_address, params.network_type.clone())?;
     let state = ProgramState {
         version: 0,
         fee_account_address: params.fee_account,
+        program_change_address: params.program_change_address,
+        network_type: params.network_type,
         settlement_batch_hash: "".to_string(),
         last_settlement_batch_hash: "".to_string(),
         last_withdrawal_batch_hash: "".to_string(),
@@ -184,9 +208,11 @@ pub fn init_token_state(accounts: &[AccountInfo],
 }
 
 pub fn init_wallet_balances(accounts: &[AccountInfo], params: InitWalletBalancesParams) -> Result<(), ProgramError> {
+    let program_state: ProgramState = get_account_state(accounts, 0)?;
     for token_balance_setup in &params.token_balance_setups {
         let mut token_balance_state = get_token_balance_state(accounts, 1)?;
         for wallet_address in &token_balance_setup.wallet_addresses {
+            validate_bitcoin_address(wallet_address, program_state.network_type.clone())?;
             token_balance_state.balances.push(Balance {
                 address: wallet_address.to_string(),
                 balance: 0,
@@ -225,13 +251,19 @@ pub fn withdraw_batch(program_id: &Pubkey, accounts: &[AccountInfo], params: Wit
     if !program_state.settlement_batch_hash.is_empty() {
         return Err(ProgramError::Custom(ERROR_SETTLEMENT_IN_PROGRESS));
     }
+    let mut tx: Transaction = bitcoin::consensus::deserialize(&params.tx_hex).unwrap();
+    if tx.output.len() > 0 {
+        return Err(ProgramError::Custom(ERROR_NO_OUTPUTS_ALLOWED));
+    }
 
     for token_withdrawals in &params.token_withdrawals {
         let token_balance_state = get_token_balance_state(accounts, token_withdrawals.account_index)?;
         let updated_token_balance_state = handle_withdrawals(
             token_balance_state,
             token_withdrawals.clone().withdrawals,
-            &program_state.fee_account_address
+            &program_state.fee_account_address,
+            &mut tx.output,
+            program_state.network_type.clone()
         )?;
         update_state_data(
             &accounts[token_withdrawals.account_index as usize],
@@ -245,7 +277,18 @@ pub fn withdraw_batch(program_id: &Pubkey, accounts: &[AccountInfo], params: Wit
         borsh::to_vec(&program_state).unwrap()
     )?;
 
-    let tx: Transaction = bitcoin::consensus::deserialize(&params.tx_hex).unwrap();
+    if params.change_amount > 0 {
+        tx.output.push(
+            TxOut {
+                value: Amount::from_sat(params.change_amount),
+                script_pubkey: get_bitcoin_address(
+                    &program_state.program_change_address,
+                    program_state.network_type.clone()
+                ).script_pubkey(),
+            }
+        );
+    }
+    msg!("withdrawal tx to send {:?}", tx);
     let mut inputs_to_sign: Vec<InputToSign> = vec![];
     for (index, _) in tx.input.iter().enumerate() {
         inputs_to_sign.push(
@@ -256,7 +299,7 @@ pub fn withdraw_batch(program_id: &Pubkey, accounts: &[AccountInfo], params: Wit
         )
     }
     let tx_to_sign = TransactionToSign {
-        tx_bytes: &params.tx_hex,
+        tx_bytes: &bitcoin::consensus::serialize(&tx),
         inputs_to_sign: &inputs_to_sign
     };
 
@@ -410,7 +453,13 @@ fn verify_decrements(state: TokenBalances, adjustments: Vec<Adjustment>) -> Resu
     }
     Ok(())
 }
-fn handle_withdrawals(mut state: TokenBalances, withdrawals: Vec<Withdrawal>, fee_account_address: &str) -> Result<TokenBalances, ProgramError> {
+fn handle_withdrawals(
+    mut state: TokenBalances,
+    withdrawals: Vec<Withdrawal>,
+    fee_account_address: &str,
+    tx_outs: &mut Vec<TxOut>,
+    network_type: NetworkType,
+) -> Result<TokenBalances, ProgramError> {
     for withdrawal in withdrawals {
         if withdrawal.address_index as usize >= state.balances.len() {
             return Err(ProgramError::Custom(ERROR_INVALID_ADDRESS_INDEX))
@@ -428,7 +477,36 @@ fn handle_withdrawals(mut state: TokenBalances, withdrawals: Vec<Withdrawal>, fe
                 }
                 state.balances[FEE_ADDRESS_INDEX as usize].balance += withdrawal.fee_amount
             }
+            tx_outs.push(
+                TxOut {
+                    value: Amount::from_sat(withdrawal.amount - withdrawal.fee_amount),
+                    script_pubkey: get_bitcoin_address(
+                        &state.balances[index].address,
+                        network_type.clone()
+                    ).script_pubkey(),
+                }
+            );
         }
     }
     Ok(state)
+}
+
+fn validate_bitcoin_address(address: &str, network_type: NetworkType) -> Result<(), ProgramError> {
+    match Address::from_str(address).unwrap().require_network(map_network_type(network_type)) {
+        Ok(_) => Ok(()),
+        Err(_) => Err(ProgramError::Custom(ERROR_INVALID_ADDRESS)),
+    }
+}
+
+fn get_bitcoin_address(address: &str, network_type: NetworkType) -> Address {
+    Address::from_str(address).unwrap().require_network(map_network_type(network_type)).unwrap()
+}
+
+fn map_network_type(network_type: NetworkType) -> bitcoin::Network {
+    match network_type {
+        NetworkType::Bitcoin => bitcoin::Network::Bitcoin,
+        NetworkType::Testnet => bitcoin::Network::Testnet,
+        NetworkType::Signet => bitcoin::Network::Signet,
+        NetworkType::Regtest => bitcoin::Network::Regtest
+    }
 }

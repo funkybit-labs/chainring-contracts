@@ -277,7 +277,7 @@ pub fn deploy_program_txs(program_keypair: UntweakedKeypair, elf_path: &str) -> 
     info!("Deploying program with {} transactions", txs.len());
 
     let txids: Vec<String> = txs
-        .chunks(100)
+        .chunks(50)
         .enumerate()
         .map(|(i, chunk)| {
             info!("Sending tx batch {}", i);
