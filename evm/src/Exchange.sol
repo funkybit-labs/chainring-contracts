@@ -198,6 +198,7 @@ contract Exchange is EIP712Upgradeable, UUPSUpgradeable, OwnableUpgradeable, IEx
                     _batchSucceeded = false;
                     emit SettlementFailed(
                         _wallet,
+                        _token,
                         _batchSettlement.walletTradeLists[walletIndex].tradeHashes,
                         _adjustmentAmount,
                         balances[_wallet][_token]
