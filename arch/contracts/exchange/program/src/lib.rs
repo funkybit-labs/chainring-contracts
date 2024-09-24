@@ -19,8 +19,9 @@ const ERROR_ADDRESS_MISMATCH: u32 = 604;
 const ERROR_SETTLEMENT_IN_PROGRESS: u32 = 605;
 const ERROR_NO_SETTLEMENT_IN_PROGRESS: u32 = 606;
 const ERROR_SETTLEMENT_BATCH_MISMATCH: u32 = 607;
-const ERROR_NETTING: u32 = 607;
-const ERROR_ALREADY_INITIALIZED: u32 = 608;
+const ERROR_NETTING: u32 = 608;
+const ERROR_ALREADY_INITIALIZED: u32 = 609;
+const ERROR_PROGRAM_STATE_MISMATCH: u32 = 610;
 
 
 entrypoint!(process_instruction);
@@ -52,8 +53,8 @@ pub struct Balance {
 #[derive(Clone, BorshSerialize, BorshDeserialize)]
 pub struct TokenBalances {
     pub version: u16,
+    pub program_state_account: Pubkey,
     pub token_id: String,
-    pub fee_address_index: u32,
     pub balances: Vec<Balance>,
 }
 
@@ -126,7 +127,6 @@ pub struct TokenDeposits {
 #[derive(Clone, BorshSerialize, BorshDeserialize)]
 pub struct TokenWithdrawals {
     pub account_index: u8,
-    pub fee_address_index: u32,
     pub withdrawals: Vec<Withdrawal>,
 }
 
@@ -149,23 +149,22 @@ pub struct SettlementBatchParams {
     pub settlements: Vec<SettlementAdjustments>
 }
 
+const FEE_ADDRESS_INDEX: u32 = 0;
 
 pub fn init_program_state(accounts: &[AccountInfo],
                           params: InitProgramStateParams) -> Result<(), ProgramError> {
 
     let state_data: Vec<u8> = get_account_data(accounts, 0)?;
-    let mut state: ProgramState = if state_data.is_empty() {
-        ProgramState {
-            version: 0,
-            fee_account_address: "".to_string(),
-            settlement_batch_hash: "".to_string(),
-            last_settlement_batch_hash: "".to_string(),
-            last_withdrawal_batch_hash: "".to_string(),
-        }
-    } else {
-        borsh::from_slice(&state_data).unwrap()
+    if !state_data.is_empty() {
+        return Err(ProgramError::Custom(ERROR_ALREADY_INITIALIZED));
+    }
+    let state = ProgramState {
+        version: 0,
+        fee_account_address: params.fee_account,
+        settlement_batch_hash: "".to_string(),
+        last_settlement_batch_hash: "".to_string(),
+        last_withdrawal_batch_hash: "".to_string(),
     };
-    state.fee_account_address = params.fee_account;
     update_state_data(&accounts[0], borsh::to_vec(&state).unwrap())
 }
 
@@ -178,15 +177,15 @@ pub fn init_token_state(accounts: &[AccountInfo],
     let program_state: ProgramState = get_account_state(accounts, 0)?;
     update_state_data(&accounts[1], borsh::to_vec(&TokenBalances {
         version: 0,
+        program_state_account: *accounts[0].key,
         token_id: params.token_id,
-        fee_address_index: 0,
         balances: vec![Balance{ address: program_state.fee_account_address, balance: 0 }],
     }).unwrap())
 }
 
 pub fn init_wallet_balances(accounts: &[AccountInfo], params: InitWalletBalancesParams) -> Result<(), ProgramError> {
     for token_balance_setup in &params.token_balance_setups {
-        let mut token_balance_state: TokenBalances = get_account_state(accounts, 1)?;
+        let mut token_balance_state = get_token_balance_state(accounts, 1)?;
         for wallet_address in &token_balance_setup.wallet_addresses {
             token_balance_state.balances.push(Balance {
                 address: wallet_address.to_string(),
@@ -210,7 +209,7 @@ pub fn deposit_batch(accounts: &[AccountInfo],
         return Err(ProgramError::Custom(ERROR_SETTLEMENT_IN_PROGRESS));
     }
     for token_deposits in &params.token_deposits {
-        let token_balance_state: TokenBalances = get_account_state(accounts, token_deposits.account_index)?;
+        let token_balance_state = get_token_balance_state(accounts, token_deposits.account_index)?;
         let updated_token_balance_state = handle_increments(token_balance_state, token_deposits.clone().deposits)?;
         update_state_data(
             &accounts[token_deposits.account_index as usize],
@@ -228,12 +227,11 @@ pub fn withdraw_batch(program_id: &Pubkey, accounts: &[AccountInfo], params: Wit
     }
 
     for token_withdrawals in &params.token_withdrawals {
-        let token_balance_state: TokenBalances = get_account_state(accounts, token_withdrawals.account_index)?;
+        let token_balance_state = get_token_balance_state(accounts, token_withdrawals.account_index)?;
         let updated_token_balance_state = handle_withdrawals(
             token_balance_state,
             token_withdrawals.clone().withdrawals,
-            &program_state.fee_account_address,
-            token_withdrawals.fee_address_index
+            &program_state.fee_account_address
         )?;
         update_state_data(
             &accounts[token_withdrawals.account_index as usize],
@@ -276,11 +274,10 @@ pub fn submit_settlement_batch(accounts: &[AccountInfo], params: SettlementBatch
     }
 
     for token_settlements in &params.settlements {
-        let token_balance_state: TokenBalances = get_account_state(accounts, token_settlements.account_index)?;
-
+        let token_balance_state = get_token_balance_state(accounts, token_settlements.account_index)?;
         let mut increments = if token_settlements.fee_amount > 0 {
             vec![Adjustment {
-                address_index: token_balance_state.fee_address_index,
+                address_index: FEE_ADDRESS_INDEX,
                 amount: token_settlements.fee_amount,
             }]
         } else {
@@ -316,7 +313,7 @@ pub fn prepare_settlement_batch(accounts: &[AccountInfo], params: SettlementBatc
         if increment_sum != decrement_sum {
             return Err(ProgramError::Custom(ERROR_NETTING));
         }
-        let token_balance_state: TokenBalances = get_account_state(accounts, token_settlements.account_index)?;
+        let token_balance_state: TokenBalances = get_token_balance_state(accounts, token_settlements.account_index)?;
         verify_decrements(token_balance_state, token_settlements.clone().decrements)?;
     }
 
@@ -362,6 +359,14 @@ fn get_account_data(accounts: &[AccountInfo], index: u8) -> Result<Vec<u8>, Prog
     Ok(accounts[index as usize].data.try_borrow().unwrap().to_vec())
 }
 
+fn get_token_balance_state(accounts: &[AccountInfo], index: u8) ->  Result<TokenBalances, ProgramError> {
+    let token_balance_state: TokenBalances = get_account_state(accounts, index)?;
+    if token_balance_state.program_state_account != *accounts[0].key {
+        return Err(ProgramError::Custom(ERROR_PROGRAM_STATE_MISMATCH));
+    }
+    Ok(token_balance_state)
+}
+
 fn handle_increments(state: TokenBalances, adjustments: Vec<Adjustment>) -> Result<TokenBalances, ProgramError> {
     handle_adjustments(state, adjustments, true)
 }
@@ -405,7 +410,7 @@ fn verify_decrements(state: TokenBalances, adjustments: Vec<Adjustment>) -> Resu
     }
     Ok(())
 }
-fn handle_withdrawals(mut state: TokenBalances, withdrawals: Vec<Withdrawal>, fee_account_address: &str, fee_account_index: u32) -> Result<TokenBalances, ProgramError> {
+fn handle_withdrawals(mut state: TokenBalances, withdrawals: Vec<Withdrawal>, fee_account_address: &str) -> Result<TokenBalances, ProgramError> {
     for withdrawal in withdrawals {
         if withdrawal.address_index as usize >= state.balances.len() {
             return Err(ProgramError::Custom(ERROR_INVALID_ADDRESS_INDEX))
@@ -418,10 +423,10 @@ fn handle_withdrawals(mut state: TokenBalances, withdrawals: Vec<Withdrawal>, fe
                 None => return Err(ProgramError::Custom(ERROR_INSUFFICIENT_BALANCE))
             };
             if withdrawal.fee_amount > 0 {
-                if state.balances[fee_account_index as usize].address != fee_account_address {
+                if state.balances[FEE_ADDRESS_INDEX as usize].address != fee_account_address {
                     return Err(ProgramError::Custom(ERROR_ADDRESS_MISMATCH))
                 }
-                state.balances[fee_account_index as usize].balance += withdrawal.fee_amount
+                state.balances[FEE_ADDRESS_INDEX as usize].balance += withdrawal.fee_amount
             }
         }
     }

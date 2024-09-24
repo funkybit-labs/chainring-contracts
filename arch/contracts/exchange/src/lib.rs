@@ -52,8 +52,8 @@ mod tests {
     #[derive(Clone, BorshSerialize, BorshDeserialize)]
     pub struct TokenBalances {
         pub version: u16,
+        pub program_state_account: Pubkey,
         pub token_id: String,
-        pub fee_address_index: u32,
         pub balances: Vec<Balance>,
     }
 
@@ -126,7 +126,6 @@ mod tests {
     #[derive(Clone, BorshSerialize, BorshDeserialize)]
     pub struct TokenWithdrawals {
         pub account_index: u8,
-        pub fee_address_index: u32,
         pub withdrawals: Vec<Withdrawal>,
     }
 
@@ -222,7 +221,6 @@ mod tests {
         let input = WithdrawBatchParams {
             token_withdrawals: vec![TokenWithdrawals {
                 account_index: 1,
-                fee_address_index: 0,
                 withdrawals: vec![Withdrawal {
                     address_index: 1,
                     amount: 5500,
@@ -233,8 +231,8 @@ mod tests {
         };
         let expected = TokenBalances {
             version: 0,
+            program_state_account: accounts[0],
             token_id: "btc".to_string(),
-            fee_address_index: 0,
             balances: vec![
                 Balance {
                     address: fee_account.address.to_string().clone(),
@@ -342,8 +340,8 @@ mod tests {
         assert_eq!(
             borsh::to_vec(&TokenBalances {
                 version: 0,
+                program_state_account: accounts[0],
                 token_id: token1.to_string(),
-                fee_address_index: 0,
                 balances: vec![
                     Balance {
                         address: fee_account.address.to_string(),
@@ -367,8 +365,8 @@ mod tests {
         assert_eq!(
             borsh::to_vec(&TokenBalances {
                 version: 0,
+                program_state_account: accounts[0],
                 token_id: token2.to_string(),
-                fee_address_index: 0,
                 balances: vec![
                     Balance {
                         address: fee_account.address.to_string(),
@@ -406,6 +404,7 @@ mod tests {
         amount: u64,
         expected_balance: u64
     ) {
+        let (_, submitter_pubkey) = create_new_account(SUBMITTER_FILE_PATH);
         let input = DepositBatchParams {
             token_deposits: vec![
                 TokenDeposits {
@@ -421,8 +420,8 @@ mod tests {
         };
         let expected = TokenBalances {
             version: 0,
+            program_state_account: submitter_pubkey,
             token_id: token.to_string(),
-            fee_address_index: 0,
             balances: vec![
                 Balance {
                     address: fee_account_address.clone(),
@@ -480,8 +479,8 @@ mod tests {
                 token_pubkey,
                 TokenBalances {
                     version: 0,
+                    program_state_account: submitter_pubkey,
                     token_id: token.to_string(),
-                    fee_address_index: 0,
                     balances: vec![Balance {
                         address: fee_account.address.to_string(),
                         balance: 0,
