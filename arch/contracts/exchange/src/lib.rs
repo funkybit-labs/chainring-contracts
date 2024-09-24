@@ -35,8 +35,6 @@ mod tests {
     pub const WALLET2_FILE_PATH: &str = "../../data/wallet2.json";
     pub const FEE_ACCOUNT_FILE_PATH: &str = "../../data/fee_account.json";
 
-    const WAIT_AFTER_PROCESSED: u64 = 2;
-
     impl fmt::Display for Balance {
         fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
             write!(f, "{} {}", self.address, self.balance)
@@ -545,7 +543,7 @@ mod tests {
             vec![submitter_keypair],
         ).expect("signing and sending a transaction should not fail");
 
-        let _ = get_processed_transaction(NODE1_ADDRESS, txid, WAIT_AFTER_PROCESSED)
+        let _ = get_processed_transaction(NODE1_ADDRESS, txid)
             .expect("get processed transaction should not fail");
 
         let token_account = read_account_info(NODE1_ADDRESS, token_account.clone()).unwrap();
@@ -590,7 +588,7 @@ mod tests {
             vec![submitter_keypair],
         ).expect("signing and sending a transaction should not fail");
 
-        let processed_tx = get_processed_transaction(NODE1_ADDRESS, txid, WAIT_AFTER_PROCESSED)
+        let processed_tx = get_processed_transaction(NODE1_ADDRESS, txid)
             .expect("get processed transaction should not fail");
 
         let token_account = read_account_info(NODE1_ADDRESS, token_account.clone()).unwrap();
@@ -668,7 +666,7 @@ mod tests {
             vec![submitter_keypair],
         ).expect("signing and sending a transaction should not fail");
 
-        let _ = get_processed_transaction(NODE1_ADDRESS, txid, WAIT_AFTER_PROCESSED)
+        let _ = get_processed_transaction(NODE1_ADDRESS, txid)
             .expect("get processed transaction should not fail");
 
         let state_account = read_account_info(NODE1_ADDRESS, submitter_pubkey.clone()).unwrap();
@@ -698,7 +696,7 @@ mod tests {
             vec![submitter_keypair],
         ).expect("signing and sending a transaction should not fail");
 
-        let _ = get_processed_transaction(NODE1_ADDRESS, txid, WAIT_AFTER_PROCESSED)
+        let _ = get_processed_transaction(NODE1_ADDRESS, txid)
             .expect("get processed transaction should not fail");
 
         let state_account = read_account_info(NODE1_ADDRESS, submitter_pubkey.clone()).unwrap();
@@ -741,7 +739,7 @@ mod tests {
             vec![submitter_keypair],
         ).expect("signing and sending a transaction should not fail");
 
-        let _ = get_processed_transaction(NODE1_ADDRESS, txid, WAIT_AFTER_PROCESSED)
+        let _ = get_processed_transaction(NODE1_ADDRESS, txid)
             .expect("get processed transaction should not fail");
 
         let state_account = read_account_info(NODE1_ADDRESS, submitter_pubkey.clone()).unwrap();
@@ -779,7 +777,7 @@ mod tests {
         ).expect("signing and sending a transaction should not fail");
         debug!("submitted tx {} to arch", txid.clone());
 
-        let _ = get_processed_transaction(NODE1_ADDRESS, txid.clone(), WAIT_AFTER_PROCESSED)
+        let _ = get_processed_transaction(NODE1_ADDRESS, txid.clone())
             .expect("get processed transaction should not fail");
 
         let account = read_account_info(NODE1_ADDRESS, submitter_pubkey.clone()).unwrap();
@@ -818,7 +816,7 @@ mod tests {
         ).expect("signing and sending a transaction should not fail");
         debug!("submitted tx {} to arch", txid.clone());
 
-        let _ = get_processed_transaction(NODE1_ADDRESS, txid.clone(), WAIT_AFTER_PROCESSED)
+        let _ = get_processed_transaction(NODE1_ADDRESS, txid.clone())
             .expect("get processed transaction should not fail");
 
         let account = read_account_info(NODE1_ADDRESS, token_account.clone()).unwrap();
@@ -869,7 +867,7 @@ mod tests {
             ).expect("signing and sending a transaction should not fail");
             debug!("submitted tx {} to arch", txid.clone());
 
-            let _ = get_processed_transaction(NODE1_ADDRESS, txid.clone(), WAIT_AFTER_PROCESSED)
+            let _ = get_processed_transaction(NODE1_ADDRESS, txid.clone())
                 .expect("get processed transaction should not fail");
         }
         let account_info = read_account_info(NODE1_ADDRESS, token_account.clone()).unwrap();
@@ -910,7 +908,7 @@ mod tests {
             vec![program_keypair],
         ).expect("signing and sending a transaction should not fail");
 
-        let _ = get_processed_transaction(NODE1_ADDRESS, txid.clone(), WAIT_AFTER_PROCESSED)
+        let _ = get_processed_transaction(NODE1_ADDRESS, txid.clone())
             .expect("get processed transaction should not fail");
 
         assert!(read_account_info(NODE1_ADDRESS, program_pubkey.clone()).unwrap().is_executable);
@@ -936,7 +934,7 @@ mod tests {
             vec![keypair],
         ).expect("signing and sending a transaction should not fail");
 
-        let _ = get_processed_transaction(NODE1_ADDRESS, txid.clone(), WAIT_AFTER_PROCESSED)
+        let _ = get_processed_transaction(NODE1_ADDRESS, txid.clone())
             .expect("get processed transaction should not fail");
         (keypair, pubkey)
     }
@@ -959,7 +957,7 @@ mod tests {
         )
             .expect("Failed to sign and send Assign ownership of caller account instruction");
 
-        let _ = get_processed_transaction(NODE1_ADDRESS, txid.clone(), WAIT_AFTER_PROCESSED)
+        let _ = get_processed_transaction(NODE1_ADDRESS, txid.clone())
             .expect("Failed to get processed transaction");
 
         // 10. Verify that the program is owner of caller account

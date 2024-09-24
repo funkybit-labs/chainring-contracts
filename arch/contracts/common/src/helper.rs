@@ -277,7 +277,7 @@ pub fn deploy_program_txs(program_keypair: UntweakedKeypair, elf_path: &str) -> 
     info!("Deploying program with {} transactions", txs.len());
 
     let txids: Vec<String> = txs
-        .chunks(50)
+        .chunks(75)
         .enumerate()
         .map(|(i, chunk)| {
             info!("Sending tx batch {}", i);
@@ -292,7 +292,7 @@ pub fn deploy_program_txs(program_keypair: UntweakedKeypair, elf_path: &str) -> 
                         .to_string()
                 })
                 .collect::<Vec<String>>();
-            std::thread::sleep(std::time::Duration::from_secs(5));
+            std::thread::sleep(std::time::Duration::from_secs(3));
             ids
         })
         .collect::<Vec<Vec<String>>>().into_iter().flatten().collect();
@@ -303,7 +303,7 @@ pub fn deploy_program_txs(program_keypair: UntweakedKeypair, elf_path: &str) -> 
     );
 
     for (i, txid) in txids.iter().enumerate() {
-        match get_processed_transaction(NODE1_ADDRESS, txid.clone(), 0) {
+        match get_processed_transaction(NODE1_ADDRESS, txid.clone()) {
             Ok(_) => debug!(
                 "Transaction {} (ID: {}) processed successfully",
                 i + 1,
@@ -318,7 +318,6 @@ pub fn deploy_program_txs(program_keypair: UntweakedKeypair, elf_path: &str) -> 
         }
     }
 
-    std::thread::sleep(std::time::Duration::from_secs(5));
     txids
 }
 
@@ -401,7 +400,7 @@ fn get_best_block() -> String {
 
 /// Returns a processed transaction given the txid
 /// Keeps trying for a maximum of 60 seconds if the processed transaction is not available
-pub fn get_processed_transaction(url: &str, tx_id: String, sleep_after: u64) -> Result<ProcessedTransaction> {
+pub fn get_processed_transaction(url: &str, tx_id: String) -> Result<ProcessedTransaction> {
     let mut processed_tx =
         process_get_transaction_result(post_data(url, GET_PROCESSED_TRANSACTION, tx_id.clone()));
     if let Err(e) = processed_tx {
@@ -433,7 +432,6 @@ pub fn get_processed_transaction(url: &str, tx_id: String, sleep_after: u64) -> 
         "Successfully retrieved and processed transaction: {}, status = {:?}",
         tx_id, processed_tx.status
     );
-    std::thread::sleep(std::time::Duration::from_secs(sleep_after));
     Ok(processed_tx)
 }
 
