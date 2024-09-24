@@ -13,6 +13,7 @@ use borsh::{BorshDeserialize, BorshSerialize};
 use sha256::digest;
 use bitcoin::{address::Address, Amount, Transaction, TxOut};
 use std::str::FromStr;
+use std::collections::HashMap;
 
 const ERROR_INVALID_ADDRESS_INDEX: u32 = 601;
 const ERROR_INVALID_ACCOUNT_INDEX: u32 = 602;
@@ -349,15 +350,22 @@ pub fn prepare_settlement_batch(accounts: &[AccountInfo], params: SettlementBatc
     if !program_state.settlement_batch_hash.is_empty() {
         return Err(ProgramError::Custom(ERROR_SETTLEMENT_IN_PROGRESS));
     }
+    let mut netting_results: HashMap<String, i64> = HashMap::new();
 
     for token_settlements in &params.settlements {
         let increment_sum: u64 = token_settlements.clone().increments.into_iter().map(|x| x.amount).sum::<u64>() + token_settlements.fee_amount;
         let decrement_sum: u64 = token_settlements.clone().decrements.into_iter().map(|x| x.amount).sum::<u64>();
-        if increment_sum != decrement_sum {
+        let token_balance_state: TokenBalances = get_token_balance_state(accounts, token_settlements.account_index)?;
+        verify_decrements(&token_balance_state, token_settlements.clone().decrements)?;
+        let running_netting_total = netting_results.entry(token_balance_state.token_id).or_insert(0);
+        *running_netting_total += increment_sum as i64 - decrement_sum as i64;
+    }
+
+    for (token, netting_result) in &netting_results {
+        if *netting_result != 0 {
+            msg!("Netting for {} - value is {}", token, netting_result);
             return Err(ProgramError::Custom(ERROR_NETTING));
         }
-        let token_balance_state: TokenBalances = get_token_balance_state(accounts, token_settlements.account_index)?;
-        verify_decrements(token_balance_state, token_settlements.clone().decrements)?;
     }
 
     program_state.settlement_batch_hash = hash(borsh::to_vec(&params).unwrap());
@@ -439,7 +447,7 @@ fn handle_adjustments(mut state: TokenBalances, adjustments: Vec<Adjustment>, in
     Ok(state)
 }
 
-fn verify_decrements(state: TokenBalances, adjustments: Vec<Adjustment>) -> Result<(), ProgramError>{
+fn verify_decrements(state: &TokenBalances, adjustments: Vec<Adjustment>) -> Result<(), ProgramError>{
     for adjustment in adjustments {
         if adjustment.address_index as usize >= state.balances.len() {
             return Err(ProgramError::Custom(ERROR_INVALID_ADDRESS_INDEX))
