@@ -217,7 +217,7 @@ contract BatchSettlementTest is ExchangeBaseTest {
 
         vm.startPrank(submitter);
         vm.expectEmit(exchangeProxyAddress);
-        emit IExchange.SettlementFailed(maker, makerHashes, 1e7, 0);
+        emit IExchange.SettlementFailed(maker, btcAddress, makerHashes, 1e7, 0);
         exchange.prepareSettlementBatch(abi.encode(batch));
 
         // since prepare had failures, batch should be rolled back, make sure cannot submit

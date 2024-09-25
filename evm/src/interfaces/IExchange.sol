@@ -68,7 +68,9 @@ interface IExchange is IVersion {
         address indexed _address, uint64 sequence, address token, uint256 amount, uint256 balance, ErrorCode errorCode
     );
 
-    event SettlementFailed(address indexed _address, bytes32[] tradeHashes, uint256 requestedAmount, uint256 balance);
+    event SettlementFailed(
+        address indexed _address, address token, bytes32[] tradeHashes, uint256 requestedAmount, uint256 balance
+    );
 
     event SettlementCompleted(address indexed _address, bytes32[] tradeHashes);
 
