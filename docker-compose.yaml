@@ -49,11 +49,6 @@ services:
       RPC_BIND_IP: 0.0.0.0
       RPC_BIND_PORT: 9002
       P2P_BIND_PORT: 19002
-#      BITCOIN_RPC_ENDPOINT: bitcoin-node.dev.aws.archnetwork.xyz
-#      BITCOIN_RPC_PORT: 18443
-#      BITCOIN_RPC_USERNAME: bitcoin
-#      BITCOIN_RPC_PASSWORD: 428bae8f3c94f8c39c50757fc89c39bc7e6ebc70ebf8f618
-#      BITCOIN_RPC_WALLET: "devwallet"
       BITCOIN_RPC_ENDPOINT: bitcoin
       BITCOIN_RPC_PORT: 18443
       BITCOIN_RPC_USERNAME: user
@@ -83,11 +78,6 @@ services:
       RPC_BIND_IP: 0.0.0.0
       RPC_BIND_PORT: 9003
       P2P_BIND_PORT: 19003
-#      BITCOIN_RPC_ENDPOINT: bitcoin-node.dev.aws.archnetwork.xyz
-#      BITCOIN_RPC_PORT: 18443
-#      BITCOIN_RPC_USERNAME: bitcoin
-#      BITCOIN_RPC_PASSWORD: 428bae8f3c94f8c39c50757fc89c39bc7e6ebc70ebf8f618
-#      BITCOIN_RPC_WALLET: "devwallet"
       BITCOIN_RPC_ENDPOINT: bitcoin
       BITCOIN_RPC_PORT: 18443
       BITCOIN_RPC_USERNAME: user
@@ -121,11 +111,6 @@ services:
       RPC_BIND_IP: 0.0.0.0
       RPC_BIND_PORT: 9004
       P2P_BIND_PORT: 19004
-#      BITCOIN_RPC_ENDPOINT: bitcoin-node.dev.aws.archnetwork.xyz
-#      BITCOIN_RPC_PORT: 18443
-#      BITCOIN_RPC_USERNAME: bitcoin
-#      BITCOIN_RPC_PASSWORD: 428bae8f3c94f8c39c50757fc89c39bc7e6ebc70ebf8f618
-#      BITCOIN_RPC_WALLET: "devwallet"
       BITCOIN_RPC_ENDPOINT: bitcoin
       BITCOIN_RPC_PORT: 18443
       BITCOIN_RPC_USERNAME: user
@@ -146,19 +131,19 @@ services:
       - arch-network
 
   bitcoin:
-    image: bitcoin
+    image: ${BITCOIN_IMAGE:-bitcoin}
     platform: linux/amd64
     container_name: bitcoin
     restart: always
     ports:
       - "18443:18443"
       - "28332:28332"
-    stop_grace_period: 5s
+    stop_grace_period: 2s
     networks:
       - arch-network
 
   fulcrum:
-    image: fulcrum
+    image: ${FULCRUM_IMAGE:-fulcrum}
     container_name: fulcrum
     platform: linux/amd64
     depends_on:
@@ -170,7 +155,7 @@ services:
       - 50001:50001
       - 50002:50002
     restart: always
-    stop_grace_period: 10s
+    stop_grace_period: 2s
     networks:
       - arch-network
 
@@ -184,7 +169,7 @@ services:
     container_name: mempool-frontend
     user: "1000:1000"
     restart: always
-    stop_grace_period: 5s
+    stop_grace_period: 2s
     command: "./wait-for mempool-db:3306 --timeout=720 -- nginx -g 'daemon off;'"
     ports:
       - 1080:8080
@@ -213,7 +198,7 @@ services:
     container_name: mempool-backend
     user: "1000:1000"
     restart: on-failure
-    stop_grace_period: 5s
+    stop_grace_period: 2s
     command: "./wait-for-it.sh mempool-db:3306 --timeout=720 --strict -- ./start.sh"
     volumes:
       - .datapi/:/backend/cache
@@ -231,7 +216,7 @@ services:
       - fulcrum
     container_name: mempool-db
     restart: always
-    stop_grace_period: 5s
+    stop_grace_period: 2s
     networks:
       - arch-network
 
