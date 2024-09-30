@@ -23,15 +23,15 @@ pub const GET_PROCESSED_TRANSACTION: &str = "get_processed_transaction";
 pub const GET_ACCOUNT_ADDRESS: &str = "get_account_address";
 
 /// Data
-pub const BITCOIN_NODE_ENDPOINT: &str =
-    "https://bitcoin-node.dev.aws.archnetwork.xyz:18443/wallet/testwallet";
-pub const BITCOIN_NODE_USERNAME: &str = "bitcoin";
-pub const BITCOIN_NODE_PASSWORD: &str = "428bae8f3c94f8c39c50757fc89c39bc7e6ebc70ebf8f618";
-
 // pub const BITCOIN_NODE_ENDPOINT: &str =
-//     "https://localhost:18443/wallet/testwallet";
-// pub const BITCOIN_NODE_USERNAME: &str = "user";
-// pub const BITCOIN_NODE_PASSWORD: &str = "password";
+//     "https://bitcoin-node.dev.aws.archnetwork.xyz:18443/wallet/testwallet";
+// pub const BITCOIN_NODE_USERNAME: &str = "bitcoin";
+// pub const BITCOIN_NODE_PASSWORD: &str = "428bae8f3c94f8c39c50757fc89c39bc7e6ebc70ebf8f618";
+
+pub const BITCOIN_NODE_ENDPOINT: &str =
+    "https://localhost:18443/wallet/testwallet";
+pub const BITCOIN_NODE_USERNAME: &str = "user";
+pub const BITCOIN_NODE_PASSWORD: &str = "password";
 
 /// Hack for Error codes
 pub const TRANSACTION_NOT_FOUND_CODE: i64 = 404;

@@ -292,7 +292,7 @@ pub fn deploy_program_txs(program_keypair: UntweakedKeypair, elf_path: &str) -> 
                         .to_string()
                 })
                 .collect::<Vec<String>>();
-            std::thread::sleep(std::time::Duration::from_secs(3));
+            std::thread::sleep(std::time::Duration::from_secs(2));
             ids
         })
         .collect::<Vec<Vec<String>>>().into_iter().flatten().collect();
@@ -407,7 +407,7 @@ pub fn get_processed_transaction(url: &str, tx_id: String) -> Result<ProcessedTr
         return Err(anyhow!("{}", e));
     }
 
-    let interval = 2;
+    let interval = 1;
     let mut wait_time = 0;
     while let Ok(Value::Null) = processed_tx {
         debug!(

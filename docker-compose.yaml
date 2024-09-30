@@ -2,7 +2,7 @@
 services:
   init:
     platform: linux/amd64
-    image: ghcr.io/arch-network/validator:v0.2.1
+    image: ghcr.io/arch-network/validator:v0.2.3
     volumes:
       - ./arch/.arch-data:/arch_data
       - ./arch/.arch-data/bootnode:/bootnode_data
@@ -13,7 +13,7 @@ services:
 
   bootnode:
     platform: linux/amd64
-    image: ghcr.io/arch-network/bootnode:v0.2.1
+    image: ghcr.io/arch-network/bootnode:v0.2.3
     command: /usr/local/bin/bootnode.sh
     ports:
       - 19001:19001
@@ -34,7 +34,7 @@ services:
 
   leader:
     platform: linux/amd64
-    image: ghcr.io/arch-network/validator:v0.2.1
+    image: ghcr.io/arch-network/validator:v0.2.3
     ports:
       - 19002:19002
       - 9002:9002
@@ -49,11 +49,11 @@ services:
       RPC_BIND_IP: 0.0.0.0
       RPC_BIND_PORT: 9002
       P2P_BIND_PORT: 19002
-      BITCOIN_RPC_ENDPOINT: bitcoin-node.dev.aws.archnetwork.xyz
+      BITCOIN_RPC_ENDPOINT: bitcoin
       BITCOIN_RPC_PORT: 18443
-      BITCOIN_RPC_USERNAME: bitcoin
-      BITCOIN_RPC_PASSWORD: 428bae8f3c94f8c39c50757fc89c39bc7e6ebc70ebf8f618
-      BITCOIN_RPC_WALLET: "devwallet"
+      BITCOIN_RPC_USERNAME: user
+      BITCOIN_RPC_PASSWORD: password
+      BITCOIN_RPC_WALLET: "testwallet"
     volumes:
       - ./arch/.arch-data:/arch_data
       - ./arch/.arch-data/bootnode:/bootnode_data:ro
@@ -65,7 +65,7 @@ services:
 
   validator-1:
     platform: linux/amd64
-    image: ghcr.io/arch-network/validator:v0.2.1
+    image: ghcr.io/arch-network/validator:v0.2.3
     command: /usr/local/bin/validator.sh
     environment:
       VALIDATOR_NUMBER: "1"
@@ -78,11 +78,11 @@ services:
       RPC_BIND_IP: 0.0.0.0
       RPC_BIND_PORT: 9003
       P2P_BIND_PORT: 19003
-      BITCOIN_RPC_ENDPOINT: bitcoin-node.dev.aws.archnetwork.xyz
+      BITCOIN_RPC_ENDPOINT: bitcoin
       BITCOIN_RPC_PORT: 18443
-      BITCOIN_RPC_USERNAME: bitcoin
-      BITCOIN_RPC_PASSWORD: 428bae8f3c94f8c39c50757fc89c39bc7e6ebc70ebf8f618
-      BITCOIN_RPC_WALLET: "devwallet"
+      BITCOIN_RPC_USERNAME: user
+      BITCOIN_RPC_PASSWORD: password
+      BITCOIN_RPC_WALLET: "testwallet"
     volumes:
       - ./arch/.arch-data/validators:/arch_data
       - ./arch/.arch-data/bootnode:/bootnode_data:ro
@@ -98,7 +98,7 @@ services:
 
   validator-2:
     platform: linux/amd64
-    image: ghcr.io/arch-network/validator:v0.2.1
+    image: ghcr.io/arch-network/validator:v0.2.3
     command: /usr/local/bin/validator.sh
     environment:
       VALIDATOR_NUMBER: "2"
@@ -111,11 +111,11 @@ services:
       RPC_BIND_IP: 0.0.0.0
       RPC_BIND_PORT: 9004
       P2P_BIND_PORT: 19004
-      BITCOIN_RPC_ENDPOINT: bitcoin-node.dev.aws.archnetwork.xyz
+      BITCOIN_RPC_ENDPOINT: bitcoin
       BITCOIN_RPC_PORT: 18443
-      BITCOIN_RPC_USERNAME: bitcoin
-      BITCOIN_RPC_PASSWORD: 428bae8f3c94f8c39c50757fc89c39bc7e6ebc70ebf8f618
-      BITCOIN_RPC_WALLET: "devwallet"
+      BITCOIN_RPC_USERNAME: user
+      BITCOIN_RPC_PASSWORD: password
+      BITCOIN_RPC_WALLET: "testwallet"
     volumes:
       - ./arch/.arch-data/validators:/arch_data
       - ./arch/.arch-data/bootnode:/bootnode_data:ro
@@ -127,6 +127,96 @@ services:
     ports:
       - 19004:19004
       - 9004:9004
+    networks:
+      - arch-network
+
+  bitcoin:
+    image: ${BITCOIN_IMAGE:-bitcoin}
+    platform: linux/amd64
+    container_name: bitcoin
+    restart: always
+    ports:
+      - "18443:18443"
+      - "28332:28332"
+    stop_grace_period: 2s
+    networks:
+      - arch-network
+
+  fulcrum:
+    image: ${FULCRUM_IMAGE:-fulcrum}
+    container_name: fulcrum
+    platform: linux/amd64
+    depends_on:
+      - bitcoin
+    expose:
+      - "50001"
+      - "50002"
+    ports:
+      - 50001:50001
+      - 50002:50002
+    restart: always
+    stop_grace_period: 2s
+    networks:
+      - arch-network
+
+  mempool-frontend:
+    environment:
+      FRONTEND_HTTP_PORT: "8080"
+      BACKEND_MAINNET_HTTP_HOST: "mempool-backend"
+    image: mempool/frontend:latest
+    depends_on:
+      - mempool-backend
+    container_name: mempool-frontend
+    user: "1000:1000"
+    restart: always
+    stop_grace_period: 2s
+    command: "./wait-for mempool-db:3306 --timeout=720 -- nginx -g 'daemon off;'"
+    ports:
+      - 1080:8080
+    networks:
+      - arch-network
+
+  mempool-backend:
+    environment:
+      MEMPOOL_BACKEND: "electrum"
+      ELECTRUM_HOST: "fulcrum"
+      ELECTRUM_PORT: "50001"
+      ELECTRUM_TLS_ENABLED: "false"
+      CORE_RPC_HOST: "bitcoin"
+      CORE_RPC_PORT: "18443"
+      CORE_RPC_USERNAME: "user"
+      CORE_RPC_PASSWORD: "password"
+      DATABASE_ENABLED: "true"
+      DATABASE_HOST: "mempool-db"
+      DATABASE_DATABASE: "mempool"
+      DATABASE_USERNAME: "mempool"
+      DATABASE_PASSWORD: "mempool"
+      STATISTICS_ENABLED: "true"
+    image: mempool/backend:latest
+    depends_on:
+      - mempool-db
+    container_name: mempool-backend
+    user: "1000:1000"
+    restart: on-failure
+    stop_grace_period: 2s
+    command: "./wait-for-it.sh mempool-db:3306 --timeout=720 --strict -- ./start.sh"
+    volumes:
+      - .datapi/:/backend/cache
+    networks:
+      - arch-network
+
+  mempool-db:
+    environment:
+      MYSQL_DATABASE: "mempool"
+      MYSQL_USER: "mempool"
+      MYSQL_PASSWORD: "mempool"
+      MYSQL_ROOT_PASSWORD: "admin"
+    image: mariadb:10.5.8
+    depends_on:
+      - fulcrum
+    container_name: mempool-db
+    restart: always
+    stop_grace_period: 2s
     networks:
       - arch-network
 
