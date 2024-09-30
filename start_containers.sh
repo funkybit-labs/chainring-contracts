@@ -37,6 +37,7 @@ do
       continue
     fi
 
+  sleep 2
   result=$(curl -sLX POST -H 'Content-Type: application/json' -d '{"jsonrpc":"2.0","id":"id","method":"start_dkg","params":[]}' http://localhost:9002/ | jq .error)
 
   if [ "$result" == "null" ]
@@ -47,7 +48,7 @@ do
     continue
   fi
 
-  sleep 3
+  sleep 4
   echo "Verifying DKG"
   result=$(curl -sLX POST -H 'Content-Type: application/json' -d '{"jsonrpc":"2.0","id":"id","method":"get_account_address","params":[253,202,185,92,100,57,129,202,241,10,232,30,20,105,68,186,183,157,236,0,154,126,186,31,35,100,165,246,138,250,58,219]}' http://localhost:9002/ | jq .error)
 
