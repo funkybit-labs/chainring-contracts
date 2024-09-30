@@ -7,7 +7,7 @@ do
   echo "Attempt $loop"
   sleep 2
   docker compose -p arch-bitcoin-network down --remove-orphans
-  rm -rf arch/.arch-data
+  ${SUDO:-} rm -rf arch/.arch-data
   sleep 1
   if docker compose -p arch-bitcoin-network up -d; then
       echo "Docker success!"
