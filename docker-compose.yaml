@@ -2,7 +2,7 @@
 services:
   init:
     platform: linux/amd64
-    image: ghcr.io/arch-network/validator:v0.2.1
+    image: ghcr.io/arch-network/validator:v0.2.3
     volumes:
       - ./arch/.arch-data:/arch_data
       - ./arch/.arch-data/bootnode:/bootnode_data
@@ -13,7 +13,7 @@ services:
 
   bootnode:
     platform: linux/amd64
-    image: ghcr.io/arch-network/bootnode:v0.2.1
+    image: ghcr.io/arch-network/bootnode:v0.2.3
     command: /usr/local/bin/bootnode.sh
     ports:
       - 19001:19001
@@ -34,7 +34,7 @@ services:
 
   leader:
     platform: linux/amd64
-    image: ghcr.io/arch-network/validator:v0.2.1
+    image: ghcr.io/arch-network/validator:v0.2.3
     ports:
       - 19002:19002
       - 9002:9002
@@ -65,7 +65,7 @@ services:
 
   validator-1:
     platform: linux/amd64
-    image: ghcr.io/arch-network/validator:v0.2.1
+    image: ghcr.io/arch-network/validator:v0.2.3
     command: /usr/local/bin/validator.sh
     environment:
       VALIDATOR_NUMBER: "1"
@@ -98,7 +98,7 @@ services:
 
   validator-2:
     platform: linux/amd64
-    image: ghcr.io/arch-network/validator:v0.2.1
+    image: ghcr.io/arch-network/validator:v0.2.3
     command: /usr/local/bin/validator.sh
     environment:
       VALIDATOR_NUMBER: "2"

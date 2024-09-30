@@ -16,13 +16,26 @@ do
       continue
   fi
 
-  for countdown in {20..0}
-  do
-     sleep 1
-     echo -ne "Waiting for Arch Network to come up - $countdown  \r"
-  done
-  echo ""
-  echo "Sending DKG command"
+  # wait till we see Ready for DKG
+  ready="0"
+  echo "Waiting for leader to be ready for DKG"
+  for countdown in {30..0}
+    do
+      sleep 1
+      ready=$(docker logs arch-bitcoin-network-leader-1 | grep -c "Ready to start DKG")
+      if [ "$ready" == "0" ]
+        then
+           echo "Not ready $countdown"
+        else
+           echo "DKG is ready"
+           break
+        fi
+    done
+
+  if [ "$ready" == "0" ]
+    then
+      continue
+    fi
 
   result=$(curl -sLX POST -H 'Content-Type: application/json' -d '{"jsonrpc":"2.0","id":"id","method":"start_dkg","params":[]}' http://localhost:9002/ | jq .error)
 
@@ -46,7 +59,7 @@ do
     continue
   fi
 
-  # wait till we see blocks being processed
+  # wait till we see ready for network
   ready="0"
   echo "Waiting for network to reach ready state"
   for countdown in {25..0}
@@ -64,8 +77,27 @@ do
   if [ "$ready" == "0" ]
     then
       continue
-    else
+    fi
+
+  num_blocks="0"
+  echo "Waiting for multiple blocks to be processed"
+  for countdown in {30..0}
+    do
+      sleep 1
+      num_blocks=$(docker logs arch-bitcoin-network-leader-1 | grep -c "Starting block")
+      if [ "$num_blocks" -gt "3" ]
+        then
+           echo "$num_blocks blocks processed"
+           break
+        else
+           echo "Not ready $countdown"
+        fi
+    done
+
+  if [ "$num_blocks" -gt "3" ]
+    then
       break
     fi
+
 done
-echo -e "\nDone!"
+echo "Done!"
