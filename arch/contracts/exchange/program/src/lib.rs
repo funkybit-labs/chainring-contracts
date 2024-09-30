@@ -14,6 +14,9 @@ use sha256::digest;
 use bitcoin::{address::Address, Amount, Transaction, TxOut};
 use std::str::FromStr;
 use std::collections::HashMap;
+use shared::create_bitcoin_withdrawal_message;
+use shared::sig::BitcoinSignatureVerification;
+use shared::address::BitcoinAddress;
 
 const ERROR_INVALID_ADDRESS_INDEX: u32 = 601;
 const ERROR_INVALID_ACCOUNT_INDEX: u32 = 602;
@@ -27,6 +30,7 @@ const ERROR_ALREADY_INITIALIZED: u32 = 609;
 const ERROR_PROGRAM_STATE_MISMATCH: u32 = 610;
 const ERROR_NO_OUTPUTS_ALLOWED: u32 = 611;
 const ERROR_INVALID_ADDRESS: u32 = 612;
+const ERROR_SIGNATURE_NOT_VALID: u32 = 613;
 
 
 entrypoint!(process_instruction);
@@ -103,6 +107,8 @@ pub struct Withdrawal {
     pub address_index: u32,
     pub amount: u64,
     pub fee_amount: u64,
+    pub signature: Vec<u8>,
+    pub timestamp: i64,
 }
 
 #[derive(Clone, BorshSerialize, BorshDeserialize)]
@@ -461,6 +467,7 @@ fn verify_decrements(state: &TokenBalances, adjustments: Vec<Adjustment>) -> Res
     }
     Ok(())
 }
+
 fn handle_withdrawals(
     mut state: TokenBalances,
     withdrawals: Vec<Withdrawal>,
@@ -485,6 +492,21 @@ fn handle_withdrawals(
                 }
                 state.balances[FEE_ADDRESS_INDEX as usize].balance += withdrawal.fee_amount
             }
+            let message = create_bitcoin_withdrawal_message(
+                withdrawal.amount,
+                "BTC:0",
+                &state.balances[index].address,
+                withdrawal.timestamp
+            );
+            let bitcoin_address = BitcoinAddress::new(&state.balances[index].address).unwrap();
+            if !BitcoinSignatureVerification::verify_message(
+                &bitcoin_address,
+                withdrawal.signature.as_slice(),
+                message.as_slice()
+            ) {
+                return Err(ProgramError::Custom(ERROR_SIGNATURE_NOT_VALID))
+            }
+
             tx_outs.push(
                 TxOut {
                     value: Amount::from_sat(withdrawal.amount - withdrawal.fee_amount),

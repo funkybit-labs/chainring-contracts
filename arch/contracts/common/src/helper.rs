@@ -2,7 +2,6 @@
 use anyhow::{anyhow, Result};
 use bitcoin::{absolute::LockTime, address::Address, key::{TapTweak, TweakedKeypair}, secp256k1::{self, Secp256k1}, sighash::{Prevouts, SighashCache}, transaction::Version, Amount, OutPoint, ScriptBuf, Sequence, TapSighashType, Transaction, TxIn, Witness, TxOut, Txid};
 use bitcoincore_rpc::{Auth, Client, RawTx, RpcApi};
-use env_logger;
 use log::{debug, error, info, warn};
 use serde::Deserialize;
 use serde::Serialize;

@@ -6,6 +6,7 @@ edition = "2021"
 [dependencies]
 common = { path = "../common" }
 arch_program = { path = "../../program" }
+shared = { path = "shared" }
 hex = "0.4.3"
 borsh = { version = "1.4.0", features = ["derive"] }
 bitcoin = { version = "0.31.0", features = ["serde", "rand"] }
@@ -18,3 +19,4 @@ ctor = { version = "0.2.8", features = [] }
 
 [dev-dependencies]
 serial_test = "3.1.1"
+bip322 = "0.0.7"
