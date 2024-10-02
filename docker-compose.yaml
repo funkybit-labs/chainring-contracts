@@ -142,18 +142,35 @@ services:
     networks:
       - arch-network
 
-  fulcrum:
-    image: ${FULCRUM_IMAGE:-fulcrum}
-    container_name: fulcrum
+  electrs:
+    image: mempool/electrs:v3.0.0
+    container_name: electrs
     platform: linux/amd64
     depends_on:
       - bitcoin
     expose:
+      - "3001"
       - "50001"
-      - "50002"
     ports:
       - 50001:50001
-      - 50002:50002
+      - 3001:3001
+    entrypoint: /bin/electrs
+    command: |
+      --jsonrpc-import
+      --network=regtest
+      --daemon-rpc-addr=bitcoin:18443
+      --lightmode
+      --index-unspendables
+      --utxos-limit=100000
+      --electrum-txs-limit=100000
+      --address-search
+      --cookie=user:password
+      --cors='*'
+      --http-addr=0.0.0.0:3001
+      --electrum-rpc-addr=0.0.0.0:50001
+      -vvvv
+    volumes:
+      - electrs_data:/data/db
     restart: always
     stop_grace_period: 2s
     networks:
@@ -163,7 +180,7 @@ services:
     environment:
       FRONTEND_HTTP_PORT: "8080"
       BACKEND_MAINNET_HTTP_HOST: "mempool-backend"
-    image: mempool/frontend:latest
+    image: mempool/frontend:v3.0.1
     depends_on:
       - mempool-backend
     container_name: mempool-frontend
@@ -178,8 +195,9 @@ services:
 
   mempool-backend:
     environment:
-      MEMPOOL_BACKEND: "electrum"
-      ELECTRUM_HOST: "fulcrum"
+      MEMPOOL_BACKEND: "esplora"
+      ESPLORA_REST_API_URL: "http://electrs:3001"
+      ELECTRUM_HOST: "electrs"
       ELECTRUM_PORT: "50001"
       ELECTRUM_TLS_ENABLED: "false"
       CORE_RPC_HOST: "bitcoin"
@@ -192,7 +210,7 @@ services:
       DATABASE_USERNAME: "mempool"
       DATABASE_PASSWORD: "mempool"
       STATISTICS_ENABLED: "true"
-    image: mempool/backend:latest
+    image: mempool/backend:v3.0.1
     depends_on:
       - mempool-db
     container_name: mempool-backend
@@ -213,7 +231,7 @@ services:
       MYSQL_ROOT_PASSWORD: "admin"
     image: mariadb:10.5.8
     depends_on:
-      - fulcrum
+      - electrs
     container_name: mempool-db
     restart: always
     stop_grace_period: 2s
@@ -227,3 +245,6 @@ networks:
       config:
         - subnet: 172.30.0.0/24
           gateway: 172.30.0.1
+
+volumes:
+  electrs_data:
