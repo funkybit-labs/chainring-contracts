@@ -102,7 +102,7 @@ do
 
 done
 
-echo "Patching mempol-frontend Nginx config"
+echo "Patching mempool-frontend Nginx config"
 # We are patching nginx config of mempool-frontend container to mimic production deployment of mempool
 # in order to forward certain API calls to electrs
 #
