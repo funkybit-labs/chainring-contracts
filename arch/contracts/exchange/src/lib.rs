@@ -1,3 +1,4 @@
+
 /// Running Tests
 ///
 #[cfg(test)]
@@ -9,10 +10,11 @@ mod tests {
     use std::{fmt, fs};
     use std::str::FromStr;
     use bitcoin::key::UntweakedKeypair;
-    use bitcoin::{Address, Amount, OutPoint, ScriptBuf, Sequence, Transaction, Txid, TxIn, Witness};
+    use bitcoin::{Address, Amount, Network, OutPoint, PrivateKey, ScriptBuf, Sequence, Transaction, Txid, TxIn, Witness};
     use bitcoin::absolute::LockTime;
     use bitcoin::transaction::Version;
     use bitcoincore_rpc::{Auth, Client, RawTx, RpcApi};
+    use bip322;
 
     fn cleanup_account_keys() {
         for file in vec![WALLET1_FILE_PATH, WALLET2_FILE_PATH, SUBMITTER_FILE_PATH, FEE_ACCOUNT_FILE_PATH] {
@@ -95,6 +97,8 @@ mod tests {
         pub address_index: u32,
         pub amount: u64,
         pub fee_amount: u64,
+        pub signature: Vec<u8>,
+        pub timestamp: i64,
     }
 
     #[derive(Clone, BorshSerialize, BorshDeserialize)]
@@ -180,6 +184,7 @@ mod tests {
     }
 
     use lazy_static::lazy_static;
+    use shared::create_bitcoin_withdrawal_message;
 
     lazy_static! {
         static ref SETUP: Setup = Setup::init();
@@ -223,7 +228,8 @@ mod tests {
         );
 
 
-        let (withdraw_tx, change_amount) = prepare_withdrawal(
+        let (withdraw_tx, change_amount, signature, timestamp) = prepare_withdrawal(
+            WALLET1_FILE_PATH,
             5000,
             1500,
             &txid,
@@ -238,6 +244,8 @@ mod tests {
                     address_index: 1,
                     amount: 5500,
                     fee_amount: 500,
+                    signature,
+                    timestamp
                 }],
             }],
             change_amount,
@@ -1007,13 +1015,18 @@ mod tests {
         return (txid.to_string(), vout)
     }
 
+    use std::borrow::Borrow;
+
     fn prepare_withdrawal(
+        wallet: &str,
         amount: u64,
         estimated_fee: u64,
         txid: &str,
         vout: u32
-    ) -> (String, u64) {
+    ) -> (String, u64, Vec<u8>, i64) {
 
+        let wallet = CallerInfo::with_secret_key_file(wallet)
+            .expect("getting caller info should not fail");
         let userpass = Auth::UserPass(
             BITCOIN_NODE_USERNAME.to_string(),
             BITCOIN_NODE_PASSWORD.to_string(),
@@ -1049,7 +1062,18 @@ mod tests {
             lock_time: LockTime::ZERO,
         };
 
-        (tx.raw_hex(), change_amount)
+        let timestamp: i64 = 12345;
+
+        let binding = bip322::sign_simple(
+            &wallet.address,
+            &*create_bitcoin_withdrawal_message(amount, "BTC:0", &wallet.address.to_string(), timestamp),
+            PrivateKey::from_slice(wallet.key_pair.secret_key().secret_bytes().as_slice(), Network::Regtest).unwrap()
+        ).unwrap().borrow().to_vec();
+        let signature = binding.first().unwrap();
+        let mut rearranged = vec!(signature[64] + 27);
+        rearranged.extend_from_slice(&signature[..64]);
+
+        (tx.raw_hex(), change_amount, rearranged, timestamp)
     }
 
     fn delete_secret_file(file_path: &str) {

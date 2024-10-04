@@ -2,5 +2,8 @@
 resolver = "2"
 
 members = [ 
-    "exchange", "common"
+    "exchange", "common", "exchange/shared"
 ]
+
+[patch.crates-io]
+curve25519-dalek = { path = "../../curve25519-dalek-3.2.1" }
