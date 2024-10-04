@@ -206,6 +206,7 @@ dependencies = [
  "arch_program",
  "bitcoin",
  "borsh",
+ "hex",
  "sha256",
 ]
 

@@ -292,7 +292,7 @@ pub fn deploy_program_txs(program_keypair: UntweakedKeypair, elf_path: &str) -> 
                         .to_string()
                 })
                 .collect::<Vec<String>>();
-            std::thread::sleep(std::time::Duration::from_secs(2));
+            std::thread::sleep(std::time::Duration::from_secs(3));
             ids
         })
         .collect::<Vec<Vec<String>>>().into_iter().flatten().collect();
@@ -435,6 +435,16 @@ pub fn get_processed_transaction(url: &str, tx_id: String) -> Result<ProcessedTr
     Ok(processed_tx)
 }
 
+fn mine(rpc: &Client) {
+    let generate_to_address =  Address::from_str("bcrt1q3nyukkpkg6yj0y5tj6nj80dh67m30p963mzxy7")
+        .unwrap()
+        .require_network(bitcoin::Network::Regtest)
+        .unwrap();
+    rpc
+        .generate_to_address(1, &generate_to_address)
+        .expect("failed to mine block");
+}
+
 pub fn prepare_fees() -> String {
     let userpass = Auth::UserPass(
         BITCOIN_NODE_USERNAME.to_string(),
@@ -525,6 +535,8 @@ pub fn send_utxo(pubkey: Pubkey) -> (String, u32) {
         .require_network(bitcoin::Network::Regtest)
         .unwrap();
 
+    mine(&rpc);
+
     info!("Sending UTXO to account address: {}", address);
 
     let txid = rpc
@@ -539,6 +551,8 @@ pub fn send_utxo(pubkey: Pubkey) -> (String, u32) {
             None,
         )
         .expect("Failed to send SATs to address");
+
+    mine(&rpc);
 
     let sent_tx = rpc
         .get_raw_transaction(&txid, None)
