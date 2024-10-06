@@ -97,4 +97,18 @@ impl CallerInfo {
             address,
         })
     }
+
+    pub fn generate_new() -> Result<CallerInfo> {
+        let secp = Secp256k1::new();
+        let (secret_key, _) = secp.generate_keypair(&mut OsRng);
+        let key_pair = UntweakedKeypair::from_secret_key(&secp, &secret_key);
+        let (public_key, parity) = XOnlyPublicKey::from_keypair(&key_pair);
+        let address = Address::p2tr(&secp, public_key, None, bitcoin::Network::Regtest);
+        Ok(CallerInfo {
+            key_pair,
+            public_key,
+            parity,
+            address,
+        })
+    }
 }
