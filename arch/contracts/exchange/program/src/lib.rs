@@ -28,6 +28,8 @@ const ERROR_ALREADY_INITIALIZED: u32 = 609;
 const ERROR_PROGRAM_STATE_MISMATCH: u32 = 610;
 const ERROR_NO_OUTPUTS_ALLOWED: u32 = 611;
 const ERROR_INVALID_ADDRESS: u32 = 612;
+const ERROR_INVALID_SIGNER: u32 = 613;
+const ERROR_VALUE_TOO_LONG: u32 = 613;
 
 
 entrypoint!(process_instruction);
@@ -85,14 +87,31 @@ impl NetworkType {
     }
 }
 
-const MAX_ADDRESS_LENGTH: usize = 92;
-const MAX_TOKEN_ID_LENGTH: usize = 32;
-const TOKEN_STATE_HEADER_SIZE: usize = 4 + 32 + MAX_TOKEN_ID_LENGTH + 4;
-const BALANCE_SIZE: usize  = MAX_ADDRESS_LENGTH + 8;
-const OFFSET_NETWORK_TYPE: usize = 4 + MAX_ADDRESS_LENGTH * 2;
-const OFFSET_SETTLEMENT_HASH: usize  = 4 + 1 + MAX_ADDRESS_LENGTH * 2;
-const OFFSET_LAST_SETTLEMENT_HASH: usize = 4 + 1 + 32 + MAX_ADDRESS_LENGTH * 2;
-const OFFSET_LAST_WITHDRAWAL_HASH: usize = 4 + 1 + 32 + 32 + MAX_ADDRESS_LENGTH * 2;
+const VERSION_SIZE: usize = 4;
+const PUBKEY_SIZE: usize =  32;
+const PROGRAM_PUBKEY_OFFSET: usize = VERSION_SIZE;
+const MAX_TOKEN_ID_SIZE: usize = 32;
+const TOKEN_ID_OFFSET: usize = PROGRAM_PUBKEY_OFFSET + PUBKEY_SIZE;
+const BALANCE_COUNT_SIZE: usize = 4;
+const BALANCE_COUNT_OFFSET: usize = TOKEN_ID_OFFSET + MAX_TOKEN_ID_SIZE;
+const TOKEN_STATE_HEADER_SIZE: usize = VERSION_SIZE + PUBKEY_SIZE + MAX_TOKEN_ID_SIZE + BALANCE_COUNT_SIZE;
+
+
+const MAX_ADDRESS_SIZE: usize = 92;
+const BALANCE_AMOUNT_SIZE: usize = 8;
+const BALANCE_AMOUNT_OFFSET: usize = MAX_ADDRESS_SIZE;
+const BALANCE_SIZE: usize  = MAX_ADDRESS_SIZE + BALANCE_AMOUNT_SIZE;
+
+const NETWORK_TYPE_SIZE: usize = 1;
+const HASH_SIZE: usize = 32;
+
+const FEE_ACCOUNT_OFFSET: usize = VERSION_SIZE;
+const PROGRAM_CHANGE_ADDRESS_OFFSET: usize = FEE_ACCOUNT_OFFSET + MAX_ADDRESS_SIZE;
+const NETWORK_TYPE_OFFSET: usize = PROGRAM_CHANGE_ADDRESS_OFFSET + MAX_ADDRESS_SIZE;
+
+const SETTLEMENT_HASH_OFFSET: usize  = NETWORK_TYPE_OFFSET + NETWORK_TYPE_SIZE;
+const LAST_SETTLEMENT_HASH_OFFSET: usize = SETTLEMENT_HASH_OFFSET + HASH_SIZE;
+const LAST_WITHDRAWAL_HASH_OFFSET: usize = LAST_SETTLEMENT_HASH_OFFSET + HASH_SIZE;
 
 #[derive(Clone, Debug)]
 pub struct Balance {
@@ -101,33 +120,24 @@ pub struct Balance {
 }
 
 #[derive(Clone, Debug)]
-pub struct TokenBalances {
+pub struct TokenState {
     pub version: u32,
     pub program_state_account: Pubkey,
     pub token_id: String,
     pub balances: Vec<Balance>,
 }
 
-impl TokenBalances {
-    pub fn to_vec(&self) -> Vec<u8> {
-        let mut serialized = vec![];
-
-        serialized.extend(self.version.to_le_bytes());
-        serialized.extend(self.program_state_account.serialize());
-        let mut tmp = [0u8; MAX_TOKEN_ID_LENGTH];
-        let bytes = self.token_id.as_bytes();
-        tmp[..bytes.len()].copy_from_slice(bytes);
-        serialized.extend(tmp.as_slice());
-        serialized.extend((self.balances.len() as u32).to_le_bytes());
-        for balance in self.balances.iter() {
-            serialized.extend(&balance.to_vec());
-        }
-
-        serialized
+impl TokenState {
+    pub fn initialize(account: &AccountInfo, token_id: &str, fee_account_address: &str, pubkey: &Pubkey) -> Result<(), ProgramError> {
+        Self::grow_balance_accounts_if_needed(account, 1)?;
+        Self::set_program_account(account, pubkey)?;
+        set_string(account, TOKEN_ID_OFFSET, token_id, MAX_TOKEN_ID_SIZE)?;
+        Self::set_num_balances(account, 1)?;
+        Balance::set_wallet_address(account, 0, fee_account_address)
     }
 
     pub fn get_num_balances(account: &AccountInfo) -> Result<usize, ProgramError> {
-        let offset = TOKEN_STATE_HEADER_SIZE - 4;
+        let offset = BALANCE_COUNT_OFFSET;
         Ok(u32::from_le_bytes(
             account.data.borrow()[offset..offset+4]
                 .try_into()
@@ -136,22 +146,20 @@ impl TokenBalances {
     }
 
     pub fn set_num_balances(account: &AccountInfo, num_balances: usize) -> Result<(), ProgramError> {
-        let offset = TOKEN_STATE_HEADER_SIZE - 4;
+        let offset = BALANCE_COUNT_OFFSET;
         let mut data = account.data.try_borrow_mut().map_err(|_| ProgramError::InvalidAccountData)?;
         Ok(data[offset..offset+4].copy_from_slice((num_balances as u32).to_le_bytes().as_slice()))
     }
 
     pub fn get_token_id(account: &AccountInfo) -> Result<String, ProgramError> {
-        let mut tmp = [0u8; MAX_TOKEN_ID_LENGTH];
-        let offset = MAX_TOKEN_ID_LENGTH + 36;
-        tmp[..MAX_TOKEN_ID_LENGTH].copy_from_slice(&account.data.borrow()[36..offset]);
-        let pos = tmp.iter().position(|&r| r == 0).unwrap_or(MAX_TOKEN_ID_LENGTH);
+        let mut tmp = [0u8; MAX_TOKEN_ID_SIZE];
+        tmp[..MAX_TOKEN_ID_SIZE].copy_from_slice(&account.data.borrow()[TOKEN_ID_OFFSET..TOKEN_ID_OFFSET+MAX_TOKEN_ID_SIZE]);
+        let pos = tmp.iter().position(|&r| r == 0).unwrap_or(MAX_TOKEN_ID_SIZE);
         String::from_utf8(tmp[..pos].to_vec()).map_err(|_| ProgramError::InvalidAccountData)
     }
 
-
     pub fn get_program_state_account_key(account: &AccountInfo) -> Result<Pubkey, ProgramError> {
-        Ok(Pubkey::from_slice(account.data.borrow()[4..36]
+        Ok(Pubkey::from_slice(account.data.borrow()[PROGRAM_PUBKEY_OFFSET..PROGRAM_PUBKEY_OFFSET+PUBKEY_SIZE]
             .try_into().map_err(|_| ProgramError::InvalidAccountData)?))
     }
 
@@ -159,39 +167,41 @@ impl TokenBalances {
         if index as usize >= accounts.len() {
             return Err(ProgramError::Custom(ERROR_INVALID_ACCOUNT_INDEX));
         }
-        if TokenBalances::get_program_state_account_key(&accounts[index as usize])? != *accounts[0].key {
+        if TokenState::get_program_state_account_key(&accounts[index as usize])? != *accounts[0].key {
             return Err(ProgramError::Custom(ERROR_PROGRAM_STATE_MISMATCH));
         }
         Ok(())
     }
 
-    fn grow_account_if_needed(account: &AccountInfo, additional_len: usize) -> Result<(), ProgramError> {
+    fn grow_balance_accounts_if_needed(account: &AccountInfo, additional_balances: usize) -> Result<(), ProgramError> {
         let original_data_len = unsafe { account.original_data_len() };
-        let num_balances = TokenBalances::get_num_balances(account)?;
-        if TOKEN_STATE_HEADER_SIZE + num_balances * BALANCE_SIZE + additional_len > original_data_len {
+
+        let num_balances = if original_data_len > 0 {
+            TokenState::get_num_balances(account)?
+        } else {
+            0
+        };
+        if TOKEN_STATE_HEADER_SIZE + (num_balances + additional_balances) * BALANCE_SIZE > original_data_len {
             msg!("Growing token account");
             account.realloc(original_data_len + entrypoint::MAX_PERMITTED_DATA_INCREASE as usize, true)?
         }
         Ok(())
     }
 
+    fn set_program_account(account: &AccountInfo, pubkey: &Pubkey) -> Result<(), ProgramError> {
+        let mut data = account.data.try_borrow_mut().map_err(|_| ProgramError::InvalidAccountData)?;
+        Ok(data[PROGRAM_PUBKEY_OFFSET..PROGRAM_PUBKEY_OFFSET+PUBKEY_SIZE].copy_from_slice(
+            pubkey.0.as_slice()
+        ))
+
+    }
+
 }
 
 impl Balance {
-    pub fn to_vec(&self) -> Vec<u8> {
-        let mut serialized = vec![];
-        let mut tmp = [0u8; MAX_ADDRESS_LENGTH];
-        let bytes = self.address.as_bytes();
-        tmp[..bytes.len()].copy_from_slice(bytes);
-
-        serialized.extend(tmp.as_slice());
-        serialized.extend(self.balance.to_le_bytes());
-
-        serialized
-    }
 
     pub fn get_wallet_balance(account: &AccountInfo, index: usize) -> Result<u64, ProgramError>  {
-        let offset = TOKEN_STATE_HEADER_SIZE + index * BALANCE_SIZE + MAX_ADDRESS_LENGTH;
+        let offset = TOKEN_STATE_HEADER_SIZE + index * BALANCE_SIZE + BALANCE_AMOUNT_OFFSET;
         Ok(u64::from_le_bytes(
             account.data.borrow()[offset..offset+8]
                 .try_into()
@@ -200,11 +210,16 @@ impl Balance {
     }
 
     pub fn set_wallet_balance(account: &AccountInfo, index: usize, balance: u64) -> Result<(), ProgramError> {
-        let offset = TOKEN_STATE_HEADER_SIZE + index * BALANCE_SIZE + MAX_ADDRESS_LENGTH;
+        let offset = TOKEN_STATE_HEADER_SIZE + index * BALANCE_SIZE + BALANCE_AMOUNT_OFFSET;
         let mut data = account.data.try_borrow_mut().map_err(|_| ProgramError::InvalidAccountData)?;
         Ok(data[offset..offset+8].copy_from_slice(
             balance.to_le_bytes().as_slice()
         ))
+    }
+
+    pub fn adjust_wallet_balance(account: &AccountInfo, index: usize, balance_adjustment: u64) -> Result<(), ProgramError> {
+        let current_balance = Self::get_wallet_balance(account, index)?;
+        Self::set_wallet_balance(account, index, current_balance + balance_adjustment)
     }
 
     pub fn get_wallet_address(account: &AccountInfo, index: usize) -> Result<String, ProgramError> {
@@ -212,10 +227,7 @@ impl Balance {
     }
 
     pub fn set_wallet_address(account: &AccountInfo, index: usize, address: &str) -> Result<(), ProgramError> {
-        let offset = TOKEN_STATE_HEADER_SIZE + index * BALANCE_SIZE;
-        let bytes = address.as_bytes();
-        let mut data = account.data.try_borrow_mut().map_err(|_| ProgramError::InvalidAccountData)?;
-        Ok(data[offset..offset+bytes.len()].copy_from_slice(bytes))
+        set_string(account, TOKEN_STATE_HEADER_SIZE + index * BALANCE_SIZE, address, MAX_ADDRESS_SIZE)
     }
 }
 
@@ -234,7 +246,7 @@ impl ProgramState {
     pub fn to_vec(&self) -> Vec<u8> {
         let mut serialized = vec![];
         serialized.extend(self.version.to_le_bytes());
-        let mut tmp = [0u8; MAX_ADDRESS_LENGTH];
+        let mut tmp = [0u8; MAX_ADDRESS_SIZE];
         let bytes = self.fee_account_address.as_bytes();
         tmp[..bytes.len()].copy_from_slice(self.fee_account_address.as_bytes());
         serialized.extend(tmp.as_slice());
@@ -249,44 +261,51 @@ impl ProgramState {
     }
 
     pub fn get_fee_account_address(account: &AccountInfo) -> Result<String, ProgramError> {
-        get_address(account, 4)
+        get_address(account, FEE_ACCOUNT_OFFSET)
     }
 
     pub fn get_program_change_address(account: &AccountInfo) -> Result<String, ProgramError> {
-        get_address(account, 4 + MAX_ADDRESS_LENGTH)
+        get_address(account, PROGRAM_CHANGE_ADDRESS_OFFSET)
     }
 
     pub fn get_network_type(account: &AccountInfo) -> NetworkType {
-        NetworkType::from_u8(account.data.borrow()[OFFSET_NETWORK_TYPE])
+        NetworkType::from_u8(account.data.borrow()[NETWORK_TYPE_OFFSET])
     }
 
     pub fn get_settlement_hash(account: &AccountInfo) -> Result<[u8; 32], ProgramError> {
-        hash_from_slice(account, OFFSET_SETTLEMENT_HASH)
+        hash_from_slice(account, SETTLEMENT_HASH_OFFSET)
     }
 
     pub fn clear_settlement_hash(account: &AccountInfo) -> Result<(), ProgramError> {
-        Self::set_settlement_hash(account, [0u8; 32])
+        Self::set_settlement_hash(account, [0u8; HASH_SIZE])
     }
 
     pub fn set_settlement_hash(account: &AccountInfo, hash: [u8; 32]) -> Result<(), ProgramError> {
         let mut data = account.data.try_borrow_mut().map_err(|_| ProgramError::InvalidAccountData)?;
-        Ok(data[OFFSET_SETTLEMENT_HASH..OFFSET_SETTLEMENT_HASH+32].copy_from_slice(
+        Ok(data[SETTLEMENT_HASH_OFFSET..SETTLEMENT_HASH_OFFSET+HASH_SIZE].copy_from_slice(
             hash.as_slice()
         ))
     }
 
     pub fn set_last_settlement_hash(account: &AccountInfo, hash: [u8; 32]) -> Result<(), ProgramError> {
         let mut data = account.data.try_borrow_mut().map_err(|_| ProgramError::InvalidAccountData)?;
-        Ok(data[OFFSET_LAST_SETTLEMENT_HASH..OFFSET_LAST_SETTLEMENT_HASH+32].copy_from_slice(
+        Ok(data[LAST_SETTLEMENT_HASH_OFFSET..LAST_SETTLEMENT_HASH_OFFSET+HASH_SIZE].copy_from_slice(
             hash.as_slice()
         ))
     }
 
     pub fn set_last_withdrawal_hash(account: &AccountInfo, hash: [u8; 32]) -> Result<(), ProgramError> {
         let mut data = account.data.try_borrow_mut().map_err(|_| ProgramError::InvalidAccountData)?;
-        Ok(data[OFFSET_LAST_WITHDRAWAL_HASH..OFFSET_LAST_WITHDRAWAL_HASH+32].copy_from_slice(
+        Ok(data[LAST_WITHDRAWAL_HASH_OFFSET..LAST_WITHDRAWAL_HASH_OFFSET+HASH_SIZE].copy_from_slice(
             hash.as_slice()
         ))
+    }
+
+    fn validate_signer(accounts: &[AccountInfo]) -> Result<(), ProgramError> {
+        if !accounts[0].is_signer {
+            return Err(ProgramError::Custom(ERROR_INVALID_SIGNER));
+        }
+        Ok(())
     }
 
 }
@@ -298,7 +317,7 @@ pub struct Adjustment {
 }
 
 #[derive(Clone, BorshSerialize, BorshDeserialize)]
-pub struct TokenBalanceSetup {
+pub struct TokenStateetup {
     pub account_index: u8,
     pub wallet_addresses: Vec<String>,
 }
@@ -336,7 +355,7 @@ pub struct InitTokenStateParams {
 
 #[derive(Clone, BorshSerialize, BorshDeserialize)]
 pub struct InitWalletBalancesParams {
-    pub token_balance_setups: Vec<TokenBalanceSetup>,
+    pub token_balance_setups: Vec<TokenStateetup>,
 }
 
 #[derive(Clone, BorshSerialize, BorshDeserialize)]
@@ -400,31 +419,32 @@ pub fn init_program_state(accounts: &[AccountInfo],
 
 pub fn init_token_state(accounts: &[AccountInfo],
                         params: &InitTokenStateParams) -> Result<(), ProgramError> {
+    ProgramState::validate_signer(accounts)?;
     let state_data: Vec<u8> = get_account_data(accounts, 1)?;
     if !state_data.is_empty() {
         return Err(ProgramError::Custom(ERROR_ALREADY_INITIALIZED));
     }
-    init_state_data(&accounts[1], TokenBalances {
-        version: 0,
-        program_state_account: *accounts[0].key,
-        token_id: params.token_id.clone(),
-        balances: vec![Balance{ address: ProgramState::get_fee_account_address(&accounts[0])?, balance: 0 }],
-    }.to_vec())
+    TokenState::initialize(
+        &accounts[1],
+        &params.token_id,
+        &ProgramState::get_fee_account_address(&accounts[0])?,
+        accounts[0].key,
+    )
 }
 
 pub fn init_wallet_balances(accounts: &[AccountInfo], params: &InitWalletBalancesParams) -> Result<(), ProgramError> {
     let network_type = ProgramState::get_network_type(&accounts[0]);
     for token_balance_setup in &params.token_balance_setups {
-        TokenBalances::validate_account(accounts, token_balance_setup.account_index)?;
+        TokenState::validate_account(accounts, token_balance_setup.account_index)?;
         let account = &accounts[token_balance_setup.account_index as usize];
-        TokenBalances::grow_account_if_needed(account, token_balance_setup.wallet_addresses.len() * BALANCE_SIZE)?;
-        let mut num_balances = TokenBalances::get_num_balances(account)?;
+        TokenState::grow_balance_accounts_if_needed(account, token_balance_setup.wallet_addresses.len())?;
+        let mut num_balances = TokenState::get_num_balances(account)?;
         for wallet_address in &token_balance_setup.wallet_addresses {
             validate_bitcoin_address(wallet_address, network_type.clone())?;
             Balance::set_wallet_address(account, num_balances, &wallet_address)?;
             num_balances += 1;
         }
-        TokenBalances::set_num_balances(account, num_balances)?;
+        TokenState::set_num_balances(account, num_balances)?;
     }
     Ok(())
 }
@@ -436,7 +456,7 @@ pub fn deposit_batch(accounts: &[AccountInfo],
         return Err(ProgramError::Custom(ERROR_SETTLEMENT_IN_PROGRESS));
     }
     for token_deposits in &params.token_deposits {
-        TokenBalances::validate_account(accounts, token_deposits.account_index)?;
+        TokenState::validate_account(accounts, token_deposits.account_index)?;
         handle_increments(&accounts[token_deposits.account_index as usize], token_deposits.clone().deposits)?;
     }
     Ok(())
@@ -453,7 +473,7 @@ pub fn withdraw_batch(program_id: &Pubkey, accounts: &[AccountInfo], params: &Wi
     let network_type = ProgramState::get_network_type(&accounts[0]);
 
     for token_withdrawals in &params.token_withdrawals {
-        TokenBalances::validate_account(accounts, token_withdrawals.account_index)?;
+        TokenState::validate_account(accounts, token_withdrawals.account_index)?;
         handle_withdrawals(
             &accounts[token_withdrawals.account_index as usize],
             token_withdrawals.clone().withdrawals,
@@ -507,7 +527,7 @@ pub fn submit_settlement_batch(accounts: &[AccountInfo], params: &SettlementBatc
     }
 
     for token_settlements in &params.settlements {
-        TokenBalances::validate_account(accounts, token_settlements.account_index)?;
+        TokenState::validate_account(accounts, token_settlements.account_index)?;
         let mut increments = if token_settlements.fee_amount > 0 {
             vec![Adjustment {
                 address_index: FEE_ADDRESS_INDEX,
@@ -533,11 +553,11 @@ pub fn prepare_settlement_batch(accounts: &[AccountInfo], params: &SettlementBat
     let mut netting_results: HashMap<String, i64> = HashMap::new();
 
     for token_settlements in &params.settlements {
-        TokenBalances::validate_account(accounts, token_settlements.account_index)?;
+        TokenState::validate_account(accounts, token_settlements.account_index)?;
         let increment_sum: u64 = token_settlements.clone().increments.into_iter().map(|x| x.amount).sum::<u64>() + token_settlements.fee_amount;
         let decrement_sum: u64 = token_settlements.clone().decrements.into_iter().map(|x| x.amount).sum::<u64>();
         verify_decrements(&accounts[token_settlements.account_index as usize], token_settlements.clone().decrements)?;
-        let running_netting_total = netting_results.entry(TokenBalances::get_token_id(&accounts[token_settlements.account_index as usize])?).or_insert(0);
+        let running_netting_total = netting_results.entry(TokenState::get_token_id(&accounts[token_settlements.account_index as usize])?).or_insert(0);
         *running_netting_total += increment_sum as i64 - decrement_sum as i64;
     }
 
@@ -571,7 +591,7 @@ fn handle_decrements(account: &AccountInfo, adjustments: Vec<Adjustment>) -> Res
 
 fn handle_adjustments(account: &AccountInfo, adjustments: Vec<Adjustment>, increment: bool) -> Result<(), ProgramError> {
     for adjustment in adjustments {
-        if adjustment.address_index as usize >= TokenBalances::get_num_balances(account)? {
+        if adjustment.address_index as usize >= TokenState::get_num_balances(account)? {
             return Err(ProgramError::Custom(ERROR_INVALID_ADDRESS_INDEX))
         } else {
             let index = adjustment.address_index as usize;
@@ -593,7 +613,7 @@ fn handle_adjustments(account: &AccountInfo, adjustments: Vec<Adjustment>, incre
 
 fn verify_decrements(account: &AccountInfo, adjustments: Vec<Adjustment>) -> Result<(), ProgramError>{
     for adjustment in adjustments {
-        if adjustment.address_index as usize >= TokenBalances::get_num_balances(account)? {
+        if adjustment.address_index as usize >= TokenState::get_num_balances(account)? {
             return Err(ProgramError::Custom(ERROR_INVALID_ADDRESS_INDEX))
         } else {
             let index = adjustment.address_index as usize;
@@ -613,7 +633,7 @@ fn handle_withdrawals(
     network_type: NetworkType,
 ) -> Result<(), ProgramError> {
     for withdrawal in withdrawals {
-        if withdrawal.address_index as usize >= TokenBalances::get_num_balances(account)? {
+        if withdrawal.address_index as usize >= TokenState::get_num_balances(account)? {
             return Err(ProgramError::Custom(ERROR_INVALID_ADDRESS_INDEX))
         } else {
             let index = withdrawal.address_index as usize;
@@ -627,7 +647,7 @@ fn handle_withdrawals(
                 if Balance::get_wallet_address(account, FEE_ADDRESS_INDEX as usize)? != fee_account_address {
                     return Err(ProgramError::Custom(ERROR_ADDRESS_MISMATCH))
                 }
-                Balance::set_wallet_balance(account, FEE_ADDRESS_INDEX as usize, Balance::get_wallet_balance(account, FEE_ADDRESS_INDEX as usize)? + withdrawal.fee_amount)?
+                Balance::adjust_wallet_balance(account, FEE_ADDRESS_INDEX as usize, withdrawal.fee_amount)?;
             }
             Balance::set_wallet_balance(account, index, current_balance)?;
             tx_outs.push(
@@ -685,15 +705,24 @@ fn get_account_data(accounts: &[AccountInfo], index: u8) -> Result<Vec<u8>, Prog
 }
 
 fn get_address(account: &AccountInfo, offset: usize) -> Result<String, ProgramError> {
-    let mut tmp = [0u8; MAX_ADDRESS_LENGTH];
-    tmp[..MAX_ADDRESS_LENGTH].copy_from_slice(&account.data.borrow()[offset..offset+MAX_ADDRESS_LENGTH]);
-    let pos = tmp.iter().position(|&r| r == 0).unwrap_or(MAX_ADDRESS_LENGTH);
+    let mut tmp = [0u8; MAX_ADDRESS_SIZE];
+    tmp[..MAX_ADDRESS_SIZE].copy_from_slice(&account.data.borrow()[offset..offset+MAX_ADDRESS_SIZE]);
+    let pos = tmp.iter().position(|&r| r == 0).unwrap_or(MAX_ADDRESS_SIZE);
     String::from_utf8(tmp[..pos].to_vec()).map_err(|_| ProgramError::InvalidAccountData)
 }
 
+pub fn set_string(account: &AccountInfo, offset: usize, string: &str, max_size: usize) -> Result<(), ProgramError> {
+    let bytes = string.as_bytes();
+    if bytes.len() >= max_size {
+        return Err(ProgramError::Custom(ERROR_VALUE_TOO_LONG));
+    }
+    let mut data = account.data.try_borrow_mut().map_err(|_| ProgramError::InvalidAccountData)?;
+    Ok(data[offset..offset+bytes.len()].copy_from_slice(bytes))
+}
+
 fn hash_from_slice(account: &AccountInfo, offset: usize) -> Result<[u8; 32], ProgramError> {
-    let mut tmp = [0u8; 32];
-    tmp[..32].copy_from_slice(account.data.borrow()[offset..offset+32]
+    let mut tmp = [0u8; HASH_SIZE];
+    tmp[..HASH_SIZE].copy_from_slice(account.data.borrow()[offset..offset+HASH_SIZE]
         .try_into().map_err(|_| ProgramError::InvalidAccountData)?);
     Ok(tmp)
 }

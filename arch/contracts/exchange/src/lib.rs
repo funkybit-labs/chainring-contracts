@@ -1125,7 +1125,6 @@ mod tests {
         expected: TokenBalances,
     ) {
         let (submitter_keypair, submitter_pubkey) = with_secret_key_file(SUBMITTER_FILE_PATH).unwrap();
-        let expected = expected.to_vec();
 
         debug!("Invoking contract to init token state");
         let (txid, _) = sign_and_send_instruction(
@@ -1154,7 +1153,7 @@ mod tests {
 
         let account = read_account_info(NODE1_ADDRESS, token_account.clone()).unwrap();
         assert_eq!(
-            expected, account.data
+            expected.to_vec(), TokenBalances::from_slice(account.data.as_slice()).to_vec()
         )
     }
 
