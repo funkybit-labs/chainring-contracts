@@ -389,6 +389,7 @@ dependencies = [
  "hex",
  "lazy_static",
  "log",
+ "model",
  "serial_test",
  "sha256",
 ]
@@ -771,6 +772,14 @@ dependencies = [
  "libc",
  "wasi",
  "windows-sys 0.52.0",
+]
+
+[[package]]
+name = "model"
+version = "0.1.0"
+dependencies = [
+ "arch_program",
+ "borsh",
 ]
 
 [[package]]
