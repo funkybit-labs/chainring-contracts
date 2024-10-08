@@ -5,8 +5,7 @@ mod tests {
     use common::constants::*;
     use arch_program::{pubkey::Pubkey, system_instruction::SystemInstruction, instruction::Instruction, account::AccountMeta};
     use common::helper::*;
-    use borsh::{BorshSerialize, BorshDeserialize};
-    use std::{fmt, fs};
+    use std::fs;
     use std::str::FromStr;
     use bitcoin::key::UntweakedKeypair;
     use bitcoin::{Address, Amount, OutPoint, ScriptBuf, Sequence, Transaction, Txid, TxIn, Witness};
@@ -28,163 +27,13 @@ mod tests {
     use log::{debug, warn};
     use sha256::digest;
     use common::models::CallerInfo;
+    use model::exchange::*;
 
     const TOKEN_FILE_PATHS: &'static [&'static str] = &["../../data/token1.json", "../../data/token2.json"];
     pub const SUBMITTER_FILE_PATH: &str = "../../data/submitter.json";
     pub const WALLET1_FILE_PATH: &str = "../../data/wallet1.json";
     pub const WALLET2_FILE_PATH: &str = "../../data/wallet2.json";
     pub const FEE_ACCOUNT_FILE_PATH: &str = "../../data/fee_account.json";
-
-    impl fmt::Display for Balance {
-        fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-            write!(f, "{} {}", self.address, self.balance)
-        }
-    }
-
-    #[derive(Clone, BorshSerialize, BorshDeserialize, PartialEq, Debug)]
-    pub enum NetworkType {
-        /// Mainnet Bitcoin.
-        Bitcoin,
-        /// Bitcoin's testnet network.
-        Testnet,
-        /// Bitcoin's signet network.
-        Signet,
-        /// Bitcoin's regtest network.
-        Regtest,
-    }
-
-    impl NetworkType {
-        pub fn to_vec(&self) -> Vec<u8> {
-            vec![
-                match self {
-                    Self::Bitcoin => 0,
-                    Self::Testnet => 1,
-                    Self::Signet => 2,
-                    Self::Regtest => 3
-                }
-            ]
-        }
-
-        pub fn from_u8(data: u8) -> Self {
-            match data {
-                0 => Self::Bitcoin,
-                1 => Self::Testnet,
-                2 => Self::Signet,
-                3 => Self::Regtest,
-                _ => Self::Bitcoin
-            }
-        }
-    }
-
-    #[derive(Clone, Debug)]
-    pub struct Balance {
-        pub address: String,
-        pub balance: u64,
-    }
-
-    #[derive(Clone, Debug)]
-    pub struct TokenBalances {
-        pub version: u32,
-        pub program_state_account: Pubkey,
-        pub token_id: String,
-        pub balances: Vec<Balance>,
-    }
-
-    #[derive(Clone, Debug)]
-    pub struct ProgramState {
-        pub version: u32,
-        pub fee_account_address: String,
-        pub program_change_address: String,
-        pub network_type: NetworkType,
-        pub settlement_batch_hash: [u8; 32],
-        pub last_settlement_batch_hash: [u8; 32],
-        pub last_withdrawal_batch_hash: [u8; 32],
-    }
-
-    #[derive(Clone, BorshSerialize, BorshDeserialize)]
-    pub struct Adjustment {
-        pub address_index: u32,
-        pub amount: u64,
-    }
-
-    #[derive(Clone, BorshSerialize, BorshDeserialize)]
-    pub struct TokenBalanceSetup {
-        pub account_index: u8,
-        pub wallet_addresses: Vec<String>,
-    }
-
-    #[derive(Clone, BorshSerialize, BorshDeserialize)]
-    pub struct Withdrawal {
-        pub address_index: u32,
-        pub amount: u64,
-        pub fee_amount: u64,
-    }
-
-    #[derive(Clone, BorshSerialize, BorshDeserialize)]
-    pub enum ProgramInstruction {
-        InitProgramState(InitProgramStateParams),
-        InitTokenState(InitTokenStateParams),
-        InitWalletBalances(InitWalletBalancesParams),
-        BatchDeposit(DepositBatchParams),
-        BatchWithdraw(WithdrawBatchParams),
-        PrepareBatchSettlement(SettlementBatchParams),
-        SubmitBatchSettlement(SettlementBatchParams),
-        RollbackBatchSettlement(),
-    }
-
-    #[derive(Clone, BorshSerialize, BorshDeserialize)]
-    pub struct InitProgramStateParams {
-        pub fee_account: String,
-        pub program_change_address: String,
-        pub network_type: NetworkType,
-    }
-
-    #[derive(Clone, BorshSerialize, BorshDeserialize)]
-    pub struct InitTokenStateParams {
-        pub token_id: String,
-    }
-
-    #[derive(Clone, BorshSerialize, BorshDeserialize)]
-    pub struct InitWalletBalancesParams {
-        pub token_balance_setups: Vec<TokenBalanceSetup>,
-    }
-
-    #[derive(Clone, BorshSerialize, BorshDeserialize)]
-    pub struct DepositBatchParams {
-        pub token_deposits: Vec<TokenDeposits>,
-    }
-
-    #[derive(Clone, BorshSerialize, BorshDeserialize)]
-    pub struct TokenDeposits {
-        pub account_index: u8,
-        pub deposits: Vec<Adjustment>,
-    }
-
-    #[derive(Clone, BorshSerialize, BorshDeserialize)]
-    pub struct TokenWithdrawals {
-        pub account_index: u8,
-        pub withdrawals: Vec<Withdrawal>,
-    }
-
-    #[derive(Clone, BorshSerialize, BorshDeserialize)]
-    pub struct WithdrawBatchParams {
-        pub token_withdrawals: Vec<TokenWithdrawals>,
-        pub change_amount: u64,
-        pub tx_hex: Vec<u8>,
-    }
-
-    #[derive(Clone, BorshSerialize, BorshDeserialize)]
-    pub struct SettlementAdjustments {
-        pub account_index: u8,
-        pub increments: Vec<Adjustment>,
-        pub decrements: Vec<Adjustment>,
-        pub fee_amount: u64,
-    }
-
-    #[derive(Clone, BorshSerialize, BorshDeserialize)]
-    pub struct SettlementBatchParams {
-        pub settlements: Vec<SettlementAdjustments>
-    }
 
     struct Setup {
         program_keypair: UntweakedKeypair,
@@ -206,147 +55,6 @@ mod tests {
 
     lazy_static! {
         static ref SETUP: Setup = Setup::init();
-    }
-
-    const MAX_ADDRESS_LENGTH: usize = 92;
-    const MAX_TOKEN_ID_LENGTH: usize = 32;
-
-    const BALANCE_SIZE: usize  = MAX_ADDRESS_LENGTH + 8;
-
-    const OFFSET_NETWORK_TYPE: usize = 4 + MAX_ADDRESS_LENGTH * 2;
-    const OFFSET_SETTLEMENT_HASH: usize  = 4 + 1 + MAX_ADDRESS_LENGTH * 2;
-    const OFFSET_LAST_SETTLEMENT_HASH: usize = 4 + 1 + 32 + MAX_ADDRESS_LENGTH * 2;
-    const OFFSET_LAST_WITHDRAWAL_HASH: usize = 4 + 1 + 32 + 32 + MAX_ADDRESS_LENGTH * 2;
-
-    impl TokenBalances {
-        pub fn to_vec(&self) -> Vec<u8> {
-            let mut serialized = vec![];
-            serialized.extend(self.version.to_le_bytes());
-            serialized.extend(self.program_state_account.serialize());
-            let mut tmp = [0u8; MAX_TOKEN_ID_LENGTH];
-            let bytes = self.token_id.as_bytes();
-            tmp[..bytes.len()].copy_from_slice(bytes);
-            serialized.extend(tmp.as_slice());
-            serialized.extend((self.balances.len() as u32).to_le_bytes());
-            for balance in self.balances.iter() {
-                serialized.extend_from_slice(&balance.to_vec());
-            }
-            serialized
-        }
-
-        pub fn from_slice(data: &[u8]) -> Self {
-            let mut tmp = [0u8; MAX_TOKEN_ID_LENGTH];
-            let mut offset = MAX_TOKEN_ID_LENGTH + 36;
-            tmp[..MAX_TOKEN_ID_LENGTH].copy_from_slice(&data[36..offset]);
-            let pos = tmp.iter().position(|&r| r == 0).unwrap_or(MAX_TOKEN_ID_LENGTH);
-            let mut token_balances = TokenBalances {
-                version: u32::from_le_bytes(
-                    data[0..4]
-                        .try_into()
-                        .expect("slice with incorrect length"),
-                ),
-                program_state_account: Pubkey::from_slice(
-                    data[4..36]
-                      .try_into()
-                      .expect("slice with incorrect length")
-                ),
-                token_id: String::from_utf8(tmp[..pos].to_vec()).unwrap(),
-                balances: vec![],
-            };
-
-            let inputs_to_sign_length: usize = u32::from_le_bytes(
-                data[offset..offset+4]
-                    .try_into()
-                    .expect("slice with incorrect length"),
-            ) as usize;
-
-            offset += 4;
-            for _ in 0..inputs_to_sign_length {
-                token_balances
-                    .balances
-                    .push(Balance::from_slice(
-                        data[offset..offset + BALANCE_SIZE].try_into().expect("slice with incorrect length")
-                    ));
-                offset += BALANCE_SIZE;
-            }
-            token_balances
-        }
-    }
-
-    impl Balance {
-        pub fn to_vec(&self) -> Vec<u8> {
-            let mut serialized = vec![];
-            let mut tmp = [0u8; MAX_ADDRESS_LENGTH];
-            let bytes = self.address.as_bytes();
-            tmp[..bytes.len()].copy_from_slice(bytes);
-
-            serialized.extend(tmp.as_slice());
-            serialized.extend(self.balance.to_le_bytes());
-
-            serialized
-        }
-
-        pub fn from_slice(data: &[u8]) -> Self {
-            let mut tmp = [0u8; MAX_ADDRESS_LENGTH];
-            tmp[..MAX_ADDRESS_LENGTH].copy_from_slice(&data[..MAX_ADDRESS_LENGTH]);
-            let pos = tmp.iter().position(|&r| r == 0).unwrap_or(MAX_ADDRESS_LENGTH);
-            Balance {
-                address: String::from_utf8(tmp[..pos].to_vec()).unwrap(),
-                balance: u64::from_le_bytes(
-                    data[MAX_ADDRESS_LENGTH..MAX_ADDRESS_LENGTH+8]
-                        .try_into()
-                        .expect("slice with incorrect length"),
-                )
-            }
-        }
-    }
-
-    impl ProgramState {
-        pub fn to_vec(&self) -> Vec<u8> {
-            let mut serialized = vec![];
-            serialized.extend(self.version.to_le_bytes());
-            let mut tmp = [0u8; MAX_ADDRESS_LENGTH];
-            let bytes = self.fee_account_address.as_bytes();
-            tmp[..bytes.len()].copy_from_slice(self.fee_account_address.as_bytes());
-            serialized.extend(tmp.as_slice());
-            let bytes = self.program_change_address.as_bytes();
-            tmp[..bytes.len()].copy_from_slice(bytes);
-            serialized.extend(tmp.as_slice());
-            serialized.extend(self.network_type.to_vec());
-            serialized.extend(self.settlement_batch_hash.as_slice());
-            serialized.extend(self.last_settlement_batch_hash.as_slice());
-            serialized.extend(self.last_withdrawal_batch_hash.as_slice());
-            serialized
-        }
-
-        fn hash_from_slice(data: &[u8], offset: usize) -> [u8; 32] {
-            let mut tmp = [0u8; 32];
-            tmp[..32].copy_from_slice(data[offset..offset+32]
-                .try_into()
-                .expect("slice with incorrect length"));
-            tmp
-        }
-
-        fn address_from_slice(data: &[u8], offset: usize) -> String {
-            let pos = data[offset..offset+MAX_ADDRESS_LENGTH].iter().position(|&r| r == 0).unwrap_or(MAX_TOKEN_ID_LENGTH);
-            String::from_utf8(data[offset..offset+pos].to_vec()).unwrap()
-        }
-
-        pub fn from_slice(data: &[u8]) -> Self {
-            ProgramState {
-                version: u32::from_le_bytes(
-                    data[0..4]
-                        .try_into()
-                        .expect("slice with incorrect length"),
-                ),
-                fee_account_address: Self::address_from_slice(data, 4),
-                program_change_address: Self::address_from_slice(data, MAX_ADDRESS_LENGTH + 4),
-                network_type: NetworkType::from_u8(data[OFFSET_NETWORK_TYPE]),
-                settlement_batch_hash: Self::hash_from_slice(data, OFFSET_SETTLEMENT_HASH),
-                last_settlement_batch_hash: Self::hash_from_slice(data, OFFSET_LAST_SETTLEMENT_HASH),
-                last_withdrawal_batch_hash: Self::hash_from_slice(data, OFFSET_LAST_WITHDRAWAL_HASH)
-            }
-        }
     }
 
     #[test]
@@ -423,7 +131,7 @@ mod tests {
             change_amount,
             tx_hex: hex::decode(withdraw_tx).unwrap()
         };
-        let expected = TokenBalances {
+        let expected = TokenState {
             version: 0,
             program_state_account: accounts[0],
             token_id: "btc".to_string(),
@@ -548,7 +256,7 @@ mod tests {
         let token1_account_info = read_account_info(NODE1_ADDRESS, token1_account.clone()).unwrap();
 
         assert_eq!(
-            TokenBalances {
+            TokenState {
                 version: 0,
                 program_state_account: accounts[0],
                 token_id: token1.to_string(),
@@ -567,13 +275,13 @@ mod tests {
                     }
                 ],
             }.to_vec(),
-            TokenBalances::from_slice(token1_account_info.data.as_slice()).to_vec()
+            TokenState::from_slice(token1_account_info.data.as_slice()).to_vec()
         );
 
         let token2_account_info = read_account_info(NODE1_ADDRESS, token2_account.clone()).unwrap();
 
         assert_eq!(
-            TokenBalances {
+            TokenState {
                 version: 0,
                 program_state_account: accounts[0],
                 token_id: token2.to_string(),
@@ -592,7 +300,7 @@ mod tests {
                     }
                 ],
             }.to_vec(),
-            TokenBalances::from_slice(token2_account_info.data.as_slice()).to_vec()
+            TokenState::from_slice(token2_account_info.data.as_slice()).to_vec()
         );
 
 
@@ -685,7 +393,7 @@ mod tests {
 
         let token_account = accounts[1].clone();
         let account_info = read_account_info(NODE1_ADDRESS, token_account.clone()).unwrap();
-        let token_balances: TokenBalances = TokenBalances::from_slice(&account_info.data);
+        let token_balances: TokenState = TokenState::from_slice(&account_info.data);
         assert_eq!(1, token_balances.balances.len());
         let (submitter_keypair, submitter_pubkey) = with_secret_key_file(SUBMITTER_FILE_PATH).unwrap();
 
@@ -700,8 +408,8 @@ mod tests {
             .enumerate()
             .map(|(i, chunk)| {
                 let params = InitWalletBalancesParams {
-                    token_balance_setups: vec![
-                        TokenBalanceSetup {
+                    token_state_setups: vec![
+                        TokenStateSetup {
                             account_index: 1,
                             wallet_addresses: chunk.to_vec()
                         }
@@ -741,7 +449,7 @@ mod tests {
         }
 
         let account_info = read_account_info(NODE1_ADDRESS, token_account.clone()).unwrap();
-        let token_balances: TokenBalances = TokenBalances::from_slice(&account_info.data);
+        let token_balances: TokenState = TokenState::from_slice(&account_info.data);
         assert_eq!(wallets.len() + 1, token_balances.balances.len());
 
         for (i, wallet) in wallets.iter().enumerate() {
@@ -775,7 +483,7 @@ mod tests {
                 }
             ],
         };
-        let expected = TokenBalances {
+        let expected = TokenState {
             version: 0,
             program_state_account: submitter_pubkey,
             token_id: token.to_string(),
@@ -814,9 +522,9 @@ mod tests {
                 fee_account_address: fee_account.address.to_string(),
                 program_change_address,
                 network_type: NetworkType::Regtest,
-                settlement_batch_hash: [0u8; 32],
-                last_settlement_batch_hash: [0u8; 32],
-                last_withdrawal_batch_hash: [0u8; 32],
+                settlement_batch_hash: EMPTY_HASH,
+                last_settlement_batch_hash: EMPTY_HASH,
+                last_withdrawal_batch_hash: EMPTY_HASH,
             },
         );
         debug!("Initialized program state");
@@ -832,7 +540,7 @@ mod tests {
                     token_id: token.to_string(),
                 },
                 token_pubkey,
-                TokenBalances {
+                TokenState {
                     version: 0,
                     program_state_account: submitter_pubkey,
                     token_id: token.to_string(),
@@ -851,7 +559,7 @@ mod tests {
     fn assert_send_and_sign_deposit(
         token_account: Pubkey,
         params: DepositBatchParams,
-        expected: TokenBalances,
+        expected: TokenState,
     ) {
         debug!("Performing Deposit");
         let (submitter_keypair, submitter_pubkey)  = with_secret_key_file(SUBMITTER_FILE_PATH).unwrap();
@@ -882,14 +590,14 @@ mod tests {
         let token_account = read_account_info(NODE1_ADDRESS, token_account.clone()).unwrap();
 
         assert_eq!(
-            expected.to_vec(), TokenBalances::from_slice(token_account.data.as_slice()).to_vec()
+            expected.to_vec(), TokenState::from_slice(token_account.data.as_slice()).to_vec()
         );
     }
 
     fn assert_send_and_sign_withdrawal(
         token_account: Pubkey,
         params: WithdrawBatchParams,
-        expected: TokenBalances,
+        expected: TokenState,
         expected_change_amount: u64
     ) {
         debug!("Performing Withdrawal");
@@ -927,7 +635,7 @@ mod tests {
         let token_account = read_account_info(NODE1_ADDRESS, token_account.clone()).unwrap();
 
         assert_eq!(
-            expected.to_vec(), TokenBalances::from_slice(token_account.data.as_slice()).to_vec()
+            expected.to_vec(), TokenState::from_slice(token_account.data.as_slice()).to_vec()
         );
 
         let bitcoin_txid = Txid::from_str(&processed_tx.bitcoin_txids[0].clone()).unwrap();
@@ -1035,7 +743,7 @@ mod tests {
         let state_account = read_account_info(NODE1_ADDRESS, submitter_pubkey.clone()).unwrap();
         let program_state: ProgramState = ProgramState::from_slice(&state_account.data);
         assert_eq!(
-            program_state.settlement_batch_hash, [0u8; 32]
+            program_state.settlement_batch_hash, EMPTY_HASH
         );
     }
 
@@ -1079,7 +787,7 @@ mod tests {
         let program_state: ProgramState = ProgramState::from_slice(&state_account.data);
         assert_eq!(
             program_state.settlement_batch_hash,
-            [0u8; 32]
+            EMPTY_HASH
         );
 
         assert_eq!(
@@ -1122,7 +830,7 @@ mod tests {
     fn init_token_state_account(
         params: InitTokenStateParams,
         token_account: Pubkey,
-        expected: TokenBalances,
+        expected: TokenState,
     ) {
         let (submitter_keypair, submitter_pubkey) = with_secret_key_file(SUBMITTER_FILE_PATH).unwrap();
 
@@ -1153,7 +861,7 @@ mod tests {
 
         let account = read_account_info(NODE1_ADDRESS, token_account.clone()).unwrap();
         assert_eq!(
-            expected.to_vec(), TokenBalances::from_slice(account.data.as_slice()).to_vec()
+            expected.to_vec(), TokenState::from_slice(account.data.as_slice()).to_vec()
         )
     }
 
@@ -1163,15 +871,15 @@ mod tests {
     ) -> u32 {
 
         let account_info = read_account_info(NODE1_ADDRESS, token_account.clone()).unwrap();
-        let token_balances: TokenBalances = TokenBalances::from_slice(&account_info.data);
-        let len = token_balances.balances.len();
-        let pos = token_balances.balances.into_iter().position(|r| r.address == address).unwrap_or_else(|| len);
+        let token_state: TokenState = TokenState::from_slice(&account_info.data);
+        let len = token_state.balances.len();
+        let pos = token_state.balances.into_iter().position(|r| r.address == address).unwrap_or_else(|| len);
         if pos == len {
-            debug!("Establishing a balance index for wallet {} for token {}", address.clone(), token_balances.token_id);
+            debug!("Establishing a balance index for wallet {} for token {}", address.clone(), token_state.token_id);
             let (submitter_keypair, submitter_pubkey) = with_secret_key_file(SUBMITTER_FILE_PATH).unwrap();
             let params = InitWalletBalancesParams {
-                token_balance_setups: vec![
-                    TokenBalanceSetup {
+                token_state_setups: vec![
+                    TokenStateSetup {
                         account_index: 1,
                         wallet_addresses: vec![address.to_string()],
                     }
@@ -1203,7 +911,7 @@ mod tests {
                 .expect("get processed transaction should not fail");
         }
         let account_info = read_account_info(NODE1_ADDRESS, token_account.clone()).unwrap();
-        let token_balances: TokenBalances = TokenBalances::from_slice(&account_info.data);
+        let token_balances: TokenState = TokenState::from_slice(&account_info.data);
         token_balances.balances.into_iter().position(|r| r.address == address).unwrap() as u32
     }
 
