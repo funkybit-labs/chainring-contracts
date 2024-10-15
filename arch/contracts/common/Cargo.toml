@@ -17,6 +17,7 @@ anyhow = "1.0.82"
 hex = "0.4.3"
 log = "0.4.22"
 env_logger = "0.11.5"
+bip322 = "0.0.7"
 
 [dev-dependencies]
 serial_test = "3.1.1"

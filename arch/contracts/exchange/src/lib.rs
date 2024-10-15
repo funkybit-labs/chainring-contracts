@@ -309,10 +309,46 @@ mod tests {
         );
 
 
-        // start another one and maake sure we can rollback
+        // start another one and make sure we can rollback
+        let input2 = SettlementBatchParams {
+            settlements: vec![
+                SettlementAdjustments {
+                    account_index: 1,
+                    increments: vec![
+                        Adjustment {
+                            address_index: get_or_create_balance_index(wallet2.address.to_string(), token1_account),
+                            amount: 3500,
+                        }
+                    ],
+                    decrements: vec![
+                        Adjustment {
+                            address_index: get_or_create_balance_index(wallet1.address.to_string(), token1_account),
+                            amount: 4000,
+                        }
+                    ],
+                    fee_amount: 500,
+                },
+                SettlementAdjustments {
+                    account_index: 2,
+                    increments: vec![
+                        Adjustment {
+                            address_index: get_or_create_balance_index(wallet1.address.to_string(), token2_account),
+                            amount: 1000,
+                        }
+                    ],
+                    decrements: vec![
+                        Adjustment {
+                            address_index: get_or_create_balance_index(wallet2.address.to_string(), token2_account),
+                            amount: 1000,
+                        }
+                    ],
+                    fee_amount: 0,
+                }
+            ],
+        };
         assert_send_and_sign_prepare_settlement(
             accounts.clone(),
-            input.clone()
+            input2
         );
 
         assert_send_and_sign_rollback_settlement();
@@ -569,7 +605,8 @@ mod tests {
         amount: u64,
         expected_balances: Vec<Balance>
     ) {
-        let (_, submitter_pubkey) = create_new_account(SUBMITTER_FILE_PATH);
+        let (_, submitter_pubkey)  = with_secret_key_file(SUBMITTER_FILE_PATH).unwrap();
+
         let input = DepositBatchParams {
             token_deposits: vec![
                 TokenDeposits {
@@ -738,7 +775,10 @@ mod tests {
             expected, TokenState::decode_from_slice(token_account.data.as_slice()).unwrap().encode_to_vec().unwrap()
         );
 
-        let bitcoin_txid = Txid::from_str(&processed_tx.bitcoin_txids[0].clone()).unwrap();
+        let bitcoin_txid = match processed_tx.bitcoin_txid {
+            Some(x) => Txid::from_str(&x).unwrap(),
+            None    => Txid::from_str("").unwrap(),
+        };
         debug!("bitcoin tx is {}", bitcoin_txid);
 
         let userpass = Auth::UserPass(
@@ -804,7 +844,7 @@ mod tests {
             vec![submitter_keypair],
         ).expect("signing and sending a transaction should not fail");
 
-        let processed_tx = get_processed_transaction(NODE1_ADDRESS, txid)
+        let _ = get_processed_transaction(NODE1_ADDRESS, txid)
             .expect("get processed transaction should not fail");
 
         let token_account = read_account_info(NODE1_ADDRESS, token_account.clone()).unwrap();
