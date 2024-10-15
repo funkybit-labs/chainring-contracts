@@ -170,7 +170,10 @@ pub fn submit_settlement_batch(accounts: &[AccountInfo], params: &SettlementBatc
         TokenState::validate_account(accounts, token_settlements.account_index)?;
         let mut increments = if token_settlements.fee_amount > 0 {
             vec![Adjustment {
-                address_index: FEE_ADDRESS_INDEX,
+                address_index: AddressIndex {
+                    index: FEE_ADDRESS_INDEX,
+                    last4: Balance::get_wallet_address_last4(&accounts[token_settlements.account_index as usize], FEE_ADDRESS_INDEX as usize)?
+                },
                 amount: token_settlements.fee_amount,
             }]
         } else {
@@ -231,37 +234,29 @@ fn handle_decrements(account: &AccountInfo, adjustments: Vec<Adjustment>) -> Res
 
 fn handle_adjustments(account: &AccountInfo, adjustments: Vec<Adjustment>, increment: bool) -> Result<(), ProgramError> {
     for adjustment in adjustments {
-        if adjustment.address_index as usize >= TokenState::get_num_balances(account)? {
-            return Err(ProgramError::Custom(ERROR_INVALID_ADDRESS_INDEX))
+        let index = get_validated_index(account, &adjustment.address_index)?;
+        let mut current_balance = Balance::get_wallet_balance(account, index)?;
+        if increment {
+            current_balance += adjustment.amount
         } else {
-            let index = adjustment.address_index as usize;
-            let mut current_balance = Balance::get_wallet_balance(account, index)?;
-            if increment {
-                current_balance += adjustment.amount
-            } else {
-                let new_balance = current_balance.checked_sub(adjustment.amount);
-                current_balance = match new_balance {
-                    Some(new_balance) => new_balance,
-                    None => return Err(ProgramError::Custom(ERROR_INSUFFICIENT_BALANCE))
-                };
-            }
-            Balance::set_wallet_balance(account, index, current_balance)?
+            let new_balance = current_balance.checked_sub(adjustment.amount);
+            current_balance = match new_balance {
+                Some(new_balance) => new_balance,
+                None => return Err(ProgramError::Custom(ERROR_INSUFFICIENT_BALANCE))
+            };
         }
+        Balance::set_wallet_balance(account, index, current_balance)?
     }
     Ok(())
 }
 
 fn verify_decrements(account: &AccountInfo, adjustments: Vec<Adjustment>) -> Result<(), ProgramError>{
     for adjustment in adjustments {
-        if adjustment.address_index as usize >= TokenState::get_num_balances(account)? {
-            return Err(ProgramError::Custom(ERROR_INVALID_ADDRESS_INDEX))
-        } else {
-            let index = adjustment.address_index as usize;
-            let current_balance = Balance::get_wallet_balance(account, index)?;
-            if adjustment.amount > current_balance {
-                return Err(ProgramError::Custom(ERROR_INSUFFICIENT_BALANCE));
-            };
-        }
+        let index = get_validated_index(account, &adjustment.address_index)?;
+        let current_balance = Balance::get_wallet_balance(account, index)?;
+        if adjustment.amount > current_balance {
+            return Err(ProgramError::Custom(ERROR_INSUFFICIENT_BALANCE));
+        };
     }
     Ok(())
 }
@@ -273,33 +268,29 @@ fn handle_withdrawals(
     network_type: NetworkType,
 ) -> Result<(), ProgramError> {
     for withdrawal in withdrawals {
-        if withdrawal.address_index as usize >= TokenState::get_num_balances(account)? {
-            return Err(ProgramError::Custom(ERROR_INVALID_ADDRESS_INDEX))
-        } else {
-            let index = withdrawal.address_index as usize;
-            let mut current_balance = Balance::get_wallet_balance(account, index)?;
-            let new_balance = current_balance.checked_sub(withdrawal.amount);
-            current_balance = match new_balance {
-                Some(new_balance) => new_balance,
-                None => return Err(ProgramError::Custom(ERROR_INSUFFICIENT_BALANCE))
-            };
-            if withdrawal.fee_amount > 0 {
-                if Balance::get_wallet_address(account, FEE_ADDRESS_INDEX as usize)? != fee_account_address {
-                    return Err(ProgramError::Custom(ERROR_ADDRESS_MISMATCH))
-                }
-                Balance::adjust_wallet_balance(account, FEE_ADDRESS_INDEX as usize, withdrawal.fee_amount)?;
+        let index = get_validated_index(account, &withdrawal.address_index)?;
+        let mut current_balance = Balance::get_wallet_balance(account, index)?;
+        let new_balance = current_balance.checked_sub(withdrawal.amount);
+        current_balance = match new_balance {
+            Some(new_balance) => new_balance,
+            None => return Err(ProgramError::Custom(ERROR_INSUFFICIENT_BALANCE))
+        };
+        if withdrawal.fee_amount > 0 {
+            if Balance::get_wallet_address(account, FEE_ADDRESS_INDEX as usize)? != fee_account_address {
+                return Err(ProgramError::Custom(ERROR_ADDRESS_MISMATCH))
             }
-            Balance::set_wallet_balance(account, index, current_balance)?;
-            tx_outs.push(
-                TxOut {
-                    value: Amount::from_sat(withdrawal.amount - withdrawal.fee_amount),
-                    script_pubkey: get_bitcoin_address(
-                        &Balance::get_wallet_address(account, index)?,
-                        network_type.clone()
-                    ).script_pubkey(),
-                }
-            );
+            Balance::adjust_wallet_balance(account, FEE_ADDRESS_INDEX as usize, withdrawal.fee_amount)?;
         }
+        Balance::set_wallet_balance(account, index, current_balance)?;
+        tx_outs.push(
+            TxOut {
+                value: Amount::from_sat(withdrawal.amount - withdrawal.fee_amount),
+                script_pubkey: get_bitcoin_address(
+                    &Balance::get_wallet_address(account, index)?,
+                    network_type.clone()
+                ).script_pubkey(),
+            }
+        );
     }
     Ok(())
 }
@@ -342,4 +333,16 @@ fn get_account_data(accounts: &[AccountInfo], index: u8) -> Result<Vec<u8>, Prog
         return Err(ProgramError::Custom(ERROR_INVALID_ACCOUNT_INDEX));
     }
     Ok(accounts[index as usize].data.try_borrow().unwrap().to_vec())
+}
+
+pub fn get_validated_index(account: &AccountInfo, address_index: &AddressIndex) -> Result<usize, ProgramError> {
+    let index = address_index.index as usize;
+    if index >= TokenState::get_num_balances(account)? {
+        return Err(ProgramError::Custom(ERROR_INVALID_ADDRESS_INDEX))
+    }
+    let wallet_address = Balance::get_wallet_address(account, index)?;
+    if wallet_last4(&wallet_address) != address_index.last4 {
+        return Err(ProgramError::Custom(ERROR_WALLET_LAST4_MISMATCH))
+    }
+    Ok(index)
 }

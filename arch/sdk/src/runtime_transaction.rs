@@ -6,7 +6,7 @@ use sha256::digest;
 
 use crate::signature::Signature;
 
-pub const RUNTIME_TX_SIZE_LIMIT: usize = 1024;
+pub const RUNTIME_TX_SIZE_LIMIT: usize = 2048;
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, BorshDeserialize, BorshSerialize)]
 pub struct RuntimeTransaction {
