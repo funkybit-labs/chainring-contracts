@@ -461,7 +461,104 @@ mod tests {
                 token_balances.balances.clone().into_iter().position(|r| r.address == *wallet).unwrap()
             )
         }
+    }
 
+    #[test]
+    fn test_withdrawal_rollback() {
+        cleanup_account_keys();
+        let accounts = onboard_state_accounts(vec!["btc"]);
+
+        let token_account = accounts[1].clone();
+
+        let wallet = CallerInfo::with_secret_key_file(WALLET1_FILE_PATH).unwrap();
+        let fee_account = CallerInfo::with_secret_key_file(FEE_ACCOUNT_FILE_PATH).unwrap();
+
+        let address = get_account_address(SETUP.program_pubkey);
+        let program_address = Address::from_str(&address)
+            .unwrap()
+            .require_network(bitcoin::Network::Regtest)
+            .unwrap();
+
+        let (txid, vout) = deposit_to_program(10000, &program_address);
+
+        let balances_after_deposit = vec![
+            Balance {
+                address: fee_account.address.to_string().clone(),
+                balance: 0,
+            },
+            Balance {
+                address: wallet.address.to_string().clone(),
+                balance: 10000,
+            }
+        ];
+
+        deposit(
+            wallet.address.to_string().clone(),
+            "btc",
+            token_account.clone(),
+            10000,
+            balances_after_deposit.clone()
+        );
+
+        let (withdraw_tx, change_amount) = prepare_withdrawal(
+            5000,
+            1500,
+            &txid,
+            vout
+        );
+
+        let token_withdrawals = vec![TokenWithdrawals {
+            account_index: 1,
+            withdrawals: vec![Withdrawal {
+                address_index: AddressIndex {
+                    index: 1,
+                    last4: wallet_last4(&wallet.address.to_string()),
+                },
+                amount: 5500,
+                fee_amount: 500,
+            }],
+        }];
+
+        // perform withdrawal
+        assert_send_and_sign_withdrawal(
+            token_account,
+            WithdrawBatchParams {
+                token_withdrawals: token_withdrawals.clone(),
+                change_amount,
+                tx_hex: hex::decode(withdraw_tx).unwrap()
+            },
+            TokenState {
+                version: 0,
+                program_state_account: accounts[0],
+                token_id: "btc".to_string(),
+                balances: vec![
+                    Balance {
+                        address: fee_account.address.to_string().clone(),
+                        balance: 500,
+                    },
+                    Balance {
+                        address: wallet.address.to_string().clone(),
+                        balance: 4500,
+                    }
+                ],
+            },
+            3500
+        );
+
+        assert_send_and_sign_withdrawal_rollback(
+            token_account,
+            WithdrawBatchParams {
+                token_withdrawals,
+                change_amount: 0,
+                tx_hex: vec![],
+            },
+            TokenState {
+                version: 0,
+                program_state_account: accounts[0],
+                token_id: "btc".to_string(),
+                balances: balances_after_deposit
+            },
+        );
     }
 
     // support functions
@@ -676,6 +773,45 @@ mod tests {
         );
 
         debug!("Wallet amount is {}, Change amount is {}", wallet_amount, change_amount)
+    }
+
+    fn assert_send_and_sign_withdrawal_rollback(
+        token_account: Pubkey,
+        params: WithdrawBatchParams,
+        expected: TokenState
+    ) {
+        debug!("Performing Withdrawal Rollback");
+        let (submitter_keypair, submitter_pubkey)  = with_secret_key_file(SUBMITTER_FILE_PATH).unwrap();
+        let expected = expected.to_vec();
+
+        let (txid, _) = sign_and_send_instruction(
+            Instruction {
+                program_id: SETUP.program_pubkey,
+                accounts: vec![
+                    AccountMeta {
+                        pubkey: submitter_pubkey,
+                        is_signer: true,
+                        is_writable: true
+                    },
+                    AccountMeta {
+                        pubkey: token_account,
+                        is_signer: false,
+                        is_writable: true
+                    }
+                ],
+                data: borsh::to_vec(&ProgramInstruction::RollbackBatchWithdraw(params.clone())).unwrap()
+            },
+            vec![submitter_keypair],
+        ).expect("signing and sending a transaction should not fail");
+
+        let processed_tx = get_processed_transaction(NODE1_ADDRESS, txid)
+            .expect("get processed transaction should not fail");
+
+        let token_account = read_account_info(NODE1_ADDRESS, token_account.clone()).unwrap();
+
+        assert_eq!(
+            expected.to_vec(), TokenState::from_slice(token_account.data.as_slice()).to_vec()
+        );
     }
 
     fn assert_send_and_sign_prepare_settlement(

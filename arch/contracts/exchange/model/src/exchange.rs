@@ -269,9 +269,19 @@ impl Balance {
         ))
     }
 
-    pub fn adjust_wallet_balance(account: &AccountInfo, index: usize, balance_adjustment: u64) -> Result<(), ProgramError> {
+    pub fn increment_wallet_balance(account: &AccountInfo, index: usize, balance_adjustment: u64) -> Result<(), ProgramError> {
         let current_balance = Self::get_wallet_balance(account, index)?;
         Self::set_wallet_balance(account, index, current_balance + balance_adjustment)
+    }
+
+    pub fn decrement_wallet_balance(account: &AccountInfo, index: usize, balance_adjustment: u64) -> Result<(), ProgramError> {
+        let mut current_balance = Self::get_wallet_balance(account, index)?;
+        let new_balance = current_balance.checked_sub(balance_adjustment);
+        current_balance = match new_balance {
+            Some(new_balance) => new_balance,
+            None => return Err(ProgramError::Custom(ERROR_INSUFFICIENT_BALANCE))
+        };
+        Self::set_wallet_balance(account, index, current_balance)
     }
 
     pub fn get_wallet_address(account: &AccountInfo, index: usize) -> Result<String, ProgramError> {
@@ -421,6 +431,7 @@ pub enum ProgramInstruction {
     PrepareBatchSettlement(SettlementBatchParams),
     SubmitBatchSettlement(SettlementBatchParams),
     RollbackBatchSettlement(),
+    RollbackBatchWithdraw(WithdrawBatchParams),
 }
 
 #[derive(Clone, BorshSerialize, BorshDeserialize)]

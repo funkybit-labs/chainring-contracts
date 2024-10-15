@@ -33,7 +33,8 @@ pub fn process_instruction(
         ProgramInstruction::BatchWithdraw(params) => withdraw_batch(program_id, accounts, &params),
         ProgramInstruction::SubmitBatchSettlement(params) => submit_settlement_batch(accounts, &params),
         ProgramInstruction::PrepareBatchSettlement(params) => prepare_settlement_batch(accounts, &params),
-        ProgramInstruction::RollbackBatchSettlement() => rollback_settlement_batch(accounts)
+        ProgramInstruction::RollbackBatchSettlement() => rollback_settlement_batch(accounts),
+        ProgramInstruction::RollbackBatchWithdraw(params) => rollback_withdraw_batch(accounts, &params)
     }
 }
 
@@ -152,6 +153,18 @@ pub fn withdraw_batch(program_id: &Pubkey, accounts: &[AccountInfo], params: &Wi
     };
 
     set_transaction_to_sign(&[], tx_to_sign)
+}
+
+pub fn rollback_withdraw_batch(accounts: &[AccountInfo], params: &WithdrawBatchParams) -> Result<(), ProgramError> {
+    for token_withdrawals in &params.token_withdrawals {
+        TokenState::validate_account(accounts, token_withdrawals.account_index)?;
+        handle_rollback_withdrawals(
+            &accounts[token_withdrawals.account_index as usize],
+            token_withdrawals.clone().withdrawals,
+            &ProgramState::get_fee_account_address(&accounts[0])?,
+        )?;
+    }
+    Ok(())
 }
 
 pub fn submit_settlement_batch(accounts: &[AccountInfo], params: &SettlementBatchParams) -> Result<(), ProgramError> {
@@ -279,7 +292,7 @@ fn handle_withdrawals(
             if Balance::get_wallet_address(account, FEE_ADDRESS_INDEX as usize)? != fee_account_address {
                 return Err(ProgramError::Custom(ERROR_ADDRESS_MISMATCH))
             }
-            Balance::adjust_wallet_balance(account, FEE_ADDRESS_INDEX as usize, withdrawal.fee_amount)?;
+            Balance::increment_wallet_balance(account, FEE_ADDRESS_INDEX as usize, withdrawal.fee_amount)?;
         }
         Balance::set_wallet_balance(account, index, current_balance)?;
         tx_outs.push(
@@ -294,6 +307,28 @@ fn handle_withdrawals(
     }
     Ok(())
 }
+
+
+fn handle_rollback_withdrawals(
+    account: &AccountInfo,
+    withdrawals: Vec<Withdrawal>,
+    fee_account_address: &str,
+) -> Result<(), ProgramError> {
+    for withdrawal in withdrawals {
+        let index = get_validated_index(account, &withdrawal.address_index)?;
+        let mut current_balance = Balance::get_wallet_balance(account, index)?;
+        current_balance = current_balance + withdrawal.amount;
+        if withdrawal.fee_amount > 0 {
+            if Balance::get_wallet_address(account, FEE_ADDRESS_INDEX as usize)? != fee_account_address {
+                return Err(ProgramError::Custom(ERROR_ADDRESS_MISMATCH))
+            }
+            Balance::decrement_wallet_balance(account, FEE_ADDRESS_INDEX as usize, withdrawal.fee_amount)?;
+        }
+        Balance::set_wallet_balance(account, index, current_balance)?;
+    }
+    Ok(())
+}
+
 
 //
 // Helper methods
