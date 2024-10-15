@@ -123,7 +123,10 @@ mod tests {
             token_withdrawals: vec![TokenWithdrawals {
                 account_index: 1,
                 withdrawals: vec![Withdrawal {
-                    address_index: 1,
+                    address_index: AddressIndex {
+                        index: 1,
+                        last4: wallet_last4(&wallet.address.to_string()),
+                    },
                     amount: 5500,
                     fee_amount: 500,
                 }],
@@ -868,7 +871,7 @@ mod tests {
     fn get_or_create_balance_index(
         address: String,
         token_account: Pubkey,
-    ) -> u32 {
+    ) -> AddressIndex {
 
         let account_info = read_account_info(NODE1_ADDRESS, token_account.clone()).unwrap();
         let token_state: TokenState = TokenState::from_slice(&account_info.data);
@@ -912,7 +915,10 @@ mod tests {
         }
         let account_info = read_account_info(NODE1_ADDRESS, token_account.clone()).unwrap();
         let token_balances: TokenState = TokenState::from_slice(&account_info.data);
-        token_balances.balances.into_iter().position(|r| r.address == address).unwrap() as u32
+        AddressIndex {
+            index: token_balances.balances.into_iter().position(|r| r.address == address).unwrap() as u32,
+            last4: wallet_last4(&address)
+        }
     }
 
     fn hash(data: Vec<u8>) -> String {

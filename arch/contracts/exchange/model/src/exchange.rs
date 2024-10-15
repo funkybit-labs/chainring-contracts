@@ -39,6 +39,7 @@ pub const FEE_ADDRESS_INDEX: u32 = 0;
 pub const EMPTY_HASH: [u8; 32] = [0u8; 32];
 
 pub type Hash = [u8; 32];
+pub type WalletLast4 = [u8; 4];
 
 #[derive(Clone, BorshSerialize, BorshDeserialize)]
 pub enum NetworkType {
@@ -280,6 +281,10 @@ impl Balance {
     pub fn set_wallet_address(account: &AccountInfo, index: usize, address: &str) -> Result<(), ProgramError> {
         set_string(account, TOKEN_STATE_HEADER_SIZE + index * BALANCE_SIZE, address, MAX_ADDRESS_SIZE)
     }
+
+    pub fn get_wallet_address_last4(account: &AccountInfo, index: usize) -> Result<WalletLast4, ProgramError> {
+        Ok(wallet_last4(&Self::get_wallet_address(account, index)?))
+    }
 }
 
 impl ProgramState {
@@ -382,8 +387,14 @@ impl ProgramState {
 }
 
 #[derive(Clone, BorshSerialize, BorshDeserialize)]
+pub struct AddressIndex {
+    pub index: u32,
+    pub last4: WalletLast4,
+}
+
+#[derive(Clone, BorshSerialize, BorshDeserialize)]
 pub struct Adjustment {
-    pub address_index: u32,
+    pub address_index: AddressIndex,
     pub amount: u64,
 }
 
@@ -395,7 +406,7 @@ pub struct TokenStateSetup {
 
 #[derive(Clone, BorshSerialize, BorshDeserialize)]
 pub struct Withdrawal {
-    pub address_index: u32,
+    pub address_index: AddressIndex,
     pub amount: u64,
     pub fee_amount: u64,
 }
@@ -487,5 +498,11 @@ fn hash_from_slice(account: &AccountInfo, offset: usize) -> Result<Hash, Program
     tmp[..HASH_SIZE].copy_from_slice(account.data.borrow()[offset..offset+HASH_SIZE]
         .try_into().map_err(|_| ProgramError::InvalidAccountData)?);
     Ok(tmp)
+}
+
+pub fn wallet_last4(address: &str) -> WalletLast4 {
+    let mut tmp: WalletLast4 = [0u8; 4];
+    tmp[0..4].copy_from_slice(&address.as_bytes()[address.len()-4..address.len()]);
+    tmp
 }
 
