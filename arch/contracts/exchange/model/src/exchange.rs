@@ -431,7 +431,7 @@ pub enum ProgramInstruction {
     PrepareBatchSettlement(SettlementBatchParams),
     SubmitBatchSettlement(SettlementBatchParams),
     RollbackBatchSettlement(),
-    RollbackBatchWithdraw(WithdrawBatchParams),
+    RollbackBatchWithdraw(RollbackWithdrawBatchParams),
 }
 
 #[derive(Clone, BorshSerialize, BorshDeserialize)]
@@ -486,6 +486,11 @@ pub struct SettlementAdjustments {
 #[derive(Clone, BorshSerialize, BorshDeserialize)]
 pub struct SettlementBatchParams {
     pub settlements: Vec<SettlementAdjustments>
+}
+
+#[derive(Clone, BorshSerialize, BorshDeserialize)]
+pub struct RollbackWithdrawBatchParams {
+    pub token_withdrawals: Vec<TokenWithdrawals>,
 }
 
 fn get_address(account: &AccountInfo, offset: usize) -> Result<String, ProgramError> {

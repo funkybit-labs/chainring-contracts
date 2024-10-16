@@ -547,10 +547,8 @@ mod tests {
 
         assert_send_and_sign_withdrawal_rollback(
             token_account,
-            WithdrawBatchParams {
+            RollbackWithdrawBatchParams {
                 token_withdrawals,
-                change_amount: 0,
-                tx_hex: vec![],
             },
             TokenState {
                 version: 0,
@@ -777,7 +775,7 @@ mod tests {
 
     fn assert_send_and_sign_withdrawal_rollback(
         token_account: Pubkey,
-        params: WithdrawBatchParams,
+        params: RollbackWithdrawBatchParams,
         expected: TokenState
     ) {
         debug!("Performing Withdrawal Rollback");

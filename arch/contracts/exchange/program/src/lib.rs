@@ -155,7 +155,7 @@ pub fn withdraw_batch(program_id: &Pubkey, accounts: &[AccountInfo], params: &Wi
     set_transaction_to_sign(&[], tx_to_sign)
 }
 
-pub fn rollback_withdraw_batch(accounts: &[AccountInfo], params: &WithdrawBatchParams) -> Result<(), ProgramError> {
+pub fn rollback_withdraw_batch(accounts: &[AccountInfo], params: &RollbackWithdrawBatchParams) -> Result<(), ProgramError> {
     for token_withdrawals in &params.token_withdrawals {
         TokenState::validate_account(accounts, token_withdrawals.account_index)?;
         handle_rollback_withdrawals(
