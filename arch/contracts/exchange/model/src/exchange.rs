@@ -1,12 +1,15 @@
 use std::convert::TryInto;
+use std::{str, usize};
+use std::str::Utf8Error;
+use std::io::Write;
 use arch_program::{
     account::AccountInfo,
     entrypoint,
     pubkey::Pubkey,
     program_error::ProgramError,
 };
-use borsh::{BorshDeserialize, BorshSerialize};
 use crate::error::*;
+use std::io;
 
 pub const VERSION_SIZE: usize = 4;
 pub const PUBKEY_SIZE: usize =  32;
@@ -41,7 +44,7 @@ pub const EMPTY_HASH: [u8; 32] = [0u8; 32];
 pub type Hash = [u8; 32];
 pub type WalletLast4 = [u8; 4];
 
-#[derive(Clone, BorshSerialize, BorshDeserialize)]
+#[derive(Clone, PartialEq, Debug)]
 pub enum NetworkType {
     /// Mainnet Bitcoin.
     Bitcoin,
@@ -63,6 +66,15 @@ impl NetworkType {
                 Self::Regtest => 3
             }
         ]
+    }
+
+    pub fn write_to_buffer(&self, buffer: &mut Vec<u8>) -> Result<usize, io::Error> {
+        return buffer.write(&(match self {
+            NetworkType::Bitcoin => 0_u8,
+            NetworkType::Testnet => 1_u8,
+            NetworkType::Signet => 2_u8,
+            NetworkType::Regtest => 3_u8
+        }.to_be_bytes()));
     }
 
     pub fn from_u8(data: u8) -> Self {
@@ -396,32 +408,179 @@ impl ProgramState {
 
 }
 
-#[derive(Clone, BorshSerialize, BorshDeserialize)]
+#[derive(Clone, PartialEq, Debug)]
 pub struct AddressIndex {
     pub index: u32,
     pub last4: WalletLast4,
 }
 
-#[derive(Clone, BorshSerialize, BorshDeserialize)]
+impl AddressIndex {
+    const SIZE: usize = 8;
+
+    pub fn from_slice(data: &[u8]) -> Result<Self, ProgramError> {
+        return Ok(Self {
+            index: u32::from_be_bytes(data[0..4].try_into().map_err(|_| ProgramError::InvalidInstructionData)?),
+            last4: data[4..8].try_into().map_err(|_| ProgramError::InvalidInstructionData)?
+        })
+    }
+
+    pub fn write_to_buffer(&self, buffer: &mut Vec<u8>) -> Result<usize, io::Error> {
+        return Ok(
+            buffer.write(&self.index.to_be_bytes())?
+                + buffer.write(&self.last4)?
+        )
+    }
+}
+
+#[derive(Clone, PartialEq, Debug)]
 pub struct Adjustment {
     pub address_index: AddressIndex,
     pub amount: u64,
 }
 
-#[derive(Clone, BorshSerialize, BorshDeserialize)]
+impl Adjustment {
+    const SIZE: usize = AddressIndex::SIZE + 8;
+
+    pub fn from_slice(data: &[u8]) -> Result<Self, ProgramError> {
+        return Ok(Self {
+            address_index: AddressIndex::from_slice(&data[0..AddressIndex::SIZE])?,
+            amount: u64::from_be_bytes(
+                data[AddressIndex::SIZE..(AddressIndex::SIZE + 8)]
+                    .try_into()
+                    .map_err(|_| ProgramError::InvalidInstructionData)?
+            )
+        })
+    }
+
+    pub fn collection_from_slice(data: &[u8]) -> Result<Vec<Self>, ProgramError> {
+        let count = usize::from(data[0]);
+        let mut adjustments = Vec::with_capacity(count);
+        for chunk in data[1..(1 + count * Self::SIZE)].chunks(Self::SIZE) {
+            adjustments.push(Self::from_slice(chunk)?);
+        }
+
+        return if adjustments.len() == count {
+            Ok(adjustments)
+        } else {
+            Err(ProgramError::InvalidInstructionData)
+        }
+    }
+
+    pub fn collection_size(vec: &Vec<Self>) -> usize {
+        return 1 + vec.len() * Self::SIZE;
+    }
+
+    pub fn write_to_buffer(&self, buffer: &mut Vec<u8>) -> Result<usize, io::Error> {
+        return Ok(
+            self.address_index.write_to_buffer(buffer)?
+                + buffer.write(&self.amount.to_be_bytes())?
+        )
+    }
+
+    pub fn write_collection_to_buffer(adjustments: &Vec<Adjustment>, buffer: &mut Vec<u8>) -> Result<usize, io::Error> {
+        let mut bytes_written = buffer.write(&(adjustments.len() as u8).to_be_bytes())?;
+        for adjustment in adjustments {
+            bytes_written += adjustment.write_to_buffer(buffer)?;
+        }
+        return Ok(bytes_written)
+    }
+}
+
+#[derive(Clone, PartialEq, Debug)]
 pub struct TokenStateSetup {
     pub account_index: u8,
     pub wallet_addresses: Vec<String>,
 }
 
-#[derive(Clone, BorshSerialize, BorshDeserialize)]
+impl TokenStateSetup {
+    pub fn from_slice(data: &[u8]) -> Result<Self, ProgramError> {
+        let account_index = data[0];
+        let wallets_count = usize::from(data[1]);
+        let mut wallet_addresses: Vec<String> = Vec::with_capacity(wallets_count);
+        for chunk in data[2..(2 + wallets_count * MAX_ADDRESS_SIZE)].chunks(MAX_ADDRESS_SIZE) {
+            wallet_addresses.push(
+                string_from_slice(chunk, MAX_ADDRESS_SIZE).map_err(|_| ProgramError::InvalidInstructionData)?
+            );
+        }
+
+        return Ok(Self {
+            account_index: account_index,
+            wallet_addresses: wallet_addresses
+        })
+    }
+
+    pub fn expected_slice_size(&self) -> usize {
+        return 2 + self.wallet_addresses.len() * MAX_ADDRESS_SIZE;
+    }
+
+    pub fn write_to_buffer(&self, buffer: &mut Vec<u8>) -> Result<usize, io::Error> {
+        let mut bytes_written = 0;
+
+        bytes_written += buffer.write(&self.account_index.to_be_bytes())?;
+        bytes_written += buffer.write(&(self.wallet_addresses.len() as u8).to_be_bytes())?;
+
+        for address in &self.wallet_addresses {
+            bytes_written += write_string_to_buffer(&address, buffer, MAX_ADDRESS_SIZE)?;
+        }
+
+        return Ok(bytes_written)
+    }
+}
+
+#[derive(Clone, PartialEq, Debug)]
 pub struct Withdrawal {
     pub address_index: AddressIndex,
     pub amount: u64,
     pub fee_amount: u64,
 }
 
-#[derive(Clone, BorshSerialize, BorshDeserialize)]
+impl Withdrawal {
+    const SIZE: usize = AddressIndex::SIZE + 8 + 8;
+
+    pub fn from_slice(data: &[u8]) -> Result<Self, ProgramError> {
+        return Ok(Self {
+            address_index: AddressIndex::from_slice(&data[0..AddressIndex::SIZE])?,
+            amount: u64::from_be_bytes(
+                data[AddressIndex::SIZE..(AddressIndex::SIZE + 8)].try_into().map_err(|_| ProgramError::InvalidInstructionData)?
+            ),
+            fee_amount: u64::from_be_bytes(
+                data[(AddressIndex::SIZE + 8)..(AddressIndex::SIZE + 16)].try_into().map_err(|_| ProgramError::InvalidInstructionData)?
+            ),
+        })
+    }
+
+    pub fn collection_from_slice(data: &[u8]) -> Result<Vec<Self>, ProgramError> {
+        let count = usize::from(data[0]);
+        let mut withdrawals = Vec::with_capacity(count);
+        for chunk in data[1..(1 + count * Self::SIZE)].chunks(Self::SIZE) {
+            withdrawals.push(Self::from_slice(chunk)?);
+        }
+
+        return if withdrawals.len() == count {
+            Ok(withdrawals)
+        } else {
+            Err(ProgramError::InvalidInstructionData)
+        }
+    }
+
+    pub fn write_to_buffer(&self, buffer: &mut Vec<u8>) -> Result<usize, io::Error> {
+        return Ok(
+            self.address_index.write_to_buffer(buffer)?
+            + buffer.write(&self.amount.to_be_bytes())?
+            + buffer.write(&self.fee_amount.to_be_bytes())?
+        )
+    }
+
+    pub fn write_collection_to_buffer(withdrawals: &Vec<Withdrawal>, buffer: &mut Vec<u8>) -> Result<usize, io::Error> {
+        let mut bytes_written = buffer.write(&(withdrawals.len() as u8).to_be_bytes())?;
+        for withdrawal in withdrawals {
+            bytes_written += withdrawal.write_to_buffer(buffer)?;
+        }
+        return Ok(bytes_written)
+    }
+}
+
+#[derive(Clone, PartialEq, Debug)]
 pub enum ProgramInstruction {
     InitProgramState(InitProgramStateParams),
     InitTokenState(InitTokenStateParams),
@@ -434,48 +593,315 @@ pub enum ProgramInstruction {
     RollbackBatchWithdraw(RollbackWithdrawBatchParams),
 }
 
-#[derive(Clone, BorshSerialize, BorshDeserialize)]
+impl ProgramInstruction {
+    pub fn from_slice(data: &[u8]) -> Result<Self, ProgramError> {
+        let instr_type = data[0];
+        let params_bytes = &data[1..];
+        match instr_type {
+            0 => Ok(Self::InitProgramState(InitProgramStateParams::from_slice(params_bytes)?)),
+            1 => Ok(Self::InitTokenState(InitTokenStateParams::from_slice(params_bytes)?)),
+            2 => Ok(Self::InitWalletBalances(InitWalletBalancesParams::from_slice(params_bytes)?)),
+            3 => Ok(Self::BatchDeposit(DepositBatchParams::from_slice(params_bytes)?)),
+            4 => Ok(Self::BatchWithdraw(WithdrawBatchParams::from_slice(params_bytes)?)),
+            5 => Ok(Self::PrepareBatchSettlement(SettlementBatchParams::from_slice(params_bytes)?)),
+            6 => Ok(Self::SubmitBatchSettlement(SettlementBatchParams::from_slice(params_bytes)?)),
+            7 => Ok(Self::RollbackBatchSettlement()),
+            8 => Ok(Self::RollbackBatchWithdraw(RollbackWithdrawBatchParams::from_slice(params_bytes)?)),
+            _ => Err(ProgramError::InvalidInstructionData)
+        }
+    }
+
+    pub fn to_vec(&self) -> Result<Vec<u8>, io::Error> {
+        let mut buffer = Vec::new();
+        return match self {
+            Self::InitProgramState(params) => {
+                let _ = buffer.write(&0_u8.to_be_bytes())?;
+                let _ = params.write_to_buffer(&mut buffer)?;
+                Ok(buffer)
+            }
+            Self::InitTokenState(params) => {
+                let _ = buffer.write(&1_u8.to_be_bytes())?;
+                let _ = params.write_to_buffer(&mut buffer)?;
+                Ok(buffer)
+            }
+            Self::InitWalletBalances(params) => {
+                let _ = buffer.write(&2_u8.to_be_bytes())?;
+                let _ = params.write_to_buffer(&mut buffer)?;
+                Ok(buffer)
+            }
+            Self::BatchDeposit(params) => {
+                let _ = buffer.write(&3_u8.to_be_bytes())?;
+                let _ = params.write_to_buffer(&mut buffer)?;
+                Ok(buffer)
+            }
+            Self::BatchWithdraw(params) => {
+                let _ = buffer.write(&4_u8.to_be_bytes())?;
+                let _ = params.write_to_buffer(&mut buffer)?;
+                Ok(buffer)
+            }
+            Self::PrepareBatchSettlement(params) => {
+                let _ = buffer.write(&5_u8.to_be_bytes())?;
+                let _ = params.write_to_buffer(&mut buffer)?;
+                Ok(buffer)
+            }
+            Self::SubmitBatchSettlement(params) => {
+                let _ = buffer.write(&6_u8.to_be_bytes())?;
+                let _ = params.write_to_buffer(&mut buffer)?;
+                Ok(buffer)
+            }
+            Self::RollbackBatchSettlement() => {
+                let _ = buffer.write(&7_u8.to_be_bytes())?;
+                Ok(buffer)
+            }
+            Self::RollbackBatchWithdraw(params) => {
+                let _ = buffer.write(&8_u8.to_be_bytes())?;
+                let _ = params.write_to_buffer(&mut buffer)?;
+                Ok(buffer)
+            }
+        }
+    }
+}
+
+#[derive(Clone, PartialEq, Debug)]
 pub struct InitProgramStateParams {
     pub fee_account: String,
     pub program_change_address: String,
     pub network_type: NetworkType,
 }
 
-#[derive(Clone, BorshSerialize, BorshDeserialize)]
+impl InitProgramStateParams {
+    pub fn from_slice(data: &[u8]) -> Result<Self, ProgramError> {
+        let mut offset = 0;
+
+        let fee_account = string_from_slice(&data[offset..], MAX_ADDRESS_SIZE)
+            .map_err(|_| ProgramError::InvalidInstructionData)?;
+        offset += MAX_ADDRESS_SIZE;
+
+        let program_change_address = string_from_slice(&data[offset..], MAX_ADDRESS_SIZE)
+            .map_err(|_| ProgramError::InvalidInstructionData)?;
+        offset += MAX_ADDRESS_SIZE;
+
+        let network_type = NetworkType::from_u8(data[offset]);
+
+        return Ok(InitProgramStateParams {
+            fee_account: fee_account,
+            program_change_address: program_change_address,
+            network_type: network_type
+        })
+    }
+
+    pub fn write_to_buffer(&self, buffer: &mut Vec<u8>) -> Result<usize, io::Error> {
+        let mut bytes_written = 0;
+
+        bytes_written += write_string_to_buffer(&self.fee_account, buffer, MAX_ADDRESS_SIZE)?;
+        bytes_written += write_string_to_buffer(&self.program_change_address, buffer, MAX_ADDRESS_SIZE)?;
+        bytes_written += self.network_type.write_to_buffer(buffer)?;
+
+        return Ok(bytes_written)
+    }
+}
+
+#[derive(Clone, PartialEq, Debug)]
 pub struct InitTokenStateParams {
     pub token_id: String,
 }
 
-#[derive(Clone, BorshSerialize, BorshDeserialize)]
+impl InitTokenStateParams {
+    pub fn from_slice(data: &[u8]) -> Result<Self, ProgramError> {
+        return Ok(Self {
+            token_id: string_from_slice(&data, MAX_TOKEN_ID_SIZE)
+                .map_err(|_| ProgramError::InvalidInstructionData)
+                ?.to_string()
+        })
+    }
+
+    pub fn write_to_buffer(&self, buffer: &mut Vec<u8>) -> Result<usize, io::Error> {
+        return write_string_to_buffer(&self.token_id, buffer, MAX_TOKEN_ID_SIZE)
+    }
+}
+
+#[derive(Clone, PartialEq, Debug)]
 pub struct InitWalletBalancesParams {
     pub token_state_setups: Vec<TokenStateSetup>,
 }
 
-#[derive(Clone, BorshSerialize, BorshDeserialize)]
+impl InitWalletBalancesParams {
+    pub fn from_slice(data: &[u8]) -> Result<Self, ProgramError> {
+        let token_state_setups_count = usize::from(data[0]);
+        let mut token_state_setups: Vec<TokenStateSetup> = Vec::with_capacity(token_state_setups_count);
+        let mut offset = 1;
+
+        while offset < data.len() {
+            let token_state_setup = TokenStateSetup::from_slice(&data[offset..])?;
+            offset += token_state_setup.expected_slice_size();
+            token_state_setups.push(token_state_setup);
+        }
+
+        if token_state_setups.len() != token_state_setups_count {
+            return Err(ProgramError::InvalidInstructionData);
+        }
+
+        return Ok(Self {
+            token_state_setups: token_state_setups
+        })
+    }
+
+    pub fn write_to_buffer(&self, buffer: &mut Vec<u8>) -> Result<usize, io::Error> {
+        let mut bytes_written = 0;
+        bytes_written += buffer.write(&(self.token_state_setups.len() as u8).to_be_bytes())?;
+
+        for token_state_setup in &self.token_state_setups {
+            bytes_written += token_state_setup.write_to_buffer(buffer)?;
+        }
+
+        return Ok(bytes_written)
+    }
+}
+
+#[derive(Clone, PartialEq, Debug)]
 pub struct DepositBatchParams {
     pub token_deposits: Vec<TokenDeposits>,
 }
 
-#[derive(Clone, BorshSerialize, BorshDeserialize)]
+impl DepositBatchParams {
+    pub fn from_slice(data: &[u8]) -> Result<Self, ProgramError> {
+        let token_deposits_count = usize::from(data[0]);
+        let mut token_deposits: Vec<TokenDeposits> = Vec::with_capacity(token_deposits_count);
+        let mut offset = 1;
+
+        while offset < data.len() {
+            let deposits = TokenDeposits::from_slice(&data[offset..])?;
+            offset += deposits.expected_slice_size();
+            token_deposits.push(deposits);
+        }
+
+        if token_deposits.len() != token_deposits_count {
+            return Err(ProgramError::InvalidInstructionData);
+        }
+
+        return Ok(Self {
+            token_deposits: token_deposits
+        })
+    }
+
+    pub fn write_to_buffer(&self, buffer: &mut Vec<u8>) -> Result<usize, io::Error> {
+        let mut bytes_written = buffer.write(&(self.token_deposits.len() as u8).to_be_bytes())?;
+        for token_deposits in &self.token_deposits {
+            bytes_written += token_deposits.write_to_buffer(buffer)?;
+        }
+        Ok(bytes_written)
+    }
+}
+
+#[derive(Clone, PartialEq, Debug)]
 pub struct TokenDeposits {
     pub account_index: u8,
     pub deposits: Vec<Adjustment>,
 }
 
-#[derive(Clone, BorshSerialize, BorshDeserialize)]
+impl TokenDeposits {
+    pub fn from_slice(data: &[u8]) -> Result<Self, ProgramError> {
+        return Ok(Self {
+            account_index: data[0],
+            deposits: Adjustment::collection_from_slice(&data[1..])?
+        })
+    }
+
+    pub fn expected_slice_size(&self) -> usize {
+        return 2 + self.deposits.len() * Adjustment::SIZE;
+    }
+
+    pub fn write_to_buffer(&self, buffer: &mut Vec<u8>) -> Result<usize, io::Error> {
+        let mut bytes_written = 0;
+        bytes_written += buffer.write(&self.account_index.to_be_bytes())?;
+        bytes_written += Adjustment::write_collection_to_buffer(&self.deposits, buffer)?;
+        return Ok(bytes_written)
+    }
+}
+
+#[derive(Clone, PartialEq, Debug)]
 pub struct TokenWithdrawals {
     pub account_index: u8,
     pub withdrawals: Vec<Withdrawal>,
 }
 
-#[derive(Clone, BorshSerialize, BorshDeserialize)]
-pub struct WithdrawBatchParams {
-    pub token_withdrawals: Vec<TokenWithdrawals>,
-    pub change_amount: u64,
-    pub tx_hex: Vec<u8>,
+impl TokenWithdrawals {
+    pub fn from_slice(data: &[u8]) -> Result<Self, ProgramError> {
+        return Ok(Self {
+            account_index: data[0],
+            withdrawals: Withdrawal::collection_from_slice(&data[1..])?
+        })
+    }
+
+    pub fn expected_slice_size(&self) -> usize {
+        return 2 + self.withdrawals.len() * Withdrawal::SIZE;
+    }
+
+    pub fn write_to_buffer(&self, buffer: &mut Vec<u8>) -> Result<usize, io::Error> {
+        return Ok(buffer.write(&self.account_index.to_be_bytes())? + Withdrawal::write_collection_to_buffer(&self.withdrawals, buffer)?)
+    }
 }
 
-#[derive(Clone, BorshSerialize, BorshDeserialize)]
+#[derive(Clone, PartialEq, Debug)]
+pub struct WithdrawBatchParams {
+    pub tx_hex: Vec<u8>,
+    pub change_amount: u64,
+    pub token_withdrawals: Vec<TokenWithdrawals>,
+}
+
+impl WithdrawBatchParams {
+    pub fn from_slice(data: &[u8]) -> Result<Self, ProgramError> {
+        let mut offset = 0;
+
+        let tx_hex_size = usize::from(u16::from_be_bytes(data[0..2].try_into().unwrap()));
+        offset += 2;
+        let tx_hex = data[offset..(offset + tx_hex_size)].to_vec();
+        offset += tx_hex_size;
+
+        let change_amount = u64::from_be_bytes(data[offset..(offset + 8)].try_into().unwrap());
+        offset += 8;
+
+        let token_withdrawals_count = usize::from(data[offset]);
+        offset += 1;
+
+        let mut token_withdrawals: Vec<TokenWithdrawals> = Vec::with_capacity(token_withdrawals_count);
+        while offset < data.len() {
+            let withdrawals = TokenWithdrawals::from_slice(&data[offset..])?;
+            offset += withdrawals.expected_slice_size();
+            token_withdrawals.push(withdrawals);
+        }
+
+        if token_withdrawals.len() != token_withdrawals_count {
+            return Err(ProgramError::InvalidInstructionData)
+        }
+
+        return Ok(Self {
+            tx_hex: tx_hex,
+            change_amount: change_amount,
+            token_withdrawals: token_withdrawals,
+        })
+    }
+
+    pub fn write_to_buffer(&self, buffer: &mut Vec<u8>) -> Result<usize, io::Error> {
+        let mut bytes_written = 0;
+        bytes_written += buffer.write(&(self.tx_hex.len() as u16).to_be_bytes())?;
+        bytes_written += buffer.write(self.tx_hex.as_slice())?;
+        bytes_written += buffer.write(&self.change_amount.to_be_bytes())?;
+        bytes_written += buffer.write(&((self.token_withdrawals.len() as u8).to_be_bytes()))?;
+        for token_withdrawals in &self.token_withdrawals {
+            bytes_written += token_withdrawals.write_to_buffer(buffer)?;
+        }
+        return Ok(bytes_written)
+    }
+
+    pub fn to_vec(&self) -> Result<Vec<u8>, io::Error> {
+        let mut buffer = Vec::new();
+        let _ = self.write_to_buffer(&mut buffer)?;
+        return Ok(buffer);
+    }
+}
+
+#[derive(Clone, PartialEq, Debug)]
 pub struct SettlementAdjustments {
     pub account_index: u8,
     pub increments: Vec<Adjustment>,
@@ -483,14 +909,124 @@ pub struct SettlementAdjustments {
     pub fee_amount: u64,
 }
 
-#[derive(Clone, BorshSerialize, BorshDeserialize)]
+impl SettlementAdjustments {
+    pub fn from_slice(data: &[u8]) -> Result<Self, ProgramError> {
+        let account_index = data[0];
+        let mut offset: usize = 1;
+
+        let increments = Adjustment::collection_from_slice(&data[offset..])?;
+        offset += Adjustment::collection_size(&increments);
+
+        let decrements = Adjustment::collection_from_slice(&data[offset..])?;
+        offset += Adjustment::collection_size(&decrements);
+
+        return Ok(Self {
+            account_index: account_index,
+            increments: increments,
+            decrements: decrements,
+            fee_amount: u64::from_be_bytes(data[offset..(offset + 8)].try_into().unwrap())
+        })
+    }
+
+    pub fn expected_slice_size(&self) -> usize {
+        return 1 + Adjustment::collection_size(&self.increments) + Adjustment::collection_size(&self.decrements) + 8;
+    }
+
+    pub fn write_to_buffer(&self, buffer: &mut Vec<u8>) -> Result<usize, io::Error> {
+        return Ok(
+            buffer.write(&self.account_index.to_be_bytes())?
+                + Adjustment::write_collection_to_buffer(&self.increments, buffer)?
+                + Adjustment::write_collection_to_buffer(&self.decrements, buffer)?
+                + buffer.write(&self.fee_amount.to_be_bytes())?
+        )
+    }
+}
+
+#[derive(Clone, PartialEq, Debug)]
 pub struct SettlementBatchParams {
     pub settlements: Vec<SettlementAdjustments>
 }
 
-#[derive(Clone, BorshSerialize, BorshDeserialize)]
+impl SettlementBatchParams {
+    pub fn from_slice(data: &[u8]) -> Result<Self, ProgramError> {
+        let settlements_count = usize::from(u16::from_be_bytes(data[0..2].try_into().map_err(|_| ProgramError::InvalidInstructionData)?));
+        let mut settlements: Vec<SettlementAdjustments> = Vec::with_capacity(settlements_count);
+
+        let mut offset: usize = 2;
+
+        while offset < data.len() {
+            let settlement_adjustments = SettlementAdjustments::from_slice(&data[offset..])?;
+            offset += settlement_adjustments.expected_slice_size();
+            settlements.push(settlement_adjustments);
+        }
+
+        if settlements.len() != settlements_count {
+            return Err(ProgramError::InvalidInstructionData)
+        }
+
+        return Ok(Self {
+            settlements: settlements
+        })
+    }
+
+    pub fn write_to_buffer(&self, buffer: &mut Vec<u8>) -> Result<usize, io::Error> {
+        let mut bytes_written = 0;
+        bytes_written += buffer.write(&((self.settlements.len() as u16).to_be_bytes()))?;
+        for settlement_adjustments in &self.settlements {
+            bytes_written += settlement_adjustments.write_to_buffer(buffer)?;
+        }
+        return Ok(bytes_written)
+    }
+
+    pub fn to_vec(&self) -> Result<Vec<u8>, io::Error> {
+        let mut buffer = Vec::new();
+        let _ = self.write_to_buffer(&mut buffer)?;
+        return Ok(buffer);
+    }
+}
+
+#[derive(Clone, PartialEq, Debug)]
 pub struct RollbackWithdrawBatchParams {
     pub token_withdrawals: Vec<TokenWithdrawals>,
+}
+
+impl RollbackWithdrawBatchParams {
+    pub fn from_slice(data: &[u8]) -> Result<Self, ProgramError> {
+        let mut offset = 0;
+
+        let token_withdrawals_count = usize::from(data[offset]);
+        offset += 1;
+
+        let mut token_withdrawals: Vec<TokenWithdrawals> = Vec::with_capacity(token_withdrawals_count);
+        while offset < data.len() {
+            let withdrawals = TokenWithdrawals::from_slice(&data[offset..])?;
+            offset += withdrawals.expected_slice_size();
+            token_withdrawals.push(withdrawals);
+        }
+
+        if token_withdrawals.len() != token_withdrawals_count {
+            return Err(ProgramError::InvalidInstructionData)
+        }
+
+        return Ok(Self {
+            token_withdrawals: token_withdrawals,
+        })
+    }
+
+    pub fn write_to_buffer(&self, buffer: &mut Vec<u8>) -> Result<usize, io::Error> {
+        let mut bytes_written = 0;
+        bytes_written += buffer.write(&((self.token_withdrawals.len() as u8).to_be_bytes()))?;
+        for token_withdrawals in &self.token_withdrawals {
+            bytes_written += token_withdrawals.write_to_buffer(buffer)?;
+        }
+        return Ok(bytes_written)
+    }
+
+    pub fn to_vec(&self) -> Result<Vec<u8>, io::Error> {
+        let mut buffer = Vec::new();
+        let _ = self.write_to_buffer(&mut buffer)?;
+        return Ok(buffer);
+    }
 }
 
 fn get_address(account: &AccountInfo, offset: usize) -> Result<String, ProgramError> {
@@ -516,9 +1052,366 @@ fn hash_from_slice(account: &AccountInfo, offset: usize) -> Result<Hash, Program
     Ok(tmp)
 }
 
+fn string_from_slice(data: &[u8], max_size: usize) -> Result<String, Utf8Error> {
+    let end_pos = data[0..max_size].iter().position(|&r| r == 0).unwrap_or(MAX_ADDRESS_SIZE);
+    return Ok(str::from_utf8(&data[..end_pos])?.to_string())
+}
+
+fn write_string_to_buffer(string: &String, buffer: &mut Vec<u8>, padded_size: usize) -> Result<usize, io::Error> {
+    let mut bytes_written = 0;
+    let str_bytes = string.as_bytes();
+    let padding = padded_size - str_bytes.len();
+
+    bytes_written += buffer.write(str_bytes)?;
+    buffer.resize(buffer.len() + padding, 0);
+    bytes_written += padding;
+
+    Ok(bytes_written)
+}
+
 pub fn wallet_last4(address: &str) -> WalletLast4 {
     let mut tmp: WalletLast4 = [0u8; 4];
     tmp[0..4].copy_from_slice(&address.as_bytes()[address.len()-4..address.len()]);
     tmp
+}
+
+/// Running Tests
+///
+#[cfg(test)]
+mod tests {
+    use crate::exchange::*;
+
+    #[test]
+    fn test_instructions_serialization() {
+        let instruction = ProgramInstruction::InitProgramState(InitProgramStateParams {
+            fee_account: "132F25rTsvBdp9JzLLBHP5mvGY66i1xdiM".to_string(),
+            program_change_address: "33iFwdLuRpW1uK1RTRqsoi8rR4NpDzk66k".to_string(),
+            network_type: NetworkType::Regtest
+        });
+        assert_eq!(instruction, ProgramInstruction::from_slice(&instruction.to_vec().unwrap()).unwrap());
+
+        let instruction = ProgramInstruction::InitTokenState(InitTokenStateParams {
+            token_id: "BTC".to_string(),
+        });
+        assert_eq!(instruction, ProgramInstruction::from_slice(&instruction.to_vec().unwrap()).unwrap());
+
+        let instruction = ProgramInstruction::InitWalletBalances(InitWalletBalancesParams {
+            token_state_setups: vec![
+                TokenStateSetup {
+                    account_index: 0,
+                    wallet_addresses: vec![
+                        "132F25rTsvBdp9JzLLBHP5mvGY66i1xdiM".to_string(),
+                        "33iFwdLuRpW1uK1RTRqsoi8rR4NpDzk66k".to_string()
+                    ]
+                },
+                TokenStateSetup {
+                    account_index: 1,
+                    wallet_addresses: vec![
+                        "33iFwdLuRpW1uK1RTRqsoi8rR4NpDzk66k".to_string(),
+                        "132F25rTsvBdp9JzLLBHP5mvGY66i1xdiM".to_string()
+                    ]
+                }
+            ]
+        });
+        assert_eq!(instruction, ProgramInstruction::from_slice(&instruction.to_vec().unwrap()).unwrap());
+
+        let instruction = ProgramInstruction::BatchDeposit(DepositBatchParams {
+            token_deposits: vec![
+                TokenDeposits {
+                    account_index: 0,
+                    deposits: vec![
+                        Adjustment {
+                            address_index: AddressIndex {
+                                index: 123,
+                                last4: [1, 2, 3, 4]
+                            },
+                            amount: 456
+                        },
+                        Adjustment {
+                            address_index: AddressIndex {
+                                index: 321,
+                                last4: [5, 6, 7, 8]
+                            },
+                            amount: 654
+                        }
+                    ]
+                },
+                TokenDeposits {
+                    account_index: 1,
+                    deposits: vec![
+                        Adjustment {
+                            address_index: AddressIndex {
+                                index: 111,
+                                last4: [1, 2, 3, 4]
+                            },
+                            amount: 222
+                        },
+                        Adjustment {
+                            address_index: AddressIndex {
+                                index: 333,
+                                last4: [4, 3, 2, 1]
+                            },
+                            amount: 444
+                        }
+                    ]
+                }
+            ]
+        });
+        assert_eq!(instruction, ProgramInstruction::from_slice(&instruction.to_vec().unwrap()).unwrap());
+
+        let instruction = ProgramInstruction::BatchWithdraw(WithdrawBatchParams {
+            tx_hex: vec![1, 2, 3],
+            change_amount: 123,
+            token_withdrawals: vec![
+                TokenWithdrawals {
+                    account_index: 0,
+                    withdrawals: vec![
+                        Withdrawal {
+                            address_index: AddressIndex {
+                                index: 123,
+                                last4: [1, 2, 3, 4]
+                            },
+                            amount: 456,
+                            fee_amount: 789
+                        },
+                        Withdrawal {
+                            address_index: AddressIndex {
+                                index: 321,
+                                last4: [4, 3, 2, 1]
+                            },
+                            amount: 654,
+                            fee_amount: 987
+                        }
+                    ]
+                },
+                TokenWithdrawals {
+                    account_index: 1,
+                    withdrawals: vec![
+                        Withdrawal {
+                            address_index: AddressIndex {
+                                index: 111,
+                                last4: [1, 2, 3, 4]
+                            },
+                            amount: 222,
+                            fee_amount: 333
+                        },
+                        Withdrawal {
+                            address_index: AddressIndex {
+                                index: 444,
+                                last4: [4, 3, 2, 1]
+                            },
+                            amount: 555,
+                            fee_amount: 666
+                        }
+                    ]
+                }
+            ]
+        });
+        assert_eq!(instruction, ProgramInstruction::from_slice(&instruction.to_vec().unwrap()).unwrap());
+
+        let instruction = ProgramInstruction::PrepareBatchSettlement(SettlementBatchParams {
+            settlements: vec![
+                SettlementAdjustments {
+                    account_index: 0,
+                    increments: vec![
+                        Adjustment {
+                            address_index: AddressIndex {
+                                index: 111,
+                                last4: [1, 2, 3, 4]
+                            },
+                            amount: 222
+                        },
+                        Adjustment {
+                            address_index: AddressIndex {
+                                index: 333,
+                                last4: [4, 3, 2, 1]
+                            },
+                            amount: 444
+                        }
+                    ],
+                    decrements: vec![
+                        Adjustment {
+                            address_index: AddressIndex {
+                                index: 555,
+                                last4: [1, 2, 3, 4]
+                            },
+                            amount: 666
+                        },
+                        Adjustment {
+                            address_index: AddressIndex {
+                                index: 777,
+                                last4: [4, 3, 2, 1]
+                            },
+                            amount: 888
+                        }
+                    ],
+                    fee_amount: 123
+                },
+                SettlementAdjustments {
+                    account_index: 1,
+                    increments: vec![
+                        Adjustment {
+                            address_index: AddressIndex {
+                                index: 1111,
+                                last4: [1, 2, 3, 4]
+                            },
+                            amount: 2222
+                        },
+                        Adjustment {
+                            address_index: AddressIndex {
+                                index: 3333,
+                                last4: [4, 3, 2, 1]
+                            },
+                            amount: 4444
+                        }
+                    ],
+                    decrements: vec![
+                        Adjustment {
+                            address_index: AddressIndex {
+                                index: 5555,
+                                last4: [1, 2, 3, 4]
+                            },
+                            amount: 6666
+                        },
+                        Adjustment {
+                            address_index: AddressIndex {
+                                index: 7777,
+                                last4: [4, 3, 2, 1]
+                            },
+                            amount: 8888
+                        }
+                    ],
+                    fee_amount: 1234
+                }
+            ]
+        });
+        assert_eq!(instruction, ProgramInstruction::from_slice(&instruction.to_vec().unwrap()).unwrap());
+
+        let instruction = ProgramInstruction::SubmitBatchSettlement(SettlementBatchParams {
+            settlements: vec![
+                SettlementAdjustments {
+                    account_index: 0,
+                    increments: vec![
+                        Adjustment {
+                            address_index: AddressIndex {
+                                index: 111,
+                                last4: [1, 2, 3, 4]
+                            },
+                            amount: 222
+                        },
+                        Adjustment {
+                            address_index: AddressIndex {
+                                index: 333,
+                                last4: [4, 3, 2, 1]
+                            },
+                            amount: 444
+                        }
+                    ],
+                    decrements: vec![
+                        Adjustment {
+                            address_index: AddressIndex {
+                                index: 555,
+                                last4: [1, 2, 3, 4]
+                            },
+                            amount: 666
+                        },
+                        Adjustment {
+                            address_index: AddressIndex {
+                                index: 777,
+                                last4: [4, 3, 2, 1]
+                            },
+                            amount: 888
+                        }
+                    ],
+                    fee_amount: 123
+                },
+                SettlementAdjustments {
+                    account_index: 1,
+                    increments: vec![
+                        Adjustment {
+                            address_index: AddressIndex {
+                                index: 1111,
+                                last4: [1, 2, 3, 4]
+                            },
+                            amount: 2222
+                        },
+                        Adjustment {
+                            address_index: AddressIndex {
+                                index: 3333,
+                                last4: [4, 3, 2, 1]
+                            },
+                            amount: 4444
+                        }
+                    ],
+                    decrements: vec![
+                        Adjustment {
+                            address_index: AddressIndex {
+                                index: 5555,
+                                last4: [1, 2, 3, 4]
+                            },
+                            amount: 6666
+                        },
+                        Adjustment {
+                            address_index: AddressIndex {
+                                index: 7777,
+                                last4: [4, 3, 2, 1]
+                            },
+                            amount: 8888
+                        }
+                    ],
+                    fee_amount: 1234
+                }
+            ]
+        });
+        assert_eq!(instruction, ProgramInstruction::from_slice(&instruction.to_vec().unwrap()).unwrap());
+
+        let instruction = ProgramInstruction::RollbackBatchWithdraw(RollbackWithdrawBatchParams {
+            token_withdrawals: vec![
+                TokenWithdrawals {
+                    account_index: 0,
+                    withdrawals: vec![
+                        Withdrawal {
+                            address_index: AddressIndex {
+                                index: 123,
+                                last4: [1, 2, 3, 4]
+                            },
+                            amount: 456,
+                            fee_amount: 789
+                        },
+                        Withdrawal {
+                            address_index: AddressIndex {
+                                index: 321,
+                                last4: [4, 3, 2, 1]
+                            },
+                            amount: 654,
+                            fee_amount: 987
+                        }
+                    ]
+                },
+                TokenWithdrawals {
+                    account_index: 1,
+                    withdrawals: vec![
+                        Withdrawal {
+                            address_index: AddressIndex {
+                                index: 111,
+                                last4: [1, 2, 3, 4]
+                            },
+                            amount: 222,
+                            fee_amount: 333
+                        },
+                        Withdrawal {
+                            address_index: AddressIndex {
+                                index: 444,
+                                last4: [4, 3, 2, 1]
+                            },
+                            amount: 555,
+                            fee_amount: 666
+                        }
+                    ]
+                }
+            ]
+        });
+        assert_eq!(instruction, ProgramInstruction::from_slice(&instruction.to_vec().unwrap()).unwrap());
+    }
 }
 

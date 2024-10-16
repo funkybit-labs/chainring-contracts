@@ -405,9 +405,9 @@ mod tests {
             .map(|_| CallerInfo::generate_new().unwrap().address.to_string())
             .collect::<Vec<String>>();
 
-        // send in chunks of 25 so not to exceed max instruction size
+        // send in chunks not to exceed max instruction size
         let txids: Vec<String> = wallets
-            .chunks(25)
+            .chunks(19)
             .enumerate()
             .map(|(i, chunk)| {
                 let params = InitWalletBalancesParams {
@@ -434,7 +434,7 @@ mod tests {
                                 is_writable: true
                             }
                         ],
-                        data: borsh::to_vec(&ProgramInstruction::InitWalletBalances(params.clone())).unwrap()
+                        data: ProgramInstruction::InitWalletBalances(params.clone()).to_vec().unwrap()
                     },
                     vec![submitter_keypair],
                 ).expect("signing and sending a transaction should not fail");
@@ -677,7 +677,7 @@ mod tests {
                        is_writable: true
                     }
                 ],
-                data: borsh::to_vec(&ProgramInstruction::BatchDeposit(params.clone())).unwrap()
+                data: ProgramInstruction::BatchDeposit(params.clone()).to_vec().unwrap()
             },
             vec![submitter_keypair],
         ).expect("signing and sending a transaction should not fail");
@@ -722,7 +722,7 @@ mod tests {
                         is_writable: true
                     }
                 ],
-                data: borsh::to_vec(&ProgramInstruction::BatchWithdraw(params.clone())).unwrap()
+                data: ProgramInstruction::BatchWithdraw(params.clone()).to_vec().unwrap()
             },
             vec![submitter_keypair],
         ).expect("signing and sending a transaction should not fail");
@@ -839,7 +839,7 @@ mod tests {
                         is_writable: false
                     }
                 ],
-                data: borsh::to_vec(&ProgramInstruction::PrepareBatchSettlement(params.clone())).unwrap()
+                data: ProgramInstruction::PrepareBatchSettlement(params.clone()).to_vec().unwrap()
             },
             vec![submitter_keypair],
         ).expect("signing and sending a transaction should not fail");
@@ -851,7 +851,7 @@ mod tests {
         let program_state: ProgramState = ProgramState::from_slice(&state_account.data);
         assert_eq!(
             hex::encode(program_state.settlement_batch_hash),
-            hash(borsh::to_vec(&params).unwrap()),
+            hash(params.to_vec().unwrap()),
         );
     }
 
@@ -869,7 +869,7 @@ mod tests {
                         is_writable: true
                     },
                 ],
-                data: borsh::to_vec(&ProgramInstruction::RollbackBatchSettlement()).unwrap()
+                data: ProgramInstruction::RollbackBatchSettlement().to_vec().unwrap()
             },
             vec![submitter_keypair],
         ).expect("signing and sending a transaction should not fail");
@@ -912,7 +912,7 @@ mod tests {
                         is_writable: true
                     }
                 ],
-                data: borsh::to_vec(&ProgramInstruction::SubmitBatchSettlement(params.clone())).unwrap()
+                data: ProgramInstruction::SubmitBatchSettlement(params.clone()).to_vec().unwrap()
             },
             vec![submitter_keypair],
         ).expect("signing and sending a transaction should not fail");
@@ -929,7 +929,7 @@ mod tests {
 
         assert_eq!(
             hex::encode(program_state.last_settlement_batch_hash),
-            hash(borsh::to_vec(&params).unwrap()),
+            hash(params.to_vec().unwrap()),
         );
     }
 
@@ -949,7 +949,7 @@ mod tests {
                     is_signer: true,
                     is_writable: true
                 }],
-                data: borsh::to_vec(&ProgramInstruction::InitProgramState(params.clone())).unwrap()
+                data: ProgramInstruction::InitProgramState(params.clone()).to_vec().unwrap()
             },
             vec![submitter_keypair],
         ).expect("signing and sending a transaction should not fail");
@@ -987,7 +987,7 @@ mod tests {
                         is_writable: true
                     }
                 ],
-                data: borsh::to_vec(&ProgramInstruction::InitTokenState(params.clone())).unwrap()
+                data: ProgramInstruction::InitTokenState(params.clone()).to_vec().unwrap()
             },
             vec![submitter_keypair],
         ).expect("signing and sending a transaction should not fail");
@@ -1038,7 +1038,7 @@ mod tests {
                             is_writable: true
                         }
                     ],
-                    data: borsh::to_vec(&ProgramInstruction::InitWalletBalances(params.clone())).unwrap()
+                    data: ProgramInstruction::InitWalletBalances(params.clone()).to_vec().unwrap()
                 },
                 vec![submitter_keypair],
             ).expect("signing and sending a transaction should not fail");

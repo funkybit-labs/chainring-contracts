@@ -23,12 +23,11 @@ pub fn process_instruction(
     accounts: &[AccountInfo],
     instruction_data: &[u8],
 ) -> Result<(), ProgramError> {
-
-    let exchange_instruction: ProgramInstruction = borsh::from_slice(instruction_data).unwrap();
-    match exchange_instruction {
-        ProgramInstruction::InitProgramState(params) =>  init_program_state(accounts, &params),
-        ProgramInstruction::InitTokenState(params) =>  init_token_state(accounts, &params),
-        ProgramInstruction::InitWalletBalances(params) =>  init_wallet_balances(accounts, &params),
+    let instruction = ProgramInstruction::from_slice(instruction_data)?;
+    match instruction {
+        ProgramInstruction::InitProgramState(params) => init_program_state(accounts, &params),
+        ProgramInstruction::InitTokenState(params) => init_token_state(accounts, &params),
+        ProgramInstruction::InitWalletBalances(params) => init_wallet_balances(accounts, &params),
         ProgramInstruction::BatchDeposit(params) => deposit_batch(accounts, &params),
         ProgramInstruction::BatchWithdraw(params) => withdraw_batch(program_id, accounts, &params),
         ProgramInstruction::SubmitBatchSettlement(params) => submit_settlement_batch(accounts, &params),
@@ -124,7 +123,7 @@ pub fn withdraw_batch(program_id: &Pubkey, accounts: &[AccountInfo], params: &Wi
         )?;
     }
 
-    ProgramState::set_last_withdrawal_hash(&accounts[0], hash(borsh::to_vec(&params).unwrap()))?;
+    ProgramState::set_last_withdrawal_hash(&accounts[0], hash(params.to_vec().unwrap()))?;
 
     if params.change_amount > 0 {
         tx.output.push(
@@ -170,7 +169,7 @@ pub fn rollback_withdraw_batch(accounts: &[AccountInfo], params: &RollbackWithdr
 pub fn submit_settlement_batch(accounts: &[AccountInfo], params: &SettlementBatchParams) -> Result<(), ProgramError> {
 
     let current_hash = ProgramState::get_settlement_hash(&accounts[0])?;
-    let params_hash = hash(borsh::to_vec(&params).unwrap());
+    let params_hash = hash(params.to_vec().unwrap());
 
     if current_hash == EMPTY_HASH {
         return Err(ProgramError::Custom(ERROR_NO_SETTLEMENT_IN_PROGRESS));
@@ -224,7 +223,7 @@ pub fn prepare_settlement_batch(accounts: &[AccountInfo], params: &SettlementBat
         }
     }
 
-    ProgramState::set_settlement_hash(&accounts[0], hash(borsh::to_vec(&params).unwrap()))
+    ProgramState::set_settlement_hash(&accounts[0], hash(params.to_vec().unwrap()))
 }
 
 pub fn rollback_settlement_batch(accounts: &[AccountInfo]) -> Result<(), ProgramError> {

@@ -382,7 +382,6 @@ dependencies = [
  "arch_program",
  "bitcoin",
  "bitcoincore-rpc",
- "borsh",
  "common",
  "ctor",
  "env_logger",
@@ -779,7 +778,6 @@ name = "model"
 version = "0.1.0"
 dependencies = [
  "arch_program",
- "borsh",
 ]
 
 [[package]]
