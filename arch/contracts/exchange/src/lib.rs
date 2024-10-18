@@ -27,7 +27,8 @@ mod tests {
     use log::{debug, warn};
     use sha256::digest;
     use common::models::CallerInfo;
-    use model::exchange::*;
+    use model::state::*;
+    use model::instructions::*;
 
     const TOKEN_FILE_PATHS: &'static [&'static str] = &["../../data/token1.json", "../../data/token2.json"];
     pub const SUBMITTER_FILE_PATH: &str = "../../data/submitter.json";
@@ -52,6 +53,7 @@ mod tests {
     }
 
     use lazy_static::lazy_static;
+    use model::serialization::Codable;
 
     lazy_static! {
         static ref SETUP: Setup = Setup::init();
@@ -277,8 +279,8 @@ mod tests {
                         balance: 4500,
                     }
                 ],
-            }.to_vec(),
-            TokenState::from_slice(token1_account_info.data.as_slice()).to_vec()
+            }.encode_to_vec().unwrap(),
+            TokenState::decode_from_slice(token1_account_info.data.as_slice()).unwrap().encode_to_vec().unwrap()
         );
 
         let token2_account_info = read_account_info(NODE1_ADDRESS, token2_account.clone()).unwrap();
@@ -302,8 +304,8 @@ mod tests {
                         balance: 1000,
                     }
                 ],
-            }.to_vec(),
-            TokenState::from_slice(token2_account_info.data.as_slice()).to_vec()
+            }.encode_to_vec().unwrap(),
+            TokenState::decode_from_slice(token2_account_info.data.as_slice()).unwrap().encode_to_vec().unwrap()
         );
 
 
@@ -396,7 +398,7 @@ mod tests {
 
         let token_account = accounts[1].clone();
         let account_info = read_account_info(NODE1_ADDRESS, token_account.clone()).unwrap();
-        let token_balances: TokenState = TokenState::from_slice(&account_info.data);
+        let token_balances: TokenState = TokenState::decode_from_slice(&account_info.data).unwrap();
         assert_eq!(1, token_balances.balances.len());
         let (submitter_keypair, submitter_pubkey) = with_secret_key_file(SUBMITTER_FILE_PATH).unwrap();
 
@@ -405,7 +407,7 @@ mod tests {
             .map(|_| CallerInfo::generate_new().unwrap().address.to_string())
             .collect::<Vec<String>>();
 
-        // send in chunks of 25 so not to exceed max instruction size
+        // send in chunks not to exceed max instruction size
         let txids: Vec<String> = wallets
             .chunks(25)
             .enumerate()
@@ -434,7 +436,7 @@ mod tests {
                                 is_writable: true
                             }
                         ],
-                        data: borsh::to_vec(&ProgramInstruction::InitWalletBalances(params.clone())).unwrap()
+                        data: ProgramInstruction::InitWalletBalances(params.clone()).encode_to_vec().unwrap()
                     },
                     vec![submitter_keypair],
                 ).expect("signing and sending a transaction should not fail");
@@ -452,7 +454,7 @@ mod tests {
         }
 
         let account_info = read_account_info(NODE1_ADDRESS, token_account.clone()).unwrap();
-        let token_balances: TokenState = TokenState::from_slice(&account_info.data);
+        let token_balances: TokenState = TokenState::decode_from_slice(&account_info.data).unwrap();
         assert_eq!(wallets.len() + 1, token_balances.balances.len());
 
         for (i, wallet) in wallets.iter().enumerate() {
@@ -677,7 +679,7 @@ mod tests {
                        is_writable: true
                     }
                 ],
-                data: borsh::to_vec(&ProgramInstruction::BatchDeposit(params.clone())).unwrap()
+                data: ProgramInstruction::BatchDeposit(params.clone()).encode_to_vec().unwrap()
             },
             vec![submitter_keypair],
         ).expect("signing and sending a transaction should not fail");
@@ -688,7 +690,7 @@ mod tests {
         let token_account = read_account_info(NODE1_ADDRESS, token_account.clone()).unwrap();
 
         assert_eq!(
-            expected.to_vec(), TokenState::from_slice(token_account.data.as_slice()).to_vec()
+            expected.encode_to_vec().unwrap(), TokenState::decode_from_slice(token_account.data.as_slice()).unwrap().encode_to_vec().unwrap()
         );
     }
 
@@ -700,7 +702,7 @@ mod tests {
     ) {
         debug!("Performing Withdrawal");
         let (submitter_keypair, submitter_pubkey)  = with_secret_key_file(SUBMITTER_FILE_PATH).unwrap();
-        let expected = expected.to_vec();
+        let expected = expected.encode_to_vec().unwrap();
         let wallet  = CallerInfo::with_secret_key_file(WALLET1_FILE_PATH).unwrap();
         let program_change_address = Address::from_str(&get_account_address(SETUP.program_pubkey))
             .unwrap()
@@ -722,7 +724,7 @@ mod tests {
                         is_writable: true
                     }
                 ],
-                data: borsh::to_vec(&ProgramInstruction::BatchWithdraw(params.clone())).unwrap()
+                data: ProgramInstruction::BatchWithdraw(params.clone()).encode_to_vec().unwrap()
             },
             vec![submitter_keypair],
         ).expect("signing and sending a transaction should not fail");
@@ -733,7 +735,7 @@ mod tests {
         let token_account = read_account_info(NODE1_ADDRESS, token_account.clone()).unwrap();
 
         assert_eq!(
-            expected.to_vec(), TokenState::from_slice(token_account.data.as_slice()).to_vec()
+            expected, TokenState::decode_from_slice(token_account.data.as_slice()).unwrap().encode_to_vec().unwrap()
         );
 
         let bitcoin_txid = Txid::from_str(&processed_tx.bitcoin_txids[0].clone()).unwrap();
@@ -780,7 +782,7 @@ mod tests {
     ) {
         debug!("Performing Withdrawal Rollback");
         let (submitter_keypair, submitter_pubkey)  = with_secret_key_file(SUBMITTER_FILE_PATH).unwrap();
-        let expected = expected.to_vec();
+        let expected = expected.encode_to_vec().unwrap();
 
         let (txid, _) = sign_and_send_instruction(
             Instruction {
@@ -797,7 +799,7 @@ mod tests {
                         is_writable: true
                     }
                 ],
-                data: borsh::to_vec(&ProgramInstruction::RollbackBatchWithdraw(params.clone())).unwrap()
+                data: ProgramInstruction::RollbackBatchWithdraw(params.clone()).encode_to_vec().unwrap()
             },
             vec![submitter_keypair],
         ).expect("signing and sending a transaction should not fail");
@@ -808,7 +810,7 @@ mod tests {
         let token_account = read_account_info(NODE1_ADDRESS, token_account.clone()).unwrap();
 
         assert_eq!(
-            expected.to_vec(), TokenState::from_slice(token_account.data.as_slice()).to_vec()
+            expected, TokenState::decode_from_slice(token_account.data.as_slice()).unwrap().encode_to_vec().unwrap()
         );
     }
 
@@ -839,7 +841,7 @@ mod tests {
                         is_writable: false
                     }
                 ],
-                data: borsh::to_vec(&ProgramInstruction::PrepareBatchSettlement(params.clone())).unwrap()
+                data: ProgramInstruction::PrepareBatchSettlement(params.clone()).encode_to_vec().unwrap()
             },
             vec![submitter_keypair],
         ).expect("signing and sending a transaction should not fail");
@@ -848,10 +850,10 @@ mod tests {
             .expect("get processed transaction should not fail");
 
         let state_account = read_account_info(NODE1_ADDRESS, submitter_pubkey.clone()).unwrap();
-        let program_state: ProgramState = ProgramState::from_slice(&state_account.data);
+        let program_state: ProgramState = ProgramState::decode_from_slice(&state_account.data).unwrap();
         assert_eq!(
             hex::encode(program_state.settlement_batch_hash),
-            hash(borsh::to_vec(&params).unwrap()),
+            hash(params.encode_to_vec().unwrap()),
         );
     }
 
@@ -869,7 +871,7 @@ mod tests {
                         is_writable: true
                     },
                 ],
-                data: borsh::to_vec(&ProgramInstruction::RollbackBatchSettlement()).unwrap()
+                data: ProgramInstruction::RollbackBatchSettlement().encode_to_vec().unwrap()
             },
             vec![submitter_keypair],
         ).expect("signing and sending a transaction should not fail");
@@ -878,7 +880,7 @@ mod tests {
             .expect("get processed transaction should not fail");
 
         let state_account = read_account_info(NODE1_ADDRESS, submitter_pubkey.clone()).unwrap();
-        let program_state: ProgramState = ProgramState::from_slice(&state_account.data);
+        let program_state: ProgramState = ProgramState::decode_from_slice(&state_account.data).unwrap();
         assert_eq!(
             program_state.settlement_batch_hash, EMPTY_HASH
         );
@@ -912,7 +914,7 @@ mod tests {
                         is_writable: true
                     }
                 ],
-                data: borsh::to_vec(&ProgramInstruction::SubmitBatchSettlement(params.clone())).unwrap()
+                data: ProgramInstruction::SubmitBatchSettlement(params.clone()).encode_to_vec().unwrap()
             },
             vec![submitter_keypair],
         ).expect("signing and sending a transaction should not fail");
@@ -921,7 +923,7 @@ mod tests {
             .expect("get processed transaction should not fail");
 
         let state_account = read_account_info(NODE1_ADDRESS, submitter_pubkey.clone()).unwrap();
-        let program_state: ProgramState = ProgramState::from_slice(&state_account.data);
+        let program_state: ProgramState = ProgramState::decode_from_slice(&state_account.data).unwrap();
         assert_eq!(
             program_state.settlement_batch_hash,
             EMPTY_HASH
@@ -929,7 +931,7 @@ mod tests {
 
         assert_eq!(
             hex::encode(program_state.last_settlement_batch_hash),
-            hash(borsh::to_vec(&params).unwrap()),
+            hash(params.encode_to_vec().unwrap()),
         );
     }
 
@@ -938,7 +940,7 @@ mod tests {
         expected: ProgramState,
     ) {
         let (submitter_keypair, submitter_pubkey) = with_secret_key_file(SUBMITTER_FILE_PATH).unwrap();
-        let expected = expected.to_vec();
+        let expected = expected.encode_to_vec().unwrap();
 
         debug!("Invoking contract to init state");
         let (txid, _) = sign_and_send_instruction(
@@ -949,7 +951,7 @@ mod tests {
                     is_signer: true,
                     is_writable: true
                 }],
-                data: borsh::to_vec(&ProgramInstruction::InitProgramState(params.clone())).unwrap()
+                data: ProgramInstruction::InitProgramState(params.clone()).encode_to_vec().unwrap()
             },
             vec![submitter_keypair],
         ).expect("signing and sending a transaction should not fail");
@@ -987,7 +989,7 @@ mod tests {
                         is_writable: true
                     }
                 ],
-                data: borsh::to_vec(&ProgramInstruction::InitTokenState(params.clone())).unwrap()
+                data: ProgramInstruction::InitTokenState(params.clone()).encode_to_vec().unwrap()
             },
             vec![submitter_keypair],
         ).expect("signing and sending a transaction should not fail");
@@ -998,7 +1000,7 @@ mod tests {
 
         let account = read_account_info(NODE1_ADDRESS, token_account.clone()).unwrap();
         assert_eq!(
-            expected.to_vec(), TokenState::from_slice(account.data.as_slice()).to_vec()
+            expected.encode_to_vec().unwrap(), TokenState::decode_from_slice(account.data.as_slice()).unwrap().encode_to_vec().unwrap()
         )
     }
 
@@ -1008,7 +1010,7 @@ mod tests {
     ) -> AddressIndex {
 
         let account_info = read_account_info(NODE1_ADDRESS, token_account.clone()).unwrap();
-        let token_state: TokenState = TokenState::from_slice(&account_info.data);
+        let token_state: TokenState = TokenState::decode_from_slice(&account_info.data).unwrap();
         let len = token_state.balances.len();
         let pos = token_state.balances.into_iter().position(|r| r.address == address).unwrap_or_else(|| len);
         if pos == len {
@@ -1038,7 +1040,7 @@ mod tests {
                             is_writable: true
                         }
                     ],
-                    data: borsh::to_vec(&ProgramInstruction::InitWalletBalances(params.clone())).unwrap()
+                    data: ProgramInstruction::InitWalletBalances(params.clone()).encode_to_vec().unwrap()
                 },
                 vec![submitter_keypair],
             ).expect("signing and sending a transaction should not fail");
@@ -1048,7 +1050,7 @@ mod tests {
                 .expect("get processed transaction should not fail");
         }
         let account_info = read_account_info(NODE1_ADDRESS, token_account.clone()).unwrap();
-        let token_balances: TokenState = TokenState::from_slice(&account_info.data);
+        let token_balances: TokenState = TokenState::decode_from_slice(&account_info.data).unwrap();
         AddressIndex {
             index: token_balances.balances.into_iter().position(|r| r.address == address).unwrap() as u32,
             last4: wallet_last4(&address)

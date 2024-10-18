@@ -7,7 +7,6 @@ edition = "2021"
 common = { path = "../common" }
 arch_program = { path = "../../program" }
 hex = "0.4.3"
-borsh = { version = "1.4.0", features = ["derive"] }
 bitcoin = { version = "0.31.0", features = ["serde", "rand"] }
 bitcoincore-rpc = "0.18.0"
 sha256 = "1.5.0"

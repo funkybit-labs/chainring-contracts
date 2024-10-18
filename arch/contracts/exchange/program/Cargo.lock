@@ -205,7 +205,6 @@ version = "0.1.0"
 dependencies = [
  "arch_program",
  "bitcoin",
- "borsh",
  "hex",
  "model",
  "sha256",
@@ -296,7 +295,6 @@ name = "model"
 version = "0.1.0"
 dependencies = [
  "arch_program",
- "borsh",
 ]
 
 [[package]]
