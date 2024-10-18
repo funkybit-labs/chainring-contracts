@@ -1,134 +1,17 @@
 
 services:
-  init:
-    platform: linux/amd64
-    image: ghcr.io/arch-network/validator:v0.2.3
-    volumes:
-      - ./arch/.arch-data:/arch_data
-      - ./arch/.arch-data/bootnode:/bootnode_data
-      - ./arch/scripts/init.sh:/usr/local/bin/init.sh
-    command: /usr/local/bin/init.sh
-    environment:
-      - REPLICA_COUNT=2
 
-  bootnode:
+  arch-local-validator:
     platform: linux/amd64
-    image: ghcr.io/arch-network/bootnode:v0.2.3
-    command: /usr/local/bin/bootnode.sh
+    container_name: arch-local-validator
+    image: ghcr.io/arch-network/local_validator:v0.2.8
     ports:
-      - 19001:19001
+      - 9002:9002
+    command: /usr/bin/local_validator --rpc-bind-ip 0.0.0.0 --rpc-bind-port 9002 --bitcoin-rpc-endpoint bitcoin --bitcoin-rpc-port 18443 --bitcoin-rpc-username user --bitcoin-rpc-password password
     environment:
       RUST_LOG: "info"
       RUST_BACKTRACE: "1"
-      BOOTNODE_P2P_PORT: 19001
-      NETWORK_MODE: "localnet"
-      DATA_DIR: /arch_data
-    volumes:
-      - ./arch/.arch-data/bootnode:/arch_data
-      - ./arch/scripts/bootnode.sh:/usr/local/bin/bootnode.sh
-    depends_on:
-      - init
-    networks:
-      arch-network:
-        ipv4_address: 172.30.0.250
 
-  leader:
-    platform: linux/amd64
-    image: ghcr.io/arch-network/validator:v0.2.3
-    ports:
-      - 19002:19002
-      - 9002:9002
-    command: /usr/local/bin/leader.sh
-    environment:
-      RUST_LOG: "info,validator=info"
-      RUST_BACKTRACE: "1"
-      NETWORK_MODE: localnet
-      DATA_DIR: /arch-data
-      PRIVATE_KEY_PASSWORD: "${PRIVATE_KEY_PASSWORD:-}"
-      BOOTNODE_P2P_PORT: 19001
-      RPC_BIND_IP: 0.0.0.0
-      RPC_BIND_PORT: 9002
-      P2P_BIND_PORT: 19002
-      BITCOIN_RPC_ENDPOINT: bitcoin
-      BITCOIN_RPC_PORT: 18443
-      BITCOIN_RPC_USERNAME: user
-      BITCOIN_RPC_PASSWORD: password
-      BITCOIN_RPC_WALLET: "testwallet"
-    volumes:
-      - ./arch/.arch-data:/arch_data
-      - ./arch/.arch-data/bootnode:/bootnode_data:ro
-      - ./arch/scripts/leader.sh:/usr/local/bin/leader.sh
-    depends_on:
-      - bootnode
-    networks:
-      - arch-network
-
-  validator-1:
-    platform: linux/amd64
-    image: ghcr.io/arch-network/validator:v0.2.3
-    command: /usr/local/bin/validator.sh
-    environment:
-      VALIDATOR_NUMBER: "1"
-      RUST_LOG: "info,validator=info"
-      RUST_BACKTRACE: "1"
-      NETWORK_MODE: "localnet"
-      DATA_DIR: /arch-data
-      PRIVATE_KEY_PASSWORD: "${PRIVATE_KEY_PASSWORD:-}"
-      BOOTNODE_P2P_PORT: 19001
-      RPC_BIND_IP: 0.0.0.0
-      RPC_BIND_PORT: 9003
-      P2P_BIND_PORT: 19003
-      BITCOIN_RPC_ENDPOINT: bitcoin
-      BITCOIN_RPC_PORT: 18443
-      BITCOIN_RPC_USERNAME: user
-      BITCOIN_RPC_PASSWORD: password
-      BITCOIN_RPC_WALLET: "testwallet"
-    volumes:
-      - ./arch/.arch-data/validators:/arch_data
-      - ./arch/.arch-data/bootnode:/bootnode_data:ro
-      - ./arch/scripts/validator.sh:/usr/local/bin/validator.sh
-    depends_on:
-      - bootnode
-      - leader
-    ports:
-      - 19003:19003
-      - 9003:9003
-    networks:
-      - arch-network
-
-  validator-2:
-    platform: linux/amd64
-    image: ghcr.io/arch-network/validator:v0.2.3
-    command: /usr/local/bin/validator.sh
-    environment:
-      VALIDATOR_NUMBER: "2"
-      RUST_LOG: "info,validator=info"
-      RUST_BACKTRACE: "1"
-      NETWORK_MODE: "localnet"
-      DATA_DIR: /arch-data
-      PRIVATE_KEY_PASSWORD: "${PRIVATE_KEY_PASSWORD:-}"
-      BOOTNODE_P2P_PORT: 19001
-      RPC_BIND_IP: 0.0.0.0
-      RPC_BIND_PORT: 9004
-      P2P_BIND_PORT: 19004
-      BITCOIN_RPC_ENDPOINT: bitcoin
-      BITCOIN_RPC_PORT: 18443
-      BITCOIN_RPC_USERNAME: user
-      BITCOIN_RPC_PASSWORD: password
-      BITCOIN_RPC_WALLET: "testwallet"
-    volumes:
-      - ./arch/.arch-data/validators:/arch_data
-      - ./arch/.arch-data/bootnode:/bootnode_data:ro
-      - ./arch/scripts/validator.sh:/usr/local/bin/validator.sh
-    depends_on:
-      - bootnode
-      - leader
-      - validator-1
-    ports:
-      - 19004:19004
-      - 9004:9004
-    networks:
-      - arch-network
 
   bitcoin:
     image: ${BITCOIN_IMAGE:-bitcoin}
@@ -139,8 +22,7 @@ services:
       - "18443:18443"
       - "28332:28332"
     stop_grace_period: 2s
-    networks:
-      - arch-network
+
 
   electrs:
     image: mempool/electrs:v3.0.0
@@ -173,8 +55,6 @@ services:
       - electrs_data:/data/db
     restart: always
     stop_grace_period: 2s
-    networks:
-      - arch-network
 
   mempool-frontend:
     environment:
@@ -190,8 +70,6 @@ services:
     command: "./wait-for mempool-db:3306 --timeout=720 -- nginx -g 'daemon off;'"
     ports:
       - 1080:8080
-    networks:
-      - arch-network
 
   mempool-backend:
     environment:
@@ -220,8 +98,6 @@ services:
     command: "./wait-for-it.sh mempool-db:3306 --timeout=720 --strict -- ./start.sh"
     volumes:
       - .datapi/:/backend/cache
-    networks:
-      - arch-network
 
   mempool-db:
     environment:
@@ -235,16 +111,7 @@ services:
     container_name: mempool-db
     restart: always
     stop_grace_period: 2s
-    networks:
-      - arch-network
 
-networks:
-  arch-network:
-    ipam:
-      driver: default
-      config:
-        - subnet: 172.30.0.0/24
-          gateway: 172.30.0.1
 
 volumes:
   electrs_data:

@@ -22,4 +22,4 @@ start_containers: stop_containers
 	./start_containers.sh
 
 start_ci_containers: stop_containers
-	SUDO=sudo BITCOIN_IMAGE=851725450525.dkr.ecr.us-east-2.amazonaws.com/bitcoin:latest ./start_containers.sh
+	BITCOIN_IMAGE=851725450525.dkr.ecr.us-east-2.amazonaws.com/bitcoin:latest ./start_containers.sh

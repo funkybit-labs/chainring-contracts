@@ -1,26 +1,30 @@
 //! This module contains helper methods for interacting with the HelloWorld program
 use anyhow::{anyhow, Result};
-use bitcoin::{absolute::LockTime, address::Address, key::{TapTweak, TweakedKeypair}, secp256k1::{self, Secp256k1}, sighash::{Prevouts, SighashCache}, transaction::Version, Amount, OutPoint, ScriptBuf, Sequence, TapSighashType, Transaction, TxIn, Witness, TxOut, Txid};
+use bip322::sign_simple;
+use bitcoin::{
+    absolute::LockTime,
+    address::Address,
+    key::{TapTweak, TweakedKeypair},
+    secp256k1::{self, Secp256k1},
+    sighash::{Prevouts, SighashCache},
+    transaction::Version,
+    Amount, OutPoint, PrivateKey, ScriptBuf, Sequence, TapSighashType, Transaction, TxIn, Witness};
 use bitcoincore_rpc::{Auth, Client, RawTx, RpcApi};
-use env_logger;
 use log::{debug, error, info, warn};
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::{from_str, json, Value};
-use std::env;
 use std::fs;
-use std::process::Child;
-use std::process::Command;
 use std::str::FromStr;
 
 use sdk::processed_transaction::ProcessedTransaction;
 
 use crate::constants::{
     BITCOIN_NODE_ENDPOINT, BITCOIN_NODE_PASSWORD, BITCOIN_NODE_USERNAME, CALLER_FILE_PATH,
-    GET_ACCOUNT_ADDRESS, GET_BEST_BLOCK_HASH, GET_BLOCK, GET_PROCESSED_TRANSACTION, GET_PROGRAM,
+    GET_ACCOUNT_ADDRESS, GET_PROCESSED_TRANSACTION, GET_PROGRAM,
     NODE1_ADDRESS, READ_ACCOUNT_INFO, TRANSACTION_NOT_FOUND_CODE,
 };
-use crate::models::{BitcoinRpcInfo, CallerInfo};
+use crate::models::CallerInfo;
 use sdk::arch_program::message::Message;
 use sdk::arch_program::pubkey::Pubkey;
 use sdk::runtime_transaction::RuntimeTransaction;
@@ -95,11 +99,6 @@ fn post_data<T: Serialize + std::fmt::Debug>(url: &str, method: &str, params: T)
         .expect("result should be text decodable")
 }
 
-/// Returns a caller information using the secret key file specified
-fn get_trader(trader_id: u64) -> Result<CallerInfo> {
-    let file_path = &format!("../../.arch/trader{}.json", trader_id);
-    Ok(CallerInfo::with_secret_key_file(file_path)?)
-}
 
 use crate::helper::secp256k1::SecretKey;
 use bitcoin::key::UntweakedKeypair;
@@ -144,6 +143,17 @@ fn extend_bytes_max_len() -> usize {
         .len()
 }
 
+pub fn sign_message_bip322(keypair: &UntweakedKeypair, msg: &[u8]) -> [u8; 64] {
+    let secp = Secp256k1::new();
+    let xpubk = XOnlyPublicKey::from_keypair(keypair).0;
+    let private_key = PrivateKey::new(SecretKey::from_keypair(keypair), bitcoin::Network::Regtest);
+
+    let address = Address::p2tr(&secp, xpubk, None, bitcoin::Network::Regtest);
+    let signature = sign_simple(&address, msg, private_key).unwrap();
+
+    signature.to_vec()[0][..64].try_into().unwrap()
+}
+
 /// Creates an instruction, signs it as a message
 /// and sends the signed message as a transaction
 pub fn sign_and_send_instruction(
@@ -160,18 +170,12 @@ pub fn sign_and_send_instruction(
         instructions: vec![instruction.clone()],
     };
     let digest_slice = hex::decode(message.hash()).expect("hashed message should be decodable");
-    let sig_message = secp256k1::Message::from_digest_slice(&digest_slice)
-        .expect("signed message should be gotten from digest slice");
 
-    let secp = Secp256k1::new();
     let signatures = signers
         .iter()
         .map(|signer| {
-            Signature(
-                secp.sign_schnorr(&sig_message, &signer)
-                    .serialize()
-                    .to_vec(),
-            )
+            let signature = sign_message_bip322(signer, &digest_slice).to_vec();
+            Signature(signature)
         })
         .collect::<Vec<Signature>>();
 
@@ -188,13 +192,14 @@ pub fn sign_and_send_instruction(
         .as_str()
         .expect("cannot convert result to string")
         .to_string();
+
+    debug!("Sent transaction {}", result);
     let hashed_instruction = instruction.hash();
 
     Ok((result, hashed_instruction))
 }
 
 use sdk::arch_program::instruction::Instruction;
-use sdk::arch_program::utxo::UtxoMeta;
 
 pub fn sign_and_send_transaction(
     instructions: Vec<Instruction>,
@@ -210,13 +215,10 @@ pub fn sign_and_send_transaction(
         instructions,
     };
     let digest_slice = hex::decode(message.hash()).expect("hashed message should be decodable");
-    let sig_message = secp256k1::Message::from_digest_slice(&digest_slice)
-        .expect("signed message should be gotten from digest slice");
 
-    let secp = Secp256k1::new();
     let signatures = signers
         .iter()
-        .map(|signer| Signature(secp.sign_schnorr(&sig_message, signer).serialize().to_vec()))
+        .map(|signer| Signature(sign_message_bip322(signer, &digest_slice).to_vec()))
         .collect::<Vec<Signature>>();
 
     let params = RuntimeTransaction {
@@ -259,15 +261,10 @@ pub fn deploy_program_txs(program_keypair: UntweakedKeypair, elf_path: &str) -> 
             };
             let digest_slice =
                 hex::decode(message.hash()).expect("hashed message should be decodable");
-            let sig_message = secp256k1::Message::from_digest_slice(&digest_slice)
-                .expect("signed message should be gotten from digest slice");
-            let secp = Secp256k1::new();
             RuntimeTransaction {
                 version: 0,
                 signatures: vec![Signature(
-                    secp.sign_schnorr(&sig_message, &program_keypair)
-                        .serialize()
-                        .to_vec(),
+                    sign_message_bip322(&program_keypair, &digest_slice).to_vec(),
                 )],
                 message,
             }
@@ -277,7 +274,7 @@ pub fn deploy_program_txs(program_keypair: UntweakedKeypair, elf_path: &str) -> 
     info!("Deploying program with {} transactions", txs.len());
 
     let txids: Vec<String> = txs
-        .chunks(75)
+        .chunks(100)
         .enumerate()
         .map(|(i, chunk)| {
             info!("Sending tx batch {}", i);
@@ -384,22 +381,7 @@ pub fn get_program(url: &str, program_id: String) -> String {
         .to_string()
 }
 
-/// Returns the best block
-fn get_best_block() -> String {
-    let best_block_hash = process_result(post(NODE1_ADDRESS, GET_BEST_BLOCK_HASH))
-        .expect("best_block_hash should not fail")
-        .as_str()
-        .expect("cannot convert result to string")
-        .to_string();
-    process_result(post_data(NODE1_ADDRESS, GET_BLOCK, best_block_hash))
-        .expect("get_block should not fail")
-        .as_str()
-        .expect("cannot convert result to string")
-        .to_string()
-}
 
-/// Returns a processed transaction given the txid
-/// Keeps trying for a maximum of 60 seconds if the processed transaction is not available
 pub fn get_processed_transaction(url: &str, tx_id: String) -> Result<ProcessedTransaction> {
     let mut processed_tx =
         process_get_transaction_result(post_data(url, GET_PROCESSED_TRANSACTION, tx_id.clone()));
@@ -410,10 +392,6 @@ pub fn get_processed_transaction(url: &str, tx_id: String) -> Result<ProcessedTr
     let interval = 1;
     let mut wait_time = 0;
     while let Ok(Value::Null) = processed_tx {
-        debug!(
-            "Transaction not yet processed. Retrying in {} seconds...",
-            interval
-        );
         std::thread::sleep(std::time::Duration::from_secs(interval));
         processed_tx = process_get_transaction_result(post_data(
             url,
@@ -421,18 +399,51 @@ pub fn get_processed_transaction(url: &str, tx_id: String) -> Result<ProcessedTr
             tx_id.clone(),
         ));
         wait_time += interval;
-        if wait_time >= 120 {
-            error!("Failed to retrieve processed transaction after 60 seconds");
-            return Err(anyhow!("Timeout: Failed to retrieve processed transaction"));
+        if wait_time >= 60 {
+            println!("get_processed_transaction has run for more than 60 seconds");
+            return Err(anyhow!("Failed to retrieve processed transaction"));
         }
     }
 
-    let processed_tx: ProcessedTransaction = serde_json::from_value(processed_tx?).unwrap();
-    info!(
-        "Successfully retrieved and processed transaction: {}, status = {:?}",
-        tx_id, processed_tx.status
-    );
-    Ok(processed_tx)
+    if let Ok(ref tx) = processed_tx {
+        let mut p = tx.clone();
+
+        let get_status = |p: Value| -> String {
+            if p["status"].as_str().is_some() {
+                p["status"].as_str().unwrap().to_string()
+            } else if let Some(val) = p["status"].as_object() {
+                debug!("something failed - {:?}, {}", val, val["Failed"]);
+                if val.contains_key("Failed") {
+                    "Failed".to_string()
+                } else {
+                    unreachable!("should not get here 1");
+                }
+            } else {
+                unreachable!("should not get here 2");
+            }
+        };
+
+        wait_time = 0;
+        while get_status(p.clone()) == "Processing".to_string()
+        {
+            println!("Processed transaction is not yet finalized. Retrying...");
+            std::thread::sleep(std::time::Duration::from_secs(interval));
+            p = process_get_transaction_result(post_data(
+                url,
+                GET_PROCESSED_TRANSACTION,
+                tx_id.clone(),
+            ))
+                .unwrap();
+            wait_time += interval;
+            if wait_time >= 60 {
+                println!("get_processed_transaction has run for more than 60 seconds");
+                return Err(anyhow!("Failed to retrieve processed transaction"));
+            }
+        }
+        processed_tx = Ok(p);
+    }
+
+    Ok(serde_json::from_value(processed_tx?).unwrap())
 }
 
 fn mine(rpc: &Client) {
@@ -579,97 +590,4 @@ pub fn get_account_address(pubkey: Pubkey) -> String {
         .as_str()
         .expect("cannot convert result to string")
         .to_string()
-}
-
-fn get_address_utxos(rpc: &Client, address: String) -> Vec<Value> {
-    let client = reqwest::blocking::Client::new();
-
-    let res = client
-        .get(format!(
-            "https://mempool.dev.aws.archnetwork.xyz/api/address/{}/utxo",
-            address
-        ))
-        .header("Accept", "application/json")
-        .send()
-        .unwrap();
-
-    let utxos = from_str::<Value>(&res.text().unwrap()).unwrap();
-
-    utxos
-        .as_array()
-        .unwrap()
-        .iter()
-        .filter(|utxo| {
-            utxo["status"]["block_height"].as_u64().unwrap() <= rpc.get_block_count().unwrap() - 100
-        })
-        .map(|utxo| utxo.clone())
-        .collect()
-}
-
-pub fn start_boot_node(port: u16, arch_nodes: &str, bitcoin_rpc_info: &BitcoinRpcInfo) -> Child {
-    std::env::set_var("RISC0_DEV_MODE", "1");
-
-    let mut command = Command::new("cargo");
-    command.current_dir(env::current_dir().unwrap().parent().unwrap());
-
-    command.args([
-        "run",
-        "-p",
-        "zkvm",
-        "--",
-        "--is-boot-node",
-        "--arch-nodes",
-        arch_nodes,
-        "--rpc-bind-port",
-        &port.to_string(),
-        "--bitcoin-rpc-endpoint",
-        &bitcoin_rpc_info.endpoint,
-        "--bitcoin-rpc-port",
-        &bitcoin_rpc_info.port.to_string(),
-        "--bitcoin-rpc-username",
-        &bitcoin_rpc_info.username,
-        "--bitcoin-rpc-password",
-        &bitcoin_rpc_info.password,
-    ]);
-
-    info!("Starting boot node on port {}", port);
-    command.spawn().expect("Failed to start boot node process")
-}
-
-pub fn start_node(port: u16, bitcoin_rpc_info: &BitcoinRpcInfo) -> Child {
-    env::set_var("RISC0_DEV_MODE", "1");
-
-    let mut command = Command::new("cargo");
-    command.current_dir(env::current_dir().unwrap().parent().unwrap());
-
-    command.args([
-        "run",
-        "-p",
-        "arch-node",
-        "--",
-        "--rpc-bind-port",
-        &port.to_string(),
-        "--bitcoin-rpc-endpoint",
-        &bitcoin_rpc_info.endpoint,
-        "--bitcoin-rpc-port",
-        &bitcoin_rpc_info.port.to_string(),
-        "--bitcoin-rpc-username",
-        &bitcoin_rpc_info.username,
-        "--bitcoin-rpc-password",
-        &bitcoin_rpc_info.password,
-        "--data-dir",
-        &format!(".participant{}", port),
-    ]);
-
-    info!("Starting node on port {}", port);
-    command.spawn().expect("Failed to start node process")
-}
-
-async fn stop_node(mut child: Child) {
-    match child.kill() {
-        Ok(_) => info!("Node stopped successfully"),
-        Err(e) => error!("Failed to stop node: {}", e),
-    }
-
-    let _ = child.wait();
 }

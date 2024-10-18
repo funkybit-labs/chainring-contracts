@@ -42,6 +42,19 @@ impl Pubkey {
         self.0 == tmp
     }
 
+    /// unique Pubkey for tests and benchmarks.
+    pub fn new_unique() -> Self {
+        use crate::atomic_u64::AtomicU64;
+        static I: AtomicU64 = AtomicU64::new(1);
+
+        let mut b = [0u8; 32];
+        let i = I.fetch_add(1);
+        // use big endian representation to ensure that recent unique pubkeys
+        // are always greater than less recent unique pubkeys
+        b[0..8].copy_from_slice(&i.to_be_bytes());
+        Self::from(b)
+    }
+
     /// Log a `Pubkey` from a program
     pub fn log(&self) {
         unsafe { crate::syscalls::sol_log_pubkey(self.as_ref() as *const _ as *const u8) };
@@ -83,5 +96,21 @@ impl AsMut<[u8]> for Pubkey {
 impl From<[u8; 32]> for Pubkey {
     fn from(value: [u8; 32]) -> Self {
         Pubkey(value)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::pubkey::Pubkey;
+    use proptest::prelude::*;
+
+    proptest! {
+        #[test]
+        fn fuzz_serialize_deserialize_pubkey(data in any::<[u8; 32]>()) {
+            let pubkey = Pubkey::from(data);
+            let serialized = pubkey.serialize();
+            let deserialized = Pubkey::from_slice(&serialized);
+            assert_eq!(pubkey, deserialized);
+        }
     }
 }

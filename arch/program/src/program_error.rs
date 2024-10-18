@@ -36,11 +36,7 @@ pub enum ProgramError {
     InvalidSeeds,
     #[error("IO Error: {0}")]
     BorshIoError(String),
-    #[error("An account does not have enough lamports to be rent-exempt")]
-    AccountNotRentExempt,
     #[error("Unsupported sysvar")]
-    UnsupportedSysvar,
-    #[error("Provided owner is not allowed")]
     IllegalOwner,
     #[error("Accounts data allocations exceeded the maximum allowed per transaction")]
     MaxAccountsDataAllocationsExceeded,
@@ -60,62 +56,8 @@ pub enum ProgramError {
     IncorrectAuthority,
 }
 
-// pub trait PrintProgramError {
-//     fn print<E>(&self)
-//     where
-//         E: 'static + std::error::Error + DecodeError<E> + PrintProgramError + FromPrimitive;
-// }
-
-// impl PrintProgramError for ProgramError {
-//     fn print<E>(&self)
-//     where
-//         E: 'static + std::error::Error + DecodeError<E> + PrintProgramError + FromPrimitive,
-//     {
-//         match self {
-//             Self::Custom(error) => {
-//                 if let Some(custom_error) = E::decode_custom_error_to_enum(*error) {
-//                     custom_error.print::<E>();
-//                 } else {
-//                     msg!("Error: Unknown");
-//                 }
-//             }
-//             Self::InvalidArgument => msg!("Error: InvalidArgument"),
-//             Self::InvalidInstructionData => msg!("Error: InvalidInstructionData"),
-//             Self::InvalidAccountData => msg!("Error: InvalidAccountData"),
-//             Self::AccountDataTooSmall => msg!("Error: AccountDataTooSmall"),
-//             Self::InsufficientFunds => msg!("Error: InsufficientFunds"),
-//             Self::IncorrectProgramId => msg!("Error: IncorrectProgramId"),
-//             Self::MissingRequiredSignature => msg!("Error: MissingRequiredSignature"),
-//             Self::AccountAlreadyInitialized => msg!("Error: AccountAlreadyInitialized"),
-//             Self::UninitializedAccount => msg!("Error: UninitializedAccount"),
-//             Self::NotEnoughAccountKeys => msg!("Error: NotEnoughAccountKeys"),
-//             Self::AccountBorrowFailed => msg!("Error: AccountBorrowFailed"),
-//             Self::MaxSeedLengthExceeded => msg!("Error: MaxSeedLengthExceeded"),
-//             Self::InvalidSeeds => msg!("Error: InvalidSeeds"),
-//             Self::BorshIoError(_) => msg!("Error: BorshIoError"),
-//             Self::AccountNotRentExempt => msg!("Error: AccountNotRentExempt"),
-//             Self::UnsupportedSysvar => msg!("Error: UnsupportedSysvar"),
-//             Self::IllegalOwner => msg!("Error: IllegalOwner"),
-//             Self::MaxAccountsDataAllocationsExceeded => {
-//                 msg!("Error: MaxAccountsDataAllocationsExceeded")
-//             }
-//             Self::InvalidRealloc => msg!("Error: InvalidRealloc"),
-//             Self::MaxInstructionTraceLengthExceeded => {
-//                 msg!("Error: MaxInstructionTraceLengthExceeded")
-//             }
-//             Self::BuiltinProgramsMustConsumeComputeUnits => {
-//                 msg!("Error: BuiltinProgramsMustConsumeComputeUnits")
-//             }
-//             Self::InvalidAccountOwner => msg!("Error: InvalidAccountOwner"),
-//             Self::ArithmeticOverflow => msg!("Error: ArithmeticOverflow"),
-//             Self::Immutable => msg!("Error: Immutable"),
-//             Self::IncorrectAuthority => msg!("Error: IncorrectAuthority"),
-//         }
-//     }
-// }
-
 /// Builtin return values occupy the upper 32 bits
-const BUILTIN_BIT_SHIFT: usize = 32;
+pub const BUILTIN_BIT_SHIFT: usize = 32;
 macro_rules! to_builtin {
     ($error:expr) => {
         ($error as u64) << BUILTIN_BIT_SHIFT
@@ -171,8 +113,6 @@ impl From<ProgramError> for u64 {
             ProgramError::MaxSeedLengthExceeded => MAX_SEED_LENGTH_EXCEEDED,
             ProgramError::InvalidSeeds => INVALID_SEEDS,
             ProgramError::BorshIoError(_) => BORSH_IO_ERROR,
-            ProgramError::AccountNotRentExempt => ACCOUNT_NOT_RENT_EXEMPT,
-            ProgramError::UnsupportedSysvar => UNSUPPORTED_SYSVAR,
             ProgramError::IllegalOwner => ILLEGAL_OWNER,
             ProgramError::MaxAccountsDataAllocationsExceeded => {
                 MAX_ACCOUNTS_DATA_ALLOCATIONS_EXCEEDED
@@ -217,8 +157,6 @@ impl From<u64> for ProgramError {
             MAX_SEED_LENGTH_EXCEEDED => Self::MaxSeedLengthExceeded,
             INVALID_SEEDS => Self::InvalidSeeds,
             BORSH_IO_ERROR => Self::BorshIoError("Unknown".to_string()),
-            ACCOUNT_NOT_RENT_EXEMPT => Self::AccountNotRentExempt,
-            UNSUPPORTED_SYSVAR => Self::UnsupportedSysvar,
             ILLEGAL_OWNER => Self::IllegalOwner,
             MAX_ACCOUNTS_DATA_ALLOCATIONS_EXCEEDED => Self::MaxAccountsDataAllocationsExceeded,
             INVALID_ACCOUNT_DATA_REALLOC => Self::InvalidRealloc,
