@@ -25,7 +25,7 @@ impl<R: io::Read + ?Sized> ReadExt for R {
     }
 
     fn read_u16_as_usize(&mut self) -> Result<usize, io::Error> {
-        return Ok(usize::from(self.read_u16()?));
+        Ok(usize::from(self.read_u16()?))
     }
 
     fn read_u16(&mut self) -> Result<u16, io::Error> {
@@ -41,7 +41,7 @@ impl<R: io::Read + ?Sized> ReadExt for R {
     }
 
     fn read_u32_as_usize(&mut self) -> Result<usize, io::Error> {
-        return Ok(self.read_u32()? as usize);
+        Ok(self.read_u32()? as usize)
     }
 
     fn read_u64(&mut self) -> Result<u64, io::Error> {
@@ -54,7 +54,7 @@ impl<R: io::Read + ?Sized> ReadExt for R {
         let mut str = String::new();
         let str_size = self.read_u16()?;
         self.take(str_size as u64).read_to_string(&mut str)?;
-        return Ok(str)
+        Ok(str)
     }
 
     fn read_string_with_padding(&mut self, size: usize) -> Result<String, io::Error> {
@@ -62,20 +62,20 @@ impl<R: io::Read + ?Sized> ReadExt for R {
         self.take(size as u64).read_to_end(&mut vec)?;
         let end_pos = vec.iter().position(|&b| b == 0).unwrap_or(size);
         vec.truncate(end_pos);
-        return String::from_utf8(vec)
+        String::from_utf8(vec)
             .map_err(|_| io::Error::new(io::ErrorKind::Other, "Invalid UTF8 string"))
     }
 
     fn read_pubkey(&mut self) -> Result<Pubkey, io::Error> {
         let mut bytes = [0; 32];
         self.read_exact(&mut bytes[..])?;
-        return Ok(Pubkey::from(bytes))
+        Ok(Pubkey::from(bytes))
     }
 
     fn read_hash(&mut self) -> Result<Hash, io::Error> {
         let mut bytes = [0; 32];
         self.read_exact(&mut bytes[..])?;
-        return Ok(bytes)
+        Ok(bytes)
     }
 }
 
@@ -95,37 +95,37 @@ pub trait WriteExt: io::Write {
 impl<W: io::Write> WriteExt for W {
     fn write_u8(&mut self, v: u8) -> Result<usize, io::Error> {
         _ = self.write_all(&[v])?;
-        return Ok(1)
+        Ok(1)
     }
 
     fn write_u16(&mut self, v: u16) -> Result<usize, io::Error> {
         let bytes = v.to_le_bytes();
         _ = self.write_all(&bytes)?;
-        return Ok(bytes.len())
+        Ok(bytes.len())
     }
 
     fn write_usize_as_u16(&mut self, v: usize) -> Result<usize, io::Error> {
         let bytes = (v as u16).to_le_bytes();
         _ = self.write_all(&bytes)?;
-        return Ok(bytes.len())
+        Ok(bytes.len())
     }
 
     fn write_u32(&mut self, v: u32) -> Result<usize, io::Error> {
         let bytes = v.to_le_bytes();
         _ = self.write_all(&bytes)?;
-        return Ok(bytes.len())
+        Ok(bytes.len())
     }
 
     fn write_usize_as_u32(&mut self, v: usize) -> Result<usize, io::Error> {
         let bytes = (v as u32).to_le_bytes();
         _ = self.write_all(&bytes)?;
-        return Ok(bytes.len())
+        Ok(bytes.len())
     }
 
     fn write_u64(&mut self, v: u64) -> Result<usize, io::Error> {
         let bytes = v.to_le_bytes();
         _ = self.write_all(&bytes)?;
-        return Ok(bytes.len())
+        Ok(bytes.len())
     }
 
     fn write_string(&mut self, v: &String) -> Result<usize, io::Error> {
@@ -133,7 +133,7 @@ impl<W: io::Write> WriteExt for W {
         let mut bytes_written = self.write_usize_as_u16(bytes.len())?;
         self.write_all(&bytes)?;
         bytes_written += bytes.len();
-        return Ok(bytes_written)
+        Ok(bytes_written)
     }
 
     fn write_string_with_padding(&mut self, v: &String, size: usize) -> Result<usize, io::Error> {
@@ -146,17 +146,17 @@ impl<W: io::Write> WriteExt for W {
             self.write_all(&padding)?;
             bytes_written += padding_len;
         }
-        return Ok(bytes_written)
+        Ok(bytes_written)
     }
 
     fn write_pubkey(&mut self, v: &Pubkey) -> Result<usize, io::Error> {
         self.write_all(&v.0)?;
-        return Ok(v.0.len())
+        Ok(v.0.len())
     }
 
     fn write_hash(&mut self, v: &Hash) -> Result<usize, io::Error> {
         self.write_all(v)?;
-        return Ok(v.len())
+        Ok(v.len())
     }
 }
 
@@ -165,7 +165,7 @@ pub trait Codable: Sized {
 
     fn decode_from_slice(data: &[u8]) -> Result<Self, io::Error> {
         let mut reader = Cursor::new(data);
-        return Self::decode(&mut reader)
+        Self::decode(&mut reader)
     }
 
     fn encode<W: io::Write + ?Sized>(&self, writer: &mut W) -> Result<usize, io::Error>;
@@ -173,7 +173,7 @@ pub trait Codable: Sized {
     fn encode_to_vec(&self) -> Result<Vec<u8>, io::Error> {
         let mut buffer = Vec::new();
         _ = self.encode(&mut buffer)?;
-        return Ok(buffer)
+        Ok(buffer)
     }
 }
 
@@ -201,7 +201,7 @@ impl Codable for ProgramInstruction {
     }
 
     fn encode<W: Write + ?Sized>(&self, mut writer: &mut W) -> Result<usize, io::Error> {
-        return match self {
+        match self {
             Self::InitProgramState(params) => {
                 Ok(writer.write_u8(0)? + params.encode(&mut writer)?)
             }
@@ -265,9 +265,9 @@ impl Codable for TokenStateSetup {
             );
         }
 
-        return Ok(Self {
-            account_index: account_index,
-            wallet_addresses: wallet_addresses
+        Ok(Self {
+            account_index,
+            wallet_addresses
         })
     }
 
@@ -279,7 +279,7 @@ impl Codable for TokenStateSetup {
             bytes_written += writer.write_string(&wallet_address)?
         }
 
-        return Ok(bytes_written)
+        Ok(bytes_written)
     }
 }
 
@@ -289,9 +289,9 @@ impl Codable for AddressIndex {
         let mut last4 = [0; 4];
         reader.read_exact(&mut last4)?;
 
-        return Ok(Self {
-            index: index,
-            last4: last4
+        Ok(Self {
+            index,
+            last4
         })
     }
 
@@ -299,20 +299,20 @@ impl Codable for AddressIndex {
         let mut bytes_written = writer.write_u32(self.index)?;
         writer.write_all(&self.last4)?;
         bytes_written += self.last4.len();
-        return Ok(bytes_written)
+        Ok(bytes_written)
     }
 }
 
 impl Codable for Adjustment {
     fn decode<R: Read + ?Sized>(reader: &mut R) -> Result<Self, io::Error> {
-        return Ok(Self {
+        Ok(Self {
             address_index: AddressIndex::decode(reader)?,
             amount: reader.read_u64()?
         })
     }
 
     fn encode<W: Write + ?Sized>(&self, mut writer: &mut W) -> Result<usize, io::Error> {
-        return Ok(
+        Ok(
             self.address_index.encode(writer)? + writer.write_u64(self.amount)?
         )
     }
@@ -320,7 +320,7 @@ impl Codable for Adjustment {
 
 impl Codable for Withdrawal {
     fn decode<R: Read + ?Sized>(reader: &mut R) -> Result<Self, io::Error> {
-        return Ok(Self {
+        Ok(Self {
             address_index: AddressIndex::decode(reader)?,
             amount: reader.read_u64()?,
             fee_amount: reader.read_u64()?
@@ -328,7 +328,7 @@ impl Codable for Withdrawal {
     }
 
     fn encode<W: Write + ?Sized>(&self, mut writer: &mut W) -> Result<usize, io::Error> {
-        return Ok(
+        Ok(
             self.address_index.encode(writer)?
                 + writer.write_u64(self.amount)?
                 + writer.write_u64(self.fee_amount)?
@@ -346,9 +346,9 @@ impl Codable for TokenDeposits {
             deposits.push(Adjustment::decode(reader)?);
         }
 
-        return Ok(Self {
-            account_index: account_index,
-            deposits: deposits
+        Ok(Self {
+            account_index,
+            deposits
         })
     }
 
@@ -358,7 +358,7 @@ impl Codable for TokenDeposits {
         for deposit in &self.deposits {
             bytes_written += deposit.encode(writer)?;
         }
-        return Ok(bytes_written)
+        Ok(bytes_written)
     }
 }
 
@@ -372,9 +372,9 @@ impl Codable for TokenWithdrawals {
             withdrawals.push(Withdrawal::decode(reader)?);
         }
 
-        return Ok(Self {
-            account_index: account_index,
-            withdrawals: withdrawals
+        Ok(Self {
+            account_index,
+            withdrawals
         })
     }
 
@@ -385,7 +385,7 @@ impl Codable for TokenWithdrawals {
         for withdrawal in &self.withdrawals {
             bytes_written += withdrawal.encode(writer)?;
         }
-        return Ok(bytes_written)
+        Ok(bytes_written)
     }
 }
 
@@ -407,11 +407,11 @@ impl Codable for SettlementAdjustments {
 
         let fee_amount = reader.read_u64()?;
 
-        return Ok(Self {
-            account_index: account_index,
-            increments: increments,
-            decrements: decrements,
-            fee_amount: fee_amount
+        Ok(Self {
+            account_index,
+            increments,
+            decrements,
+            fee_amount
         })
     }
 
@@ -430,13 +430,13 @@ impl Codable for SettlementAdjustments {
 
         bytes_written += writer.write_u64(self.fee_amount)?;
 
-        return Ok(bytes_written)
+        Ok(bytes_written)
     }
 }
 
 impl Codable for InitProgramStateParams {
     fn decode<R: io::Read + ?Sized>(reader: &mut R) -> Result<Self, io::Error> {
-        return Ok(Self {
+        Ok(Self {
             fee_account: reader.read_string()?,
             program_change_address: reader.read_string()?,
             network_type: NetworkType::decode(reader)?
@@ -444,7 +444,7 @@ impl Codable for InitProgramStateParams {
     }
 
     fn encode<W: Write + ?Sized>(&self, mut writer: &mut W) -> Result<usize, io::Error> {
-        return Ok(
+        Ok(
             writer.write_string(&self.fee_account)? +
                 writer.write_string(&self.program_change_address)? +
                 self.network_type.encode(writer)?
@@ -454,13 +454,13 @@ impl Codable for InitProgramStateParams {
 
 impl Codable for InitTokenStateParams {
     fn decode<R: io::Read + ?Sized>(reader: &mut R) -> Result<Self, io::Error> {
-        return Ok(Self {
+        Ok(Self {
             token_id: reader.read_string()?
         })
     }
 
     fn encode<W: Write + ?Sized>(&self, mut writer: &mut W) -> Result<usize, io::Error> {
-        return writer.write_string(&self.token_id)
+        writer.write_string(&self.token_id)
     }
 }
 
@@ -473,8 +473,8 @@ impl Codable for InitWalletBalancesParams {
             token_state_setups.push(TokenStateSetup::decode(reader)?);
         }
 
-        return Ok(Self {
-            token_state_setups: token_state_setups
+        Ok(Self {
+            token_state_setups
         })
     }
 
@@ -483,7 +483,7 @@ impl Codable for InitWalletBalancesParams {
         for token_state_setups in &self.token_state_setups {
             bytes_written += token_state_setups.encode(writer)?;
         }
-        return Ok(bytes_written)
+        Ok(bytes_written)
     }
 }
 
@@ -496,8 +496,8 @@ impl Codable for DepositBatchParams {
             token_deposits.push(TokenDeposits::decode(reader)?);
         }
 
-        return Ok(Self {
-            token_deposits: token_deposits
+        Ok(Self {
+            token_deposits
         })
     }
 
@@ -506,7 +506,7 @@ impl Codable for DepositBatchParams {
         for token_deposits in &self.token_deposits {
             bytes_written += token_deposits.encode(writer)?;
         }
-        return Ok(bytes_written)
+        Ok(bytes_written)
     }
 }
 
@@ -525,9 +525,9 @@ impl Codable for WithdrawBatchParams {
         }
 
         Ok(Self {
-            tx_hex: tx_hex,
-            change_amount: change_amount,
-            token_withdrawals: token_withdrawals
+            tx_hex,
+            change_amount,
+            token_withdrawals
         })
     }
 
@@ -540,7 +540,7 @@ impl Codable for WithdrawBatchParams {
         for token_withdrawals in &self.token_withdrawals {
             bytes_written += token_withdrawals.encode(writer)?;
         }
-        return Ok(bytes_written)
+        Ok(bytes_written)
     }
 }
 
@@ -553,8 +553,8 @@ impl Codable for SettlementBatchParams {
             settlements.push(SettlementAdjustments::decode(reader)?);
         }
 
-        return Ok(Self {
-            settlements: settlements
+        Ok(Self {
+            settlements
         })
     }
 
@@ -563,7 +563,7 @@ impl Codable for SettlementBatchParams {
         for settlement in &self.settlements {
             bytes_written += settlement.encode(writer)?;
         }
-        return Ok(bytes_written)
+        Ok(bytes_written)
     }
 }
 
@@ -574,8 +574,8 @@ impl Codable for RollbackWithdrawBatchParams {
         for _ in 0..token_withdrawals_count {
             token_withdrawals.push(TokenWithdrawals::decode(reader)?);
         }
-        return Ok(Self {
-            token_withdrawals: token_withdrawals
+        Ok(Self {
+            token_withdrawals
         })
     }
 
@@ -584,7 +584,7 @@ impl Codable for RollbackWithdrawBatchParams {
         for token_withdrawals in &self.token_withdrawals {
             bytes_written += token_withdrawals.encode(writer)?;
         }
-        return Ok(bytes_written)
+        Ok(bytes_written)
     }
 }
 
@@ -616,11 +616,11 @@ impl Codable for TokenState {
             balances.push(Balance::decode(reader)?);
         }
 
-        return Ok(Self {
-            version: version,
-            program_state_account: program_state_account,
-            token_id: token_id,
-            balances: balances
+        Ok(Self {
+            version,
+            program_state_account,
+            token_id,
+            balances
         })
     }
 
@@ -632,13 +632,13 @@ impl Codable for TokenState {
         for balance in &self.balances {
             bytes_written += balance.encode(writer)?;
         }
-        return Ok(bytes_written)
+        Ok(bytes_written)
     }
 }
 
 impl Codable for ProgramState {
     fn decode<R: Read + ?Sized>(reader: &mut R) -> Result<Self, Error> {
-        return Ok(Self {
+        Ok(Self {
             version: reader.read_u32()?,
             fee_account_address: reader.read_string_with_padding(MAX_ADDRESS_SIZE)?,
             program_change_address: reader.read_string_with_padding(MAX_ADDRESS_SIZE)?,

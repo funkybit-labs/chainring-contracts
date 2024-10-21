@@ -8,7 +8,7 @@ mod tests {
     use std::fs;
     use std::str::FromStr;
     use bitcoin::key::UntweakedKeypair;
-    use bitcoin::{Address, Amount, OutPoint, ScriptBuf, Sequence, Transaction, Txid, TxIn, Witness};
+    use bitcoin::{Address, Amount, OutPoint, ScriptBuf, Sequence, Transaction, Txid, TxIn, TxOut, Witness};
     use bitcoin::absolute::LockTime;
     use bitcoin::transaction::Version;
     use bitcoincore_rpc::{Auth, Client, RawTx, RpcApi};
@@ -53,6 +53,8 @@ mod tests {
     }
 
     use lazy_static::lazy_static;
+    use sdk::processed_transaction::*;
+    use model::error::*;
     use model::serialization::Codable;
 
     lazy_static! {
@@ -597,6 +599,443 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_errors() {
+        cleanup_account_keys();
+        let accounts = onboard_state_accounts(vec!["btc"]);
+
+        let token_account = accounts[1].clone();
+        let fee_account = CallerInfo::with_secret_key_file(FEE_ACCOUNT_FILE_PATH).unwrap();
+
+        // cannot re-init program account
+        test_error_condition(
+            None,
+            ProgramInstruction::InitProgramState(
+                InitProgramStateParams {
+                    fee_account: fee_account.address.to_string(),
+                    program_change_address: fee_account.address.clone().to_string(),
+                    network_type: NetworkType::Regtest
+
+                }
+            ),
+            ERROR_ALREADY_INITIALIZED
+        );
+
+        // cannot reinit token account
+        test_error_condition(
+            Some(token_account),
+            ProgramInstruction::InitTokenState(
+                InitTokenStateParams {
+                    token_id: "btc2".to_string(),
+                }
+            ),
+            ERROR_ALREADY_INITIALIZED
+        );
+
+        // invalid account index
+        test_error_condition(
+            Some(token_account),
+            ProgramInstruction::InitWalletBalances(
+                InitWalletBalancesParams {
+                    token_state_setups: vec![
+                        TokenStateSetup {
+                            account_index: 2,
+                            wallet_addresses: vec![],
+                        }
+                    ],
+                }
+            ),
+            ERROR_INVALID_ACCOUNT_INDEX
+        );
+
+        // invalid wallet address
+        test_error_condition(
+            Some(token_account),
+            ProgramInstruction::InitWalletBalances(
+                InitWalletBalancesParams {
+                    token_state_setups: vec![
+                        TokenStateSetup {
+                            account_index: 1,
+                            wallet_addresses: vec!["bc1rt12345456667".to_string()],
+                        }
+                    ],
+                }
+            ),
+            ERROR_INVALID_ADDRESS
+        );
+
+        // invalid wallet address network
+        test_error_condition(
+            Some(token_account),
+            ProgramInstruction::InitWalletBalances(
+                InitWalletBalancesParams {
+                    token_state_setups: vec![
+                        TokenStateSetup {
+                            account_index: 1,
+                            wallet_addresses: vec!["bc1qar0srrr7xfkvy5l643lydnw9re59gtzzwf5mdq".to_string()],
+                        }
+                    ],
+                }
+            ),
+            ERROR_INVALID_ADDRESS_NETWORK
+        );
+
+        // invalid address index
+        test_error_condition(
+            Some(token_account),
+            ProgramInstruction::BatchDeposit(
+                DepositBatchParams {
+                    token_deposits: vec![
+                        TokenDeposits {
+                            account_index: 1,
+                            deposits: vec![
+                                Adjustment {
+                                    address_index: AddressIndex { index: 1000, last4: [0; 4] },
+                                    amount: 0,
+                                }
+                            ],
+                        }
+                    ],
+
+                }
+            ),
+            ERROR_INVALID_ADDRESS_INDEX
+        );
+
+        // invalid address last 4
+        test_error_condition(
+            Some(token_account),
+            ProgramInstruction::BatchDeposit(
+                DepositBatchParams {
+                    token_deposits: vec![
+                        TokenDeposits {
+                            account_index: 1,
+                            deposits: vec![
+                                Adjustment {
+                                    address_index: AddressIndex { index: 0, last4: [0; 4] },
+                                    amount: 0,
+                                }
+                            ],
+                        }
+                    ],
+
+                }
+            ),
+            ERROR_WALLET_LAST4_MISMATCH
+        );
+
+        // signer account is not the program account
+        test_error_condition_with_secret_key_file(
+            Some(token_account),
+            ProgramInstruction::InitWalletBalances(
+                InitWalletBalancesParams {
+                    token_state_setups: vec![
+                        TokenStateSetup {
+                            account_index: 1,
+                            wallet_addresses: vec![],
+                        }
+                    ],
+                }
+            ),
+            ERROR_PROGRAM_STATE_MISMATCH,
+            TOKEN_FILE_PATHS[0],
+            true
+        );
+
+        // program/submitter does not sign the request
+        test_error_condition_with_secret_key_file(
+            Some(token_account),
+            ProgramInstruction::InitWalletBalances(
+                InitWalletBalancesParams {
+                    token_state_setups: vec![
+                        TokenStateSetup {
+                            account_index: 1,
+                            wallet_addresses: vec![],
+                        }
+                    ],
+                }
+            ),
+            ERROR_INVALID_SIGNER,
+            SUBMITTER_FILE_PATH,
+            false
+        );
+
+        let mut withdraw_batch_params = WithdrawBatchParams {
+            tx_hex: vec![],
+            change_amount: 0,
+            token_withdrawals: vec![
+                TokenWithdrawals {
+                    account_index: 1,
+                    withdrawals: vec![
+                        Withdrawal {
+                            address_index: AddressIndex { index: 0, last4: wallet_last4(&fee_account.address.to_string()) },
+                            amount: 100000000,
+                            fee_amount: 0,
+                        }
+                    ],
+                }
+            ],
+        };
+
+        // withdraw but send in no input txs
+        test_error_condition(
+            Some(token_account),
+            ProgramInstruction::BatchWithdraw(
+                withdraw_batch_params.clone()
+            ),
+            ERROR_INVALID_INPUT_TX
+        );
+
+        // withdraw more than available
+        let mut tx = Transaction {
+            version: Version::TWO,
+            input: vec![TxIn {
+                previous_output: OutPoint {
+                    txid: Txid::from_str("0000000000000000000000000000000000000000000000000000000000000000").unwrap(),
+                    vout: 0
+                },
+                script_sig: ScriptBuf::new(),
+                sequence: Sequence::MAX,
+                witness: Witness::new(),
+            }],
+            output: vec![],
+            lock_time: LockTime::ZERO,
+        };
+        withdraw_batch_params.tx_hex = hex::decode(tx.raw_hex()).unwrap();
+
+        test_error_condition(
+            Some(token_account),
+            ProgramInstruction::BatchWithdraw(
+                withdraw_batch_params.clone()
+            ),
+            ERROR_INSUFFICIENT_BALANCE
+        );
+
+        // withdraw but add an output to the input tx - no outputs allowed
+        tx.output = vec![
+            TxOut {
+                value: Amount::from_sat(1000),
+                script_pubkey: Default::default()
+            }
+        ];
+        withdraw_batch_params.tx_hex = hex::decode(tx.raw_hex()).unwrap();
+        test_error_condition(
+            Some(token_account),
+            ProgramInstruction::BatchWithdraw(
+                withdraw_batch_params.clone()
+            ),
+            ERROR_NO_OUTPUTS_ALLOWED
+        );
+
+        // settlement errors
+
+        // netting error
+        test_error_condition(
+            Some(token_account),
+            ProgramInstruction::PrepareBatchSettlement(
+                SettlementBatchParams {
+                    settlements: vec![
+                        SettlementAdjustments {
+                            account_index: 1,
+                            increments: vec![],
+                            decrements: vec![],
+                            fee_amount: 2,
+                        }
+                    ],
+                }
+            ),
+            ERROR_NETTING
+        );
+
+        // cannot submit if not prepared
+        test_error_condition(
+            Some(token_account),
+            ProgramInstruction::SubmitBatchSettlement(
+                SettlementBatchParams {
+                    settlements: vec![
+                        SettlementAdjustments {
+                            account_index: 1,
+                            increments: vec![],
+                            decrements: vec![],
+                            fee_amount: 0,
+                        }
+                    ],
+                }
+            ),
+            ERROR_NO_SETTLEMENT_IN_PROGRESS
+        );
+
+        // prepare a settlement
+        sign_and_send_token_instruction_success(
+            token_account,
+            ProgramInstruction::PrepareBatchSettlement(
+                SettlementBatchParams {
+                    settlements: vec![
+                        SettlementAdjustments {
+                            account_index: 1,
+                            increments: vec![],
+                            decrements: vec![],
+                            fee_amount: 0,
+                        }
+                    ],
+                }
+            )
+        );
+
+        // try to prepare again - should fail
+        test_error_condition(
+            Some(token_account),
+            ProgramInstruction::PrepareBatchSettlement(
+                SettlementBatchParams {
+                    settlements: vec![
+                        SettlementAdjustments {
+                            account_index: 1,
+                            increments: vec![],
+                            decrements: vec![],
+                            fee_amount: 3,
+                        }
+                    ],
+                }
+            ),
+            ERROR_SETTLEMENT_IN_PROGRESS
+        );
+
+        // submit with a different hash
+        test_error_condition(
+            Some(token_account),
+            ProgramInstruction::SubmitBatchSettlement(
+                SettlementBatchParams {
+                    settlements: vec![
+                        SettlementAdjustments {
+                            account_index: 1,
+                            increments: vec![],
+                            decrements: vec![],
+                            fee_amount: 4,
+                        }
+                    ],
+                }
+            ),
+            ERROR_SETTLEMENT_BATCH_MISMATCH
+        );
+
+        // try to withdraw - should fail if settlement in progress
+        test_error_condition(
+            Some(token_account),
+            ProgramInstruction::BatchWithdraw(
+                WithdrawBatchParams {
+                    tx_hex: vec![],
+                    change_amount: 0,
+                    token_withdrawals: vec![],
+                }
+            ),
+            ERROR_SETTLEMENT_IN_PROGRESS
+        );
+    }
+
+    fn test_error_condition(
+        token_account: Option<Pubkey>,
+        instruction: ProgramInstruction,
+        expected_custom_error_code: u32
+    ) {
+        test_error_condition_with_secret_key_file(
+            token_account,
+            instruction,
+            expected_custom_error_code,
+            SUBMITTER_FILE_PATH,
+            true
+        )
+    }
+
+    fn test_error_condition_with_secret_key_file(
+        token_account: Option<Pubkey>,
+        instruction: ProgramInstruction,
+        expected_custom_error_code: u32,
+        secret_key_file: &str,
+        is_signer: bool
+    ) {
+        let (submitter_keypair, submitter_pubkey) = with_secret_key_file(secret_key_file).unwrap();
+        let mut accounts = vec![AccountMeta {
+            pubkey: submitter_pubkey,
+            is_signer,
+            is_writable: true
+        }];
+        if let Some(account) = token_account {
+            accounts.push(AccountMeta {
+                pubkey: account,
+                is_signer: false,
+                is_writable: true
+            })
+        }
+        let (txid, _) = sign_and_send_instruction(
+            Instruction {
+                program_id: SETUP.program_pubkey,
+                accounts,
+                data: instruction.encode_to_vec().unwrap()
+            },
+            vec![submitter_keypair],
+        ).expect("signing and sending a transaction should not fail");
+
+        let processed_tx = get_processed_transaction(NODE1_ADDRESS, txid.clone())
+            .expect("get processed transaction should not fail");
+        validate_error(processed_tx.clone(), expected_custom_error_code);
+    }
+
+    fn sign_and_send_token_instruction_success(
+        token_account: Pubkey,
+        instruction: ProgramInstruction,
+    ) -> ProcessedTransaction {
+        let (submitter_keypair, submitter_pubkey) = with_secret_key_file(SUBMITTER_FILE_PATH).unwrap();
+        let (txid, _) = sign_and_send_instruction(
+            Instruction {
+                program_id: SETUP.program_pubkey,
+                accounts: vec![
+                    AccountMeta {
+                        pubkey: submitter_pubkey,
+                        is_signer: true,
+                        is_writable: true
+                    },
+                    AccountMeta {
+                        pubkey: token_account,
+                        is_signer: false,
+                        is_writable: true
+                    },
+                ],
+                data: instruction.encode_to_vec().unwrap()
+            },
+            vec![submitter_keypair],
+        ).expect("signing and sending a transaction should not fail");
+
+        let processed_tx = get_processed_transaction(NODE1_ADDRESS, txid.clone())
+            .expect("get processed transaction should not fail");
+        assert_eq!(processed_tx.status, Status::Processed);
+        processed_tx
+    }
+
+    fn sign_and_send_instruction_success(
+        instruction_bytes: Vec<u8>,
+    ) {
+        let (submitter_keypair, submitter_pubkey) = with_secret_key_file(SUBMITTER_FILE_PATH).unwrap();
+        let (txid, _) = sign_and_send_instruction(
+            Instruction {
+                program_id: SETUP.program_pubkey,
+                accounts: vec![
+                    AccountMeta {
+                        pubkey: submitter_pubkey,
+                        is_signer: true,
+                        is_writable: true
+                    },
+                ],
+                data: instruction_bytes
+            },
+            vec![submitter_keypair],
+        ).expect("signing and sending a transaction should not fail");
+
+        let processed_tx = get_processed_transaction(NODE1_ADDRESS, txid.clone())
+            .expect("get processed transaction should not fail");
+        assert_eq!(processed_tx.status, Status::Processed)
+    }
+
+
     // support functions
     fn deposit(
         address: String,
@@ -699,33 +1138,12 @@ mod tests {
         expected: TokenState,
     ) {
         debug!("Performing Deposit");
-        let (submitter_keypair, submitter_pubkey)  = with_secret_key_file(SUBMITTER_FILE_PATH).unwrap();
-
-        let (txid, _) = sign_and_send_instruction(
-            Instruction {
-                program_id: SETUP.program_pubkey,
-                accounts: vec![
-                    AccountMeta {
-                        pubkey: submitter_pubkey,
-                        is_signer: true,
-                        is_writable: false
-                    },
-                    AccountMeta {
-                       pubkey: token_account,
-                       is_signer: false,
-                       is_writable: true
-                    }
-                ],
-                data: ProgramInstruction::BatchDeposit(params.clone()).encode_to_vec().unwrap()
-            },
-            vec![submitter_keypair],
-        ).expect("signing and sending a transaction should not fail");
-
-        let _ = get_processed_transaction(NODE1_ADDRESS, txid)
-            .expect("get processed transaction should not fail");
+        sign_and_send_token_instruction_success(
+            token_account,
+            ProgramInstruction::BatchDeposit(params.clone())
+        );
 
         let token_account = read_account_info(NODE1_ADDRESS, token_account.clone()).unwrap();
-
         assert_eq!(
             expected.encode_to_vec().unwrap(), TokenState::decode_from_slice(token_account.data.as_slice()).unwrap().encode_to_vec().unwrap()
         );
@@ -738,7 +1156,6 @@ mod tests {
         expected_change_amount: u64
     ) {
         debug!("Performing Withdrawal");
-        let (submitter_keypair, submitter_pubkey)  = with_secret_key_file(SUBMITTER_FILE_PATH).unwrap();
         let expected = expected.encode_to_vec().unwrap();
         let wallet  = CallerInfo::with_secret_key_file(WALLET1_FILE_PATH).unwrap();
         let program_change_address = Address::from_str(&get_account_address(SETUP.program_pubkey))
@@ -746,28 +1163,10 @@ mod tests {
             .require_network(bitcoin::Network::Regtest)
             .unwrap();
 
-        let (txid, _) = sign_and_send_instruction(
-            Instruction {
-                program_id: SETUP.program_pubkey,
-                accounts: vec![
-                    AccountMeta {
-                        pubkey: submitter_pubkey,
-                        is_signer: true,
-                        is_writable: true
-                    },
-                    AccountMeta {
-                        pubkey: token_account,
-                        is_signer: false,
-                        is_writable: true
-                    }
-                ],
-                data: ProgramInstruction::BatchWithdraw(params.clone()).encode_to_vec().unwrap()
-            },
-            vec![submitter_keypair],
-        ).expect("signing and sending a transaction should not fail");
-
-        let processed_tx = get_processed_transaction(NODE1_ADDRESS, txid)
-            .expect("get processed transaction should not fail");
+        let processed_tx = sign_and_send_token_instruction_success(
+            token_account,
+            ProgramInstruction::BatchWithdraw(params.clone())
+        );
 
         let token_account = read_account_info(NODE1_ADDRESS, token_account.clone()).unwrap();
 
@@ -821,34 +1220,14 @@ mod tests {
         expected: TokenState
     ) {
         debug!("Performing Withdrawal Rollback");
-        let (submitter_keypair, submitter_pubkey)  = with_secret_key_file(SUBMITTER_FILE_PATH).unwrap();
         let expected = expected.encode_to_vec().unwrap();
 
-        let (txid, _) = sign_and_send_instruction(
-            Instruction {
-                program_id: SETUP.program_pubkey,
-                accounts: vec![
-                    AccountMeta {
-                        pubkey: submitter_pubkey,
-                        is_signer: true,
-                        is_writable: true
-                    },
-                    AccountMeta {
-                        pubkey: token_account,
-                        is_signer: false,
-                        is_writable: true
-                    }
-                ],
-                data: ProgramInstruction::RollbackBatchWithdraw(params.clone()).encode_to_vec().unwrap()
-            },
-            vec![submitter_keypair],
-        ).expect("signing and sending a transaction should not fail");
-
-        let _ = get_processed_transaction(NODE1_ADDRESS, txid)
-            .expect("get processed transaction should not fail");
+        sign_and_send_token_instruction_success(
+            token_account,
+            ProgramInstruction::RollbackBatchWithdraw(params.clone())
+        );
 
         let token_account = read_account_info(NODE1_ADDRESS, token_account.clone()).unwrap();
-
         assert_eq!(
             expected, TokenState::decode_from_slice(token_account.data.as_slice()).unwrap().encode_to_vec().unwrap()
         );
@@ -886,8 +1265,9 @@ mod tests {
             vec![submitter_keypair],
         ).expect("signing and sending a transaction should not fail");
 
-        let _ = get_processed_transaction(NODE1_ADDRESS, txid)
+        let processed_tx = get_processed_transaction(NODE1_ADDRESS, txid)
             .expect("get processed transaction should not fail");
+        assert_eq!(processed_tx.status, Status::Processed);
 
         let state_account = read_account_info(NODE1_ADDRESS, submitter_pubkey.clone()).unwrap();
         let program_state: ProgramState = ProgramState::decode_from_slice(&state_account.data).unwrap();
@@ -899,25 +1279,11 @@ mod tests {
 
     fn assert_send_and_sign_rollback_settlement() {
         debug!("Performing rollback Settlement Batch");
-        let (submitter_keypair, submitter_pubkey)  = with_secret_key_file(SUBMITTER_FILE_PATH).unwrap();
+        let (_, submitter_pubkey)  = with_secret_key_file(SUBMITTER_FILE_PATH).unwrap();
 
-        let (txid, _) = sign_and_send_instruction(
-            Instruction {
-                program_id: SETUP.program_pubkey,
-                accounts: vec![
-                    AccountMeta {
-                        pubkey: submitter_pubkey,
-                        is_signer: true,
-                        is_writable: true
-                    },
-                ],
-                data: ProgramInstruction::RollbackBatchSettlement().encode_to_vec().unwrap()
-            },
-            vec![submitter_keypair],
-        ).expect("signing and sending a transaction should not fail");
-
-        let _ = get_processed_transaction(NODE1_ADDRESS, txid)
-            .expect("get processed transaction should not fail");
+        sign_and_send_instruction_success(
+            ProgramInstruction::RollbackBatchSettlement().encode_to_vec().unwrap()
+        );
 
         let state_account = read_account_info(NODE1_ADDRESS, submitter_pubkey.clone()).unwrap();
         let program_state: ProgramState = ProgramState::decode_from_slice(&state_account.data).unwrap();
@@ -960,8 +1326,9 @@ mod tests {
             vec![submitter_keypair],
         ).expect("signing and sending a transaction should not fail");
 
-        let _ = get_processed_transaction(NODE1_ADDRESS, txid)
+        let processed_tx = get_processed_transaction(NODE1_ADDRESS, txid)
             .expect("get processed transaction should not fail");
+        assert_eq!(processed_tx.status, Status::Processed);
 
         let state_account = read_account_info(NODE1_ADDRESS, submitter_pubkey.clone()).unwrap();
         let program_state: ProgramState = ProgramState::decode_from_slice(&state_account.data).unwrap();
@@ -980,26 +1347,13 @@ mod tests {
         params: InitProgramStateParams,
         expected: ProgramState,
     ) {
-        let (submitter_keypair, submitter_pubkey) = with_secret_key_file(SUBMITTER_FILE_PATH).unwrap();
+        let (_, submitter_pubkey) = with_secret_key_file(SUBMITTER_FILE_PATH).unwrap();
         let expected = expected.encode_to_vec().unwrap();
 
-        debug!("Invoking contract to init state");
-        let (txid, _) = sign_and_send_instruction(
-            Instruction {
-                program_id: SETUP.program_pubkey,
-                accounts: vec![AccountMeta {
-                    pubkey: submitter_pubkey,
-                    is_signer: true,
-                    is_writable: true
-                }],
-                data: ProgramInstruction::InitProgramState(params.clone()).encode_to_vec().unwrap()
-            },
-            vec![submitter_keypair],
-        ).expect("signing and sending a transaction should not fail");
-        debug!("submitted tx {} to arch", txid.clone());
-
-        let _ = get_processed_transaction(NODE1_ADDRESS, txid.clone())
-            .expect("get processed transaction should not fail");
+        debug!("Invoking contract to init program state");
+        sign_and_send_instruction_success(
+            ProgramInstruction::InitProgramState(params.clone()).encode_to_vec().unwrap()
+        );
 
         let account = read_account_info(NODE1_ADDRESS, submitter_pubkey.clone()).unwrap();
         assert_eq!(
@@ -1012,32 +1366,11 @@ mod tests {
         token_account: Pubkey,
         expected: TokenState,
     ) {
-        let (submitter_keypair, submitter_pubkey) = with_secret_key_file(SUBMITTER_FILE_PATH).unwrap();
-
         debug!("Invoking contract to init token state");
-        let (txid, _) = sign_and_send_instruction(
-            Instruction {
-                program_id: SETUP.program_pubkey,
-                accounts: vec![
-                    AccountMeta {
-                        pubkey: submitter_pubkey,
-                        is_signer: true,
-                        is_writable: false
-                    },
-                    AccountMeta {
-                        pubkey: token_account,
-                        is_signer: false,
-                        is_writable: true
-                    }
-                ],
-                data: ProgramInstruction::InitTokenState(params.clone()).encode_to_vec().unwrap()
-            },
-            vec![submitter_keypair],
-        ).expect("signing and sending a transaction should not fail");
-        debug!("submitted tx {} to arch", txid.clone());
-
-        let _ = get_processed_transaction(NODE1_ADDRESS, txid.clone())
-            .expect("get processed transaction should not fail");
+        sign_and_send_token_instruction_success(
+            token_account,
+            ProgramInstruction::InitTokenState(params.clone())
+        );
 
         let account = read_account_info(NODE1_ADDRESS, token_account.clone()).unwrap();
         assert_eq!(
@@ -1056,39 +1389,19 @@ mod tests {
         let pos = token_state.balances.into_iter().position(|r| r.address == address).unwrap_or_else(|| len);
         if pos == len {
             debug!("Establishing a balance index for wallet {} for token {}", address.clone(), token_state.token_id);
-            let (submitter_keypair, submitter_pubkey) = with_secret_key_file(SUBMITTER_FILE_PATH).unwrap();
-            let params = InitWalletBalancesParams {
-                token_state_setups: vec![
-                    TokenStateSetup {
-                        account_index: 1,
-                        wallet_addresses: vec![address.to_string()],
+            sign_and_send_token_instruction_success(
+                token_account,
+                ProgramInstruction::InitWalletBalances(
+                    InitWalletBalancesParams {
+                        token_state_setups: vec![
+                            TokenStateSetup {
+                                account_index: 1,
+                                wallet_addresses: vec![address.to_string()],
+                            }
+                        ],
                     }
-                ],
-            };
-
-            let (txid, _) = sign_and_send_instruction(
-                Instruction {
-                    program_id: SETUP.program_pubkey,
-                    accounts: vec![
-                        AccountMeta {
-                            pubkey: submitter_pubkey,
-                            is_signer: true,
-                            is_writable: false
-                        },
-                        AccountMeta {
-                            pubkey: token_account,
-                            is_signer: false,
-                            is_writable: true
-                        }
-                    ],
-                    data: ProgramInstruction::InitWalletBalances(params.clone()).encode_to_vec().unwrap()
-                },
-                vec![submitter_keypair],
-            ).expect("signing and sending a transaction should not fail");
-            debug!("submitted tx {} to arch", txid.clone());
-
-            let _ = get_processed_transaction(NODE1_ADDRESS, txid.clone())
-                .expect("get processed transaction should not fail");
+                )
+            );
         }
         let account_info = read_account_info(NODE1_ADDRESS, token_account.clone()).unwrap();
         let token_balances: TokenState = TokenState::decode_from_slice(&account_info.data).unwrap();
@@ -1131,8 +1444,9 @@ mod tests {
             vec![program_keypair],
         ).expect("signing and sending a transaction should not fail");
 
-        let _ = get_processed_transaction(NODE1_ADDRESS, txid.clone())
+        let processed_tx = get_processed_transaction(NODE1_ADDRESS, txid.clone())
             .expect("get processed transaction should not fail");
+        assert_eq!(processed_tx.status, Status::Processed);
 
         assert!(read_account_info(NODE1_ADDRESS, program_pubkey.clone()).unwrap().is_executable);
 
@@ -1157,8 +1471,9 @@ mod tests {
             vec![keypair],
         ).expect("signing and sending a transaction should not fail");
 
-        let _ = get_processed_transaction(NODE1_ADDRESS, txid.clone())
+        let processed_tx = get_processed_transaction(NODE1_ADDRESS, txid.clone())
             .expect("get processed transaction should not fail");
+        assert_eq!(processed_tx.status, Status::Processed);
         (keypair, pubkey)
     }
 
@@ -1180,8 +1495,9 @@ mod tests {
         )
             .expect("Failed to sign and send Assign ownership of caller account instruction");
 
-        let _ = get_processed_transaction(NODE1_ADDRESS, txid.clone())
+        let processed_tx = get_processed_transaction(NODE1_ADDRESS, txid.clone())
             .expect("Failed to get processed transaction");
+        assert_eq!(processed_tx.status, Status::Processed);
 
         // 10. Verify that the program is owner of caller account
         assert_eq!(
@@ -1277,5 +1593,14 @@ mod tests {
 
     fn delete_secret_file(file_path: &str) {
         let _ = fs::remove_file(file_path);
+    }
+
+    fn validate_error(processed_tx: ProcessedTransaction, expected_status_code: u32) {
+        let expected_custom_msg = format!("Custom program error: 0x{:x}", expected_status_code);
+        match processed_tx.status {
+            Status::Failed(value) => assert!(value.contains(&expected_custom_msg), "unexpected error"),
+            Status::Processed => assert!(false, "status is Processed"),
+            Status::Processing => assert!(false, "status is Processing")
+        }
     }
 }

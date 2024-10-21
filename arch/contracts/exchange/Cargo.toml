@@ -6,6 +6,7 @@ edition = "2021"
 [dependencies]
 common = { path = "../common" }
 arch_program = { path = "../../program" }
+sdk = { path = "../../sdk" }
 hex = "0.4.3"
 bitcoin = { version = "0.31.0", features = ["serde", "rand"] }
 bitcoincore-rpc = "0.18.0"
