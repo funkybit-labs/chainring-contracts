@@ -893,7 +893,7 @@ mod tests {
         let program_state: ProgramState = ProgramState::decode_from_slice(&state_account.data).unwrap();
         assert_eq!(
             hex::encode(program_state.settlement_batch_hash),
-            hash(params.encode_to_vec().unwrap()),
+            hash(&params.encode_to_vec().unwrap()),
         );
     }
 
@@ -922,7 +922,8 @@ mod tests {
         let state_account = read_account_info(NODE1_ADDRESS, submitter_pubkey.clone()).unwrap();
         let program_state: ProgramState = ProgramState::decode_from_slice(&state_account.data).unwrap();
         assert_eq!(
-            program_state.settlement_batch_hash, EMPTY_HASH
+            EMPTY_HASH,
+            program_state.settlement_batch_hash
         );
     }
 
@@ -970,8 +971,8 @@ mod tests {
         );
 
         assert_eq!(
+            hash(&params.encode_to_vec().unwrap()),
             hex::encode(program_state.last_settlement_batch_hash),
-            hash(params.encode_to_vec().unwrap()),
         );
     }
 
@@ -1097,7 +1098,7 @@ mod tests {
         }
     }
 
-    fn hash(data: Vec<u8>) -> String {
+    fn hash(data: &[u8]) -> String {
         digest(data)
     }
 
