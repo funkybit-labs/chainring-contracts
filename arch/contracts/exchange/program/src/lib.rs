@@ -27,15 +27,16 @@ pub fn process_instruction(
 ) -> Result<(), ProgramError> {
     let instruction = ProgramInstruction::decode_from_slice(instruction_data)
         .map_err(|_| ProgramError::InvalidInstructionData)?;
+    let params_raw_data = ProgramInstruction::params_raw_data(&instruction_data);
 
     match instruction {
         ProgramInstruction::InitProgramState(params) => init_program_state(accounts, &params),
         ProgramInstruction::InitTokenState(params) => init_token_state(accounts, &params),
         ProgramInstruction::InitWalletBalances(params) => init_wallet_balances(accounts, &params),
         ProgramInstruction::BatchDeposit(params) => deposit_batch(accounts, &params),
-        ProgramInstruction::BatchWithdraw(params) => withdraw_batch(program_id, accounts, &params),
-        ProgramInstruction::SubmitBatchSettlement(params) => submit_settlement_batch(accounts, &params),
-        ProgramInstruction::PrepareBatchSettlement(params) => prepare_settlement_batch(accounts, &params),
+        ProgramInstruction::BatchWithdraw(params) => withdraw_batch(program_id, accounts, &params, &params_raw_data),
+        ProgramInstruction::SubmitBatchSettlement(params) => submit_settlement_batch(accounts, &params, &params_raw_data),
+        ProgramInstruction::PrepareBatchSettlement(params) => prepare_settlement_batch(accounts, &params, &params_raw_data),
         ProgramInstruction::RollbackBatchSettlement() => rollback_settlement_batch(accounts),
         ProgramInstruction::RollbackBatchWithdraw(params) => rollback_withdraw_batch(accounts, &params)
     }
@@ -106,7 +107,7 @@ pub fn deposit_batch(accounts: &[AccountInfo],
     Ok(())
 }
 
-pub fn withdraw_batch(program_id: &Pubkey, accounts: &[AccountInfo], params: &WithdrawBatchParams) -> Result<(), ProgramError> {
+pub fn withdraw_batch(program_id: &Pubkey, accounts: &[AccountInfo], params: &WithdrawBatchParams, params_raw_data: &[u8]) -> Result<(), ProgramError> {
     if ProgramState::get_settlement_hash(&accounts[0])? != EMPTY_HASH {
         return Err(ProgramError::Custom(ERROR_SETTLEMENT_IN_PROGRESS));
     }
@@ -127,7 +128,7 @@ pub fn withdraw_batch(program_id: &Pubkey, accounts: &[AccountInfo], params: &Wi
         )?;
     }
 
-    ProgramState::set_last_withdrawal_hash(&accounts[0], hash(params.encode_to_vec().unwrap()))?;
+    ProgramState::set_last_withdrawal_hash(&accounts[0], hash(params_raw_data))?;
 
     if params.change_amount > 0 {
         tx.output.push(
@@ -170,10 +171,9 @@ pub fn rollback_withdraw_batch(accounts: &[AccountInfo], params: &RollbackWithdr
     Ok(())
 }
 
-pub fn submit_settlement_batch(accounts: &[AccountInfo], params: &SettlementBatchParams) -> Result<(), ProgramError> {
-
+pub fn submit_settlement_batch(accounts: &[AccountInfo], params: &SettlementBatchParams, raw_params_data: &[u8]) -> Result<(), ProgramError> {
     let current_hash = ProgramState::get_settlement_hash(&accounts[0])?;
-    let params_hash = hash(params.encode_to_vec().unwrap());
+    let params_hash = hash(raw_params_data);
 
     if current_hash == EMPTY_HASH {
         return Err(ProgramError::Custom(ERROR_NO_SETTLEMENT_IN_PROGRESS));
@@ -204,8 +204,7 @@ pub fn submit_settlement_batch(accounts: &[AccountInfo], params: &SettlementBatc
     ProgramState::clear_settlement_hash(&accounts[0])
 }
 
-pub fn prepare_settlement_batch(accounts: &[AccountInfo], params: &SettlementBatchParams) -> Result<(), ProgramError> {
-
+pub fn prepare_settlement_batch(accounts: &[AccountInfo], params: &SettlementBatchParams, raw_params_data: &[u8]) -> Result<(), ProgramError> {
     if ProgramState::get_settlement_hash(&accounts[0])? != EMPTY_HASH {
         return Err(ProgramError::Custom(ERROR_SETTLEMENT_IN_PROGRESS));
     }
@@ -227,14 +226,14 @@ pub fn prepare_settlement_batch(accounts: &[AccountInfo], params: &SettlementBat
         }
     }
 
-    ProgramState::set_settlement_hash(&accounts[0], hash(params.encode_to_vec().unwrap()))
+    ProgramState::set_settlement_hash(&accounts[0], hash(raw_params_data))
 }
 
 pub fn rollback_settlement_batch(accounts: &[AccountInfo]) -> Result<(), ProgramError> {
     ProgramState::clear_settlement_hash(&accounts[0])
 }
 
-fn hash(data: Vec<u8>) -> Hash {
+fn hash(data: &[u8]) -> Hash {
     let mut tmp = EMPTY_HASH;
     tmp[..32].copy_from_slice(&hex::decode(digest(data)).unwrap());
     tmp

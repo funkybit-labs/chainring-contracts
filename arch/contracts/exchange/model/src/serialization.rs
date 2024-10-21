@@ -177,6 +177,12 @@ pub trait Codable: Sized {
     }
 }
 
+impl ProgramInstruction {
+    pub fn params_raw_data(instruction_data: &[u8]) -> &[u8] {
+        &instruction_data[1..]
+    }
+}
+
 impl Codable for ProgramInstruction {
     fn decode<R: io::Read + ?Sized>(reader: &mut R) -> Result<Self, io::Error> {
         let instr_type = reader.read_u8()?;
