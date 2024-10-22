@@ -1,7 +1,7 @@
 use std::io;
 use std::io::{Cursor, Error, Read, Write};
 use arch_program::pubkey::Pubkey;
-use crate::state::{Balance, Hash, MAX_ADDRESS_SIZE, MAX_TOKEN_ID_SIZE, NetworkType, ProgramState, TokenState};
+use crate::state::{AccountAndAddressIndex, Balance, Hash, MAX_ADDRESS_SIZE, MAX_TOKEN_ID_SIZE, NetworkType, ProgramState, TokenState};
 use crate::instructions::*;
 
 pub trait ReadExt: io::Read {
@@ -604,6 +604,22 @@ impl Codable for Balance {
     }
 }
 
+impl Codable for AccountAndAddressIndex {
+    fn decode<R: Read + ?Sized>(reader: &mut R) -> Result<Self, io::Error> {
+        Ok(Self {
+            account_index: reader.read_u8()?,
+            address_index: reader.read_u32()?
+        })
+    }
+
+    fn encode<W: Write + ?Sized>(&self, mut writer: &mut W) -> Result<usize, io::Error> {
+        Ok(
+            writer.write_u8(self.account_index)? +
+                writer.write_u32(self.address_index)?
+        )
+    }
+}
+
 impl Codable for TokenState {
     fn decode<R: Read + ?Sized>(reader: &mut R) -> Result<Self, Error> {
         let version = reader.read_u32()?;
@@ -638,27 +654,44 @@ impl Codable for TokenState {
 
 impl Codable for ProgramState {
     fn decode<R: Read + ?Sized>(reader: &mut R) -> Result<Self, Error> {
+        let version =  reader.read_u32()?;
+        let fee_account_address = reader.read_string_with_padding(MAX_ADDRESS_SIZE)?;
+        let program_change_address = reader.read_string_with_padding(MAX_ADDRESS_SIZE)?;
+        let network_type = NetworkType::decode(reader)?;
+        let settlement_batch_hash = reader.read_hash()?;
+        let last_settlement_batch_hash = reader.read_hash()?;
+        let last_withdrawal_batch_hash = reader.read_hash()?;
+        let failed_update_count = reader.read_u8()? as usize;
+        let mut failed_updates = Vec::with_capacity(failed_update_count);
+        for _ in 0..failed_update_count {
+            failed_updates.push(AccountAndAddressIndex::decode(reader)?);
+        }
+
         Ok(Self {
-            version: reader.read_u32()?,
-            fee_account_address: reader.read_string_with_padding(MAX_ADDRESS_SIZE)?,
-            program_change_address: reader.read_string_with_padding(MAX_ADDRESS_SIZE)?,
-            network_type: NetworkType::decode(reader)?,
-            settlement_batch_hash: reader.read_hash()?,
-            last_settlement_batch_hash: reader.read_hash()?,
-            last_withdrawal_batch_hash: reader.read_hash()?
+            version,
+            fee_account_address,
+            program_change_address,
+            network_type,
+            settlement_batch_hash,
+            last_settlement_batch_hash,
+            last_withdrawal_batch_hash,
+            failed_updates
         })
     }
 
     fn encode<W: Write + ?Sized>(&self, mut writer: &mut W) -> Result<usize, Error> {
-        Ok(
-            writer.write_u32(self.version)? +
-                writer.write_string_with_padding(&self.fee_account_address, MAX_ADDRESS_SIZE)? +
-                writer.write_string_with_padding(&self.program_change_address, MAX_ADDRESS_SIZE)? +
-                self.network_type.encode(writer)? +
-                writer.write_hash(&self.settlement_batch_hash)? +
-                writer.write_hash(&self.last_settlement_batch_hash)? +
-                writer.write_hash(&self.last_withdrawal_batch_hash)?
-        )
+        let mut bytes_written = writer.write_u32(self.version)? +
+            writer.write_string_with_padding(&self.fee_account_address, MAX_ADDRESS_SIZE)? +
+            writer.write_string_with_padding(&self.program_change_address, MAX_ADDRESS_SIZE)? +
+            self.network_type.encode(writer)? +
+            writer.write_hash(&self.settlement_batch_hash)? +
+            writer.write_hash(&self.last_settlement_batch_hash)? +
+            writer.write_hash(&self.last_withdrawal_batch_hash)? +
+            writer.write_u8(self.failed_updates.len() as u8)?;
+        for failed_balance_update in &self.failed_updates {
+            bytes_written += failed_balance_update.encode(writer)?;
+        }
+        Ok(bytes_written)
     }
 }
 

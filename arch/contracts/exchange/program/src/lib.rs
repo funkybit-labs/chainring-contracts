@@ -60,7 +60,8 @@ pub fn init_program_state(accounts: &[AccountInfo],
         settlement_batch_hash: EMPTY_HASH,
         last_settlement_batch_hash: EMPTY_HASH,
         last_withdrawal_batch_hash: EMPTY_HASH,
-    }.encode_to_vec().expect("Serialization error"))
+        failed_updates: vec![]
+    }.encode_to_vec().expect("Serialization error"), ACCOUNT_AND_ADDRESS_INDEX_SIZE * MAX_FAILED_UPDATES)
 }
 
 pub fn init_token_state(accounts: &[AccountInfo],
@@ -206,13 +207,14 @@ pub fn prepare_settlement_batch(accounts: &[AccountInfo], params: &SettlementBat
     if ProgramState::get_settlement_hash(&accounts[0])? != EMPTY_HASH {
         return Err(ProgramError::Custom(ERROR_SETTLEMENT_IN_PROGRESS));
     }
+    ProgramState::clear_failed_updates_count(&accounts[0])?;
     let mut netting_results: HashMap<String, i64> = HashMap::new();
 
     for token_settlements in &params.settlements {
         TokenState::validate_account(accounts, token_settlements.account_index)?;
         let increment_sum: u64 = token_settlements.clone().increments.into_iter().map(|x| x.amount).sum::<u64>() + token_settlements.fee_amount;
         let decrement_sum: u64 = token_settlements.clone().decrements.into_iter().map(|x| x.amount).sum::<u64>();
-        verify_decrements(&accounts[token_settlements.account_index as usize], token_settlements.clone().decrements)?;
+        verify_decrements(&accounts, token_settlements.account_index, token_settlements.clone().decrements)?;
         let running_netting_total = netting_results.entry(TokenState::get_token_id(&accounts[token_settlements.account_index as usize])?).or_insert(0);
         *running_netting_total += increment_sum as i64 - decrement_sum as i64;
     }
@@ -224,7 +226,11 @@ pub fn prepare_settlement_batch(accounts: &[AccountInfo], params: &SettlementBat
         }
     }
 
-    ProgramState::set_settlement_hash(&accounts[0], hash(raw_params_data))
+    if ProgramState::get_failed_updates_count(&accounts[0])? == 0 {
+        ProgramState::set_settlement_hash(&accounts[0], hash(raw_params_data))
+    } else {
+        Ok(())
+    }
 }
 
 pub fn rollback_settlement_batch(accounts: &[AccountInfo]) -> Result<(), ProgramError> {
@@ -257,12 +263,13 @@ fn handle_adjustments(account: &AccountInfo, adjustments: Vec<Adjustment>, incre
     Ok(())
 }
 
-fn verify_decrements(account: &AccountInfo, adjustments: Vec<Adjustment>) -> Result<(), ProgramError>{
+fn verify_decrements(accounts: &[AccountInfo], account_index: u8, adjustments: Vec<Adjustment>) -> Result<(), ProgramError>{
+    let account = &accounts[account_index as usize];
     for adjustment in adjustments {
         let index = get_validated_index(account, &adjustment.address_index)?;
         let current_balance = Balance::get_wallet_balance(account, index)?;
         if adjustment.amount > current_balance {
-            return Err(ProgramError::Custom(ERROR_INSUFFICIENT_BALANCE));
+            ProgramState::push_failed_update(&accounts[0], account_index, adjustment.address_index.index)?;
         };
     }
     Ok(())
@@ -341,12 +348,12 @@ fn map_network_type(network_type: NetworkType) -> bitcoin::Network {
     }
 }
 
-fn init_state_data(account: &AccountInfo, new_data: Vec<u8>) -> Result<(), ProgramError> {
-    if new_data.len() > entrypoint::MAX_PERMITTED_DATA_LENGTH as usize {
+fn init_state_data(account: &AccountInfo, new_data: Vec<u8>, additional_bytes: usize) -> Result<(), ProgramError> {
+    if new_data.len() + additional_bytes > entrypoint::MAX_PERMITTED_DATA_LENGTH as usize {
         return Err(ProgramError::InvalidRealloc);
     }
-    account.realloc(new_data.len(), true)?;
-    account.data.try_borrow_mut().unwrap().copy_from_slice(new_data.as_slice());
+    account.realloc(new_data.len() + additional_bytes, true)?;
+    account.data.try_borrow_mut().unwrap()[0..FAILED_BALANCE_UPDATES_OFFSET].copy_from_slice(new_data.as_slice());
     Ok(())
 }
 

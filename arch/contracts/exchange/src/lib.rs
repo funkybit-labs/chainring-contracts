@@ -250,7 +250,8 @@ mod tests {
         // prepare settlement
         assert_send_and_sign_prepare_settlement(
             accounts.clone(),
-            input.clone()
+            input.clone(),
+            None
         );
 
 
@@ -350,10 +351,65 @@ mod tests {
         };
         assert_send_and_sign_prepare_settlement(
             accounts.clone(),
-            input2
+            input2,
+            None
         );
 
         assert_send_and_sign_rollback_settlement();
+
+        // start another one and make sure we can rollback
+        let input2 = SettlementBatchParams {
+            settlements: vec![
+                SettlementAdjustments {
+                    account_index: 1,
+                    increments: vec![
+                        Adjustment {
+                            address_index: get_or_create_balance_index(wallet2.address.to_string(), token1_account),
+                            amount: 100500,
+                        }
+                    ],
+                    decrements: vec![
+                        Adjustment {
+                            address_index: get_or_create_balance_index(wallet1.address.to_string(), token1_account),
+                            amount: 101000,
+                        }
+                    ],
+                    fee_amount: 500,
+                },
+                SettlementAdjustments {
+                    account_index: 2,
+                    increments: vec![
+                        Adjustment {
+                            address_index: get_or_create_balance_index(wallet1.address.to_string(), token2_account),
+                            amount: 100000,
+                        }
+                    ],
+                    decrements: vec![
+                        Adjustment {
+                            address_index: get_or_create_balance_index(wallet2.address.to_string(), token2_account),
+                            amount: 100000,
+                        }
+                    ],
+                    fee_amount: 0,
+                }
+            ],
+        };
+        assert_send_and_sign_prepare_settlement(
+            accounts.clone(),
+            input2,
+            Some(
+                vec![
+                    AccountAndAddressIndex {
+                        account_index: 1,
+                        address_index: get_or_create_balance_index(wallet1.address.to_string(), token1_account).index,
+                    },
+                    AccountAndAddressIndex {
+                        account_index: 2,
+                        address_index: get_or_create_balance_index(wallet2.address.to_string(), token2_account).index,
+                    }
+                ]
+            )
+        );
     }
 
     #[test]
@@ -1101,6 +1157,7 @@ mod tests {
                 settlement_batch_hash: EMPTY_HASH,
                 last_settlement_batch_hash: EMPTY_HASH,
                 last_withdrawal_batch_hash: EMPTY_HASH,
+                failed_updates: vec![]
             },
         );
         debug!("Initialized program state");
@@ -1236,6 +1293,7 @@ mod tests {
     fn assert_send_and_sign_prepare_settlement(
         accounts: Vec<Pubkey>,
         params: SettlementBatchParams,
+        expected_failed_updates: Option<Vec<AccountAndAddressIndex>>
     ) {
         debug!("Performing prepare Settlement Batch");
         let (submitter_keypair, submitter_pubkey)  = with_secret_key_file(SUBMITTER_FILE_PATH).unwrap();
@@ -1271,10 +1329,21 @@ mod tests {
 
         let state_account = read_account_info(NODE1_ADDRESS, submitter_pubkey.clone()).unwrap();
         let program_state: ProgramState = ProgramState::decode_from_slice(&state_account.data).unwrap();
-        assert_eq!(
-            hex::encode(program_state.settlement_batch_hash),
-            hash(&params.encode_to_vec().unwrap()),
-        );
+        if let Some(failed_updates) = expected_failed_updates {
+            assert_eq!(
+                program_state.settlement_batch_hash,
+                EMPTY_HASH,
+            );
+            assert_eq!(
+                program_state.failed_updates,
+                failed_updates
+            )
+        } else {
+            assert_eq!(
+                hex::encode(program_state.settlement_batch_hash),
+                hash(&params.encode_to_vec().unwrap()),
+            );
+        }
     }
 
     fn assert_send_and_sign_rollback_settlement() {
@@ -1357,7 +1426,7 @@ mod tests {
 
         let account = read_account_info(NODE1_ADDRESS, submitter_pubkey.clone()).unwrap();
         assert_eq!(
-            expected, account.data
+            expected, ProgramState::decode_from_slice(account.data.as_slice()).unwrap().encode_to_vec().unwrap()
         )
     }
 

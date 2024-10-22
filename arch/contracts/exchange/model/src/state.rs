@@ -34,6 +34,10 @@ pub const NETWORK_TYPE_OFFSET: usize = PROGRAM_CHANGE_ADDRESS_OFFSET + MAX_ADDRE
 pub const SETTLEMENT_HASH_OFFSET: usize  = NETWORK_TYPE_OFFSET + NETWORK_TYPE_SIZE;
 pub const LAST_SETTLEMENT_HASH_OFFSET: usize = SETTLEMENT_HASH_OFFSET + HASH_SIZE;
 pub const LAST_WITHDRAWAL_HASH_OFFSET: usize = LAST_SETTLEMENT_HASH_OFFSET + HASH_SIZE;
+pub const FAILED_BALANCE_UPDATES_SIZE_OFFSET: usize = LAST_WITHDRAWAL_HASH_OFFSET + HASH_SIZE;
+pub const FAILED_BALANCE_UPDATES_OFFSET: usize = FAILED_BALANCE_UPDATES_SIZE_OFFSET + 1;
+pub const ACCOUNT_AND_ADDRESS_INDEX_SIZE: usize = 5;
+pub const MAX_FAILED_UPDATES: usize = 100;
 
 pub const FEE_ADDRESS_INDEX: u32 = 0;
 
@@ -61,6 +65,12 @@ pub struct Balance {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+pub struct AccountAndAddressIndex {
+    pub account_index: u8,
+    pub address_index: u32,
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub struct TokenState {
     pub version: u32,
     pub program_state_account: Pubkey,
@@ -77,6 +87,7 @@ pub struct ProgramState {
     pub settlement_batch_hash: Hash,
     pub last_settlement_batch_hash: Hash,
     pub last_withdrawal_batch_hash: Hash,
+    pub failed_updates: Vec<AccountAndAddressIndex>
 }
 
 impl TokenState {
@@ -244,6 +255,32 @@ impl ProgramState {
         Ok(())
     }
 
+    pub fn clear_failed_updates_count(account: &AccountInfo) -> Result<(), ProgramError> {
+        let mut data = account.data.try_borrow_mut().map_err(|_| ProgramError::InvalidAccountData)?;
+        data[FAILED_BALANCE_UPDATES_SIZE_OFFSET] = 0;
+        Ok(())
+    }
+
+    pub fn get_failed_updates_count(account: &AccountInfo) -> Result<u8, ProgramError> {
+        let data = account.data.try_borrow().map_err(|_| ProgramError::InvalidAccountData)?;
+        Ok(data[FAILED_BALANCE_UPDATES_SIZE_OFFSET])
+    }
+
+    pub fn push_failed_update(account: &AccountInfo, account_index: u8, address_index: u32) -> Result<(), ProgramError> {
+        let current_count = Self::get_failed_updates_count(account)?;
+        if current_count as usize == MAX_FAILED_UPDATES {
+            return Err(ProgramError::Custom(ERROR_VALUE_TOO_LARGE));
+        }
+        let offset = FAILED_BALANCE_UPDATES_OFFSET + (current_count as usize * ACCOUNT_AND_ADDRESS_INDEX_SIZE);
+        let mut data = account.data.try_borrow_mut().map_err(|_| ProgramError::InvalidAccountData)?;
+        data[offset] = account_index;
+        data[offset+1..offset+ACCOUNT_AND_ADDRESS_INDEX_SIZE].copy_from_slice(
+            address_index.to_le_bytes().as_slice()
+        );
+        data[FAILED_BALANCE_UPDATES_SIZE_OFFSET] = current_count + 1;
+        Ok(())
+    }
+
 }
 
 fn get_address(account: &AccountInfo, offset: usize) -> Result<String, ProgramError> {
@@ -256,7 +293,7 @@ fn get_address(account: &AccountInfo, offset: usize) -> Result<String, ProgramEr
 pub fn set_string(account: &AccountInfo, offset: usize, string: &str, max_size: usize) -> Result<(), ProgramError> {
     let bytes = string.as_bytes();
     if bytes.len() >= max_size {
-        return Err(ProgramError::Custom(ERROR_VALUE_TOO_LONG));
+        return Err(ProgramError::Custom(ERROR_VALUE_TOO_LARGE));
     }
     let mut data = account.data.try_borrow_mut().map_err(|_| ProgramError::InvalidAccountData)?;
     Ok(data[offset..offset+bytes.len()].copy_from_slice(bytes))
