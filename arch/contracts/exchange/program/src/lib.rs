@@ -25,6 +25,7 @@ pub fn process_instruction(
     accounts: &[AccountInfo],
     instruction_data: &[u8],
 ) -> Result<(), ProgramError> {
+    ProgramState::validate_signer(accounts)?;
     let instruction = ProgramInstruction::decode_from_slice(instruction_data)
         .map_err(|_| ProgramError::InvalidInstructionData)?;
     let params_raw_data = ProgramInstruction::params_raw_data(&instruction_data);
@@ -64,7 +65,6 @@ pub fn init_program_state(accounts: &[AccountInfo],
 
 pub fn init_token_state(accounts: &[AccountInfo],
                         params: &InitTokenStateParams) -> Result<(), ProgramError> {
-    ProgramState::validate_signer(accounts)?;
     let state_data: Vec<u8> = get_account_data(accounts, 1)?;
     if !state_data.is_empty() {
         return Err(ProgramError::Custom(ERROR_ALREADY_INITIALIZED));
@@ -97,9 +97,6 @@ pub fn init_wallet_balances(accounts: &[AccountInfo], params: &InitWalletBalance
 
 pub fn deposit_batch(accounts: &[AccountInfo],
                      params: &DepositBatchParams) -> Result<(), ProgramError> {
-    if ProgramState::get_settlement_hash(&accounts[0])? != EMPTY_HASH {
-        return Err(ProgramError::Custom(ERROR_SETTLEMENT_IN_PROGRESS));
-    }
     for token_deposits in &params.token_deposits {
         TokenState::validate_account(accounts, token_deposits.account_index)?;
         handle_increments(&accounts[token_deposits.account_index as usize], token_deposits.clone().deposits)?;
@@ -111,7 +108,8 @@ pub fn withdraw_batch(program_id: &Pubkey, accounts: &[AccountInfo], params: &Wi
     if ProgramState::get_settlement_hash(&accounts[0])? != EMPTY_HASH {
         return Err(ProgramError::Custom(ERROR_SETTLEMENT_IN_PROGRESS));
     }
-    let mut tx: Transaction = bitcoin::consensus::deserialize(&params.tx_hex).unwrap();
+    let mut tx: Transaction = bitcoin::consensus::deserialize(&params.tx_hex)
+        .map_err(|_| ProgramError::Custom(ERROR_INVALID_INPUT_TX))?;
     if tx.output.len() > 0 {
         return Err(ProgramError::Custom(ERROR_NO_OUTPUTS_ALLOWED));
     }
@@ -323,10 +321,11 @@ fn handle_rollback_withdrawals(
 //
 
 fn validate_bitcoin_address(address: &str, network_type: NetworkType) -> Result<(), ProgramError> {
-    match Address::from_str(address).unwrap().require_network(map_network_type(network_type)) {
-        Ok(_) => Ok(()),
-        Err(_) => Err(ProgramError::Custom(ERROR_INVALID_ADDRESS)),
-    }
+    Address::from_str(address)
+        .map_err(|_| ProgramError::Custom(ERROR_INVALID_ADDRESS))?
+        .require_network(map_network_type(network_type))
+        .map_err(|_| ProgramError::Custom(ERROR_INVALID_ADDRESS_NETWORK))?;
+    Ok(())
 }
 
 fn get_bitcoin_address(address: &str, network_type: NetworkType) -> Address {

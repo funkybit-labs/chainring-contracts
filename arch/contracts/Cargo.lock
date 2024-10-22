@@ -451,6 +451,7 @@ dependencies = [
  "lazy_static",
  "log",
  "model",
+ "sdk",
  "serial_test",
  "sha256",
 ]
