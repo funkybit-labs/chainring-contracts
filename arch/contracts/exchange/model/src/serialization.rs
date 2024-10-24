@@ -671,7 +671,7 @@ impl Codable for ProgramState {
         let settlement_batch_hash = reader.read_hash()?;
         let last_settlement_batch_hash = reader.read_hash()?;
         let last_withdrawal_batch_hash = reader.read_hash()?;
-        let event_count = reader.read_u8()? as usize;
+        let event_count = reader.read_u16_as_usize()?;
         let mut events = Vec::with_capacity(event_count);
         for _ in 0..event_count {
             events.push(Event::decode(reader)?);
@@ -697,7 +697,7 @@ impl Codable for ProgramState {
             writer.write_hash(&self.settlement_batch_hash)? +
             writer.write_hash(&self.last_settlement_batch_hash)? +
             writer.write_hash(&self.last_withdrawal_batch_hash)? +
-            writer.write_u8(self.events.len() as u8)?;
+            writer.write_usize_as_u16(self.events.len())?;
         for event in &self.events {
             bytes_written += event.encode(writer)?;
         }

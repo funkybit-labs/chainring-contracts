@@ -36,7 +36,7 @@ pub const SETTLEMENT_HASH_OFFSET: usize = NETWORK_TYPE_OFFSET + NETWORK_TYPE_SIZ
 pub const LAST_SETTLEMENT_HASH_OFFSET: usize = SETTLEMENT_HASH_OFFSET + HASH_SIZE;
 pub const LAST_WITHDRAWAL_HASH_OFFSET: usize = LAST_SETTLEMENT_HASH_OFFSET + HASH_SIZE;
 pub const EVENTS_SIZE_OFFSET: usize = LAST_WITHDRAWAL_HASH_OFFSET + HASH_SIZE;
-pub const EVENTS_OFFSET: usize = EVENTS_SIZE_OFFSET + 1;
+pub const EVENTS_OFFSET: usize = EVENTS_SIZE_OFFSET + 2;
 pub const EVENT_SIZE: usize = 34;
 pub const MAX_EVENTS: usize = 100;
 
@@ -285,27 +285,28 @@ impl ProgramState {
 
     pub fn clear_events(account: &AccountInfo) -> Result<(), ProgramError> {
         let mut data = account.data.try_borrow_mut().map_err(|_| ProgramError::InvalidAccountData)?;
-        data[EVENTS_SIZE_OFFSET] = 0;
-        Ok(())
+        Ok(data[EVENTS_SIZE_OFFSET..EVENTS_SIZE_OFFSET + 2].copy_from_slice(0u16.to_le_bytes().as_slice()))
     }
 
-    pub fn get_events_count(account: &AccountInfo) -> Result<u8, ProgramError> {
-        let data = account.data.try_borrow().map_err(|_| ProgramError::InvalidAccountData)?;
-        Ok(data[EVENTS_SIZE_OFFSET])
+    pub fn get_events_count(account: &AccountInfo) -> Result<usize, ProgramError> {
+        Ok(u16::from_le_bytes(
+            account.data.borrow()[EVENTS_SIZE_OFFSET..EVENTS_SIZE_OFFSET + 2]
+                .try_into()
+                .map_err(|_| ProgramError::InvalidAccountData)?
+        ) as usize)
     }
 
     pub fn emit_event(account: &AccountInfo, event: &Event) -> Result<(), ProgramError> {
         let current_count = Self::get_events_count(account)?;
-        if current_count as usize == MAX_EVENTS {
+        if current_count == MAX_EVENTS {
             return Err(ProgramError::Custom(ERROR_VALUE_TOO_LARGE));
         }
-        let offset = EVENTS_OFFSET + (current_count as usize * EVENT_SIZE);
+        let offset = EVENTS_OFFSET + (current_count * EVENT_SIZE);
         let mut data = account.data.try_borrow_mut().map_err(|_| ProgramError::InvalidAccountData)?;
         data[offset..offset + EVENT_SIZE].copy_from_slice(
             event.encode_to_vec().unwrap().as_slice()
         );
-        data[EVENTS_SIZE_OFFSET] = current_count + 1;
-        Ok(())
+        Ok(data[EVENTS_SIZE_OFFSET..EVENTS_SIZE_OFFSET + 2].copy_from_slice(((current_count + 1) as u16).to_le_bytes().as_slice()))
     }
 
     pub fn get_failed_withdrawal_amount(account: &AccountInfo) -> Result<u64, ProgramError> {
