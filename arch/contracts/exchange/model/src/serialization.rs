@@ -1,7 +1,7 @@
 use std::io;
 use std::io::{Cursor, Error, Read, Write};
 use arch_program::pubkey::Pubkey;
-use crate::state::{Balance, Hash, MAX_ADDRESS_SIZE, MAX_TOKEN_ID_SIZE, NetworkType, ProgramState, TokenState};
+use crate::state::{Balance, Event, EventType, Hash, MAX_ADDRESS_SIZE, MAX_TOKEN_ID_SIZE, NetworkType, ProgramState, TokenState};
 use crate::instructions::*;
 
 pub trait ReadExt: io::Read {
@@ -267,7 +267,7 @@ impl Codable for TokenStateSetup {
 
         Ok(Self {
             account_index,
-            wallet_addresses
+            wallet_addresses,
         })
     }
 
@@ -291,7 +291,7 @@ impl Codable for AddressIndex {
 
         Ok(Self {
             index,
-            last4
+            last4,
         })
     }
 
@@ -307,7 +307,7 @@ impl Codable for Adjustment {
     fn decode<R: Read + ?Sized>(reader: &mut R) -> Result<Self, io::Error> {
         Ok(Self {
             address_index: AddressIndex::decode(reader)?,
-            amount: reader.read_u64()?
+            amount: reader.read_u64()?,
         })
     }
 
@@ -323,7 +323,7 @@ impl Codable for Withdrawal {
         Ok(Self {
             address_index: AddressIndex::decode(reader)?,
             amount: reader.read_u64()?,
-            fee_amount: reader.read_u64()?
+            fee_amount: reader.read_u64()?,
         })
     }
 
@@ -348,7 +348,7 @@ impl Codable for TokenDeposits {
 
         Ok(Self {
             account_index,
-            deposits
+            deposits,
         })
     }
 
@@ -374,7 +374,7 @@ impl Codable for TokenWithdrawals {
 
         Ok(Self {
             account_index,
-            withdrawals
+            withdrawals,
         })
     }
 
@@ -411,7 +411,7 @@ impl Codable for SettlementAdjustments {
             account_index,
             increments,
             decrements,
-            fee_amount
+            fee_amount,
         })
     }
 
@@ -439,7 +439,7 @@ impl Codable for InitProgramStateParams {
         Ok(Self {
             fee_account: reader.read_string()?,
             program_change_address: reader.read_string()?,
-            network_type: NetworkType::decode(reader)?
+            network_type: NetworkType::decode(reader)?,
         })
     }
 
@@ -527,7 +527,7 @@ impl Codable for WithdrawBatchParams {
         Ok(Self {
             tx_hex,
             change_amount,
-            token_withdrawals
+            token_withdrawals,
         })
     }
 
@@ -592,7 +592,7 @@ impl Codable for Balance {
     fn decode<R: Read + ?Sized>(reader: &mut R) -> Result<Self, io::Error> {
         Ok(Self {
             address: reader.read_string_with_padding(MAX_ADDRESS_SIZE)?,
-            balance: reader.read_u64()?
+            balance: reader.read_u64()?,
         })
     }
 
@@ -600,6 +600,32 @@ impl Codable for Balance {
         Ok(
             writer.write_string_with_padding(&self.address, MAX_ADDRESS_SIZE)? +
                 writer.write_u64(self.balance)?
+        )
+    }
+}
+
+impl Codable for Event {
+    fn decode<R: Read + ?Sized>(reader: &mut R) -> Result<Self, io::Error> {
+        Ok(Self {
+            event_type: EventType::decode(reader)?,
+            account_index: reader.read_u8()?,
+            address_index: reader.read_u32()?,
+            requested_amount: reader.read_u64()?,
+            fee_amount: reader.read_u64()?,
+            balance: reader.read_u64()?,
+            error_code: reader.read_u32()?,
+        })
+    }
+
+    fn encode<W: Write + ?Sized>(&self, mut writer: &mut W) -> Result<usize, io::Error> {
+        Ok(
+            self.event_type.encode(writer)? +
+                writer.write_u8(self.account_index)? +
+                writer.write_u32(self.address_index)? +
+                writer.write_u64(self.requested_amount)? +
+                writer.write_u64(self.fee_amount)? +
+                writer.write_u64(self.balance)? +
+                writer.write_u32(self.error_code)?
         )
     }
 }
@@ -620,7 +646,7 @@ impl Codable for TokenState {
             version,
             program_state_account,
             token_id,
-            balances
+            balances,
         })
     }
 
@@ -638,27 +664,44 @@ impl Codable for TokenState {
 
 impl Codable for ProgramState {
     fn decode<R: Read + ?Sized>(reader: &mut R) -> Result<Self, Error> {
+        let version = reader.read_u32()?;
+        let fee_account_address = reader.read_string_with_padding(MAX_ADDRESS_SIZE)?;
+        let program_change_address = reader.read_string_with_padding(MAX_ADDRESS_SIZE)?;
+        let network_type = NetworkType::decode(reader)?;
+        let settlement_batch_hash = reader.read_hash()?;
+        let last_settlement_batch_hash = reader.read_hash()?;
+        let last_withdrawal_batch_hash = reader.read_hash()?;
+        let event_count = reader.read_u16_as_usize()?;
+        let mut events = Vec::with_capacity(event_count);
+        for _ in 0..event_count {
+            events.push(Event::decode(reader)?);
+        }
+
         Ok(Self {
-            version: reader.read_u32()?,
-            fee_account_address: reader.read_string_with_padding(MAX_ADDRESS_SIZE)?,
-            program_change_address: reader.read_string_with_padding(MAX_ADDRESS_SIZE)?,
-            network_type: NetworkType::decode(reader)?,
-            settlement_batch_hash: reader.read_hash()?,
-            last_settlement_batch_hash: reader.read_hash()?,
-            last_withdrawal_batch_hash: reader.read_hash()?
+            version,
+            fee_account_address,
+            program_change_address,
+            network_type,
+            settlement_batch_hash,
+            last_settlement_batch_hash,
+            last_withdrawal_batch_hash,
+            events,
         })
     }
 
     fn encode<W: Write + ?Sized>(&self, mut writer: &mut W) -> Result<usize, Error> {
-        Ok(
-            writer.write_u32(self.version)? +
-                writer.write_string_with_padding(&self.fee_account_address, MAX_ADDRESS_SIZE)? +
-                writer.write_string_with_padding(&self.program_change_address, MAX_ADDRESS_SIZE)? +
-                self.network_type.encode(writer)? +
-                writer.write_hash(&self.settlement_batch_hash)? +
-                writer.write_hash(&self.last_settlement_batch_hash)? +
-                writer.write_hash(&self.last_withdrawal_batch_hash)?
-        )
+        let mut bytes_written = writer.write_u32(self.version)? +
+            writer.write_string_with_padding(&self.fee_account_address, MAX_ADDRESS_SIZE)? +
+            writer.write_string_with_padding(&self.program_change_address, MAX_ADDRESS_SIZE)? +
+            self.network_type.encode(writer)? +
+            writer.write_hash(&self.settlement_batch_hash)? +
+            writer.write_hash(&self.last_settlement_batch_hash)? +
+            writer.write_hash(&self.last_withdrawal_batch_hash)? +
+            writer.write_usize_as_u16(self.events.len())?;
+        for event in &self.events {
+            bytes_written += event.encode(writer)?;
+        }
+        Ok(bytes_written)
     }
 }
 
@@ -673,7 +716,7 @@ mod tests {
         let instruction = ProgramInstruction::InitProgramState(InitProgramStateParams {
             fee_account: "132F25rTsvBdp9JzLLBHP5mvGY66i1xdiM".to_string(),
             program_change_address: "33iFwdLuRpW1uK1RTRqsoi8rR4NpDzk66k".to_string(),
-            network_type: NetworkType::Regtest
+            network_type: NetworkType::Regtest,
         });
         assert_eq!(instruction, ProgramInstruction::decode_from_slice(&instruction.encode_to_vec().unwrap()).unwrap());
 
@@ -688,16 +731,16 @@ mod tests {
                     account_index: 0,
                     wallet_addresses: vec![
                         "132F25rTsvBdp9JzLLBHP5mvGY66i1xdiM".to_string(),
-                        "33iFwdLuRpW1uK1RTRqsoi8rR4NpDzk66k".to_string()
-                    ]
+                        "33iFwdLuRpW1uK1RTRqsoi8rR4NpDzk66k".to_string(),
+                    ],
                 },
                 TokenStateSetup {
                     account_index: 1,
                     wallet_addresses: vec![
                         "33iFwdLuRpW1uK1RTRqsoi8rR4NpDzk66k".to_string(),
-                        "132F25rTsvBdp9JzLLBHP5mvGY66i1xdiM".to_string()
-                    ]
-                }
+                        "132F25rTsvBdp9JzLLBHP5mvGY66i1xdiM".to_string(),
+                    ],
+                },
             ]
         });
         assert_eq!(instruction, ProgramInstruction::decode_from_slice(&instruction.encode_to_vec().unwrap()).unwrap());
@@ -710,18 +753,18 @@ mod tests {
                         Adjustment {
                             address_index: AddressIndex {
                                 index: 123,
-                                last4: [1, 2, 3, 4]
+                                last4: [1, 2, 3, 4],
                             },
-                            amount: 456
+                            amount: 456,
                         },
                         Adjustment {
                             address_index: AddressIndex {
                                 index: 321,
-                                last4: [5, 6, 7, 8]
+                                last4: [5, 6, 7, 8],
                             },
-                            amount: 654
-                        }
-                    ]
+                            amount: 654,
+                        },
+                    ],
                 },
                 TokenDeposits {
                     account_index: 1,
@@ -729,19 +772,19 @@ mod tests {
                         Adjustment {
                             address_index: AddressIndex {
                                 index: 111,
-                                last4: [1, 2, 3, 4]
+                                last4: [1, 2, 3, 4],
                             },
-                            amount: 222
+                            amount: 222,
                         },
                         Adjustment {
                             address_index: AddressIndex {
                                 index: 333,
-                                last4: [4, 3, 2, 1]
+                                last4: [4, 3, 2, 1],
                             },
-                            amount: 444
-                        }
-                    ]
-                }
+                            amount: 444,
+                        },
+                    ],
+                },
             ]
         });
         assert_eq!(instruction, ProgramInstruction::decode_from_slice(&instruction.encode_to_vec().unwrap()).unwrap());
@@ -756,20 +799,20 @@ mod tests {
                         Withdrawal {
                             address_index: AddressIndex {
                                 index: 123,
-                                last4: [1, 2, 3, 4]
+                                last4: [1, 2, 3, 4],
                             },
                             amount: 456,
-                            fee_amount: 789
+                            fee_amount: 789,
                         },
                         Withdrawal {
                             address_index: AddressIndex {
                                 index: 321,
-                                last4: [4, 3, 2, 1]
+                                last4: [4, 3, 2, 1],
                             },
                             amount: 654,
-                            fee_amount: 987
-                        }
-                    ]
+                            fee_amount: 987,
+                        },
+                    ],
                 },
                 TokenWithdrawals {
                     account_index: 1,
@@ -777,22 +820,22 @@ mod tests {
                         Withdrawal {
                             address_index: AddressIndex {
                                 index: 111,
-                                last4: [1, 2, 3, 4]
+                                last4: [1, 2, 3, 4],
                             },
                             amount: 222,
-                            fee_amount: 333
+                            fee_amount: 333,
                         },
                         Withdrawal {
                             address_index: AddressIndex {
                                 index: 444,
-                                last4: [4, 3, 2, 1]
+                                last4: [4, 3, 2, 1],
                             },
                             amount: 555,
-                            fee_amount: 666
-                        }
-                    ]
-                }
-            ]
+                            fee_amount: 666,
+                        },
+                    ],
+                },
+            ],
         });
         assert_eq!(instruction, ProgramInstruction::decode_from_slice(&instruction.encode_to_vec().unwrap()).unwrap());
 
@@ -804,35 +847,35 @@ mod tests {
                         Adjustment {
                             address_index: AddressIndex {
                                 index: 111,
-                                last4: [1, 2, 3, 4]
+                                last4: [1, 2, 3, 4],
                             },
-                            amount: 222
+                            amount: 222,
                         },
                         Adjustment {
                             address_index: AddressIndex {
                                 index: 333,
-                                last4: [4, 3, 2, 1]
+                                last4: [4, 3, 2, 1],
                             },
-                            amount: 444
-                        }
+                            amount: 444,
+                        },
                     ],
                     decrements: vec![
                         Adjustment {
                             address_index: AddressIndex {
                                 index: 555,
-                                last4: [1, 2, 3, 4]
+                                last4: [1, 2, 3, 4],
                             },
-                            amount: 666
+                            amount: 666,
                         },
                         Adjustment {
                             address_index: AddressIndex {
                                 index: 777,
-                                last4: [4, 3, 2, 1]
+                                last4: [4, 3, 2, 1],
                             },
-                            amount: 888
-                        }
+                            amount: 888,
+                        },
                     ],
-                    fee_amount: 123
+                    fee_amount: 123,
                 },
                 SettlementAdjustments {
                     account_index: 1,
@@ -840,36 +883,36 @@ mod tests {
                         Adjustment {
                             address_index: AddressIndex {
                                 index: 1111,
-                                last4: [1, 2, 3, 4]
+                                last4: [1, 2, 3, 4],
                             },
-                            amount: 2222
+                            amount: 2222,
                         },
                         Adjustment {
                             address_index: AddressIndex {
                                 index: 3333,
-                                last4: [4, 3, 2, 1]
+                                last4: [4, 3, 2, 1],
                             },
-                            amount: 4444
-                        }
+                            amount: 4444,
+                        },
                     ],
                     decrements: vec![
                         Adjustment {
                             address_index: AddressIndex {
                                 index: 5555,
-                                last4: [1, 2, 3, 4]
+                                last4: [1, 2, 3, 4],
                             },
-                            amount: 6666
+                            amount: 6666,
                         },
                         Adjustment {
                             address_index: AddressIndex {
                                 index: 7777,
-                                last4: [4, 3, 2, 1]
+                                last4: [4, 3, 2, 1],
                             },
-                            amount: 8888
-                        }
+                            amount: 8888,
+                        },
                     ],
-                    fee_amount: 1234
-                }
+                    fee_amount: 1234,
+                },
             ]
         });
         assert_eq!(instruction, ProgramInstruction::decode_from_slice(&instruction.encode_to_vec().unwrap()).unwrap());
@@ -882,35 +925,35 @@ mod tests {
                         Adjustment {
                             address_index: AddressIndex {
                                 index: 111,
-                                last4: [1, 2, 3, 4]
+                                last4: [1, 2, 3, 4],
                             },
-                            amount: 222
+                            amount: 222,
                         },
                         Adjustment {
                             address_index: AddressIndex {
                                 index: 333,
-                                last4: [4, 3, 2, 1]
+                                last4: [4, 3, 2, 1],
                             },
-                            amount: 444
-                        }
+                            amount: 444,
+                        },
                     ],
                     decrements: vec![
                         Adjustment {
                             address_index: AddressIndex {
                                 index: 555,
-                                last4: [1, 2, 3, 4]
+                                last4: [1, 2, 3, 4],
                             },
-                            amount: 666
+                            amount: 666,
                         },
                         Adjustment {
                             address_index: AddressIndex {
                                 index: 777,
-                                last4: [4, 3, 2, 1]
+                                last4: [4, 3, 2, 1],
                             },
-                            amount: 888
-                        }
+                            amount: 888,
+                        },
                     ],
-                    fee_amount: 123
+                    fee_amount: 123,
                 },
                 SettlementAdjustments {
                     account_index: 1,
@@ -918,36 +961,36 @@ mod tests {
                         Adjustment {
                             address_index: AddressIndex {
                                 index: 1111,
-                                last4: [1, 2, 3, 4]
+                                last4: [1, 2, 3, 4],
                             },
-                            amount: 2222
+                            amount: 2222,
                         },
                         Adjustment {
                             address_index: AddressIndex {
                                 index: 3333,
-                                last4: [4, 3, 2, 1]
+                                last4: [4, 3, 2, 1],
                             },
-                            amount: 4444
-                        }
+                            amount: 4444,
+                        },
                     ],
                     decrements: vec![
                         Adjustment {
                             address_index: AddressIndex {
                                 index: 5555,
-                                last4: [1, 2, 3, 4]
+                                last4: [1, 2, 3, 4],
                             },
-                            amount: 6666
+                            amount: 6666,
                         },
                         Adjustment {
                             address_index: AddressIndex {
                                 index: 7777,
-                                last4: [4, 3, 2, 1]
+                                last4: [4, 3, 2, 1],
                             },
-                            amount: 8888
-                        }
+                            amount: 8888,
+                        },
                     ],
-                    fee_amount: 1234
-                }
+                    fee_amount: 1234,
+                },
             ]
         });
         assert_eq!(instruction, ProgramInstruction::decode_from_slice(&instruction.encode_to_vec().unwrap()).unwrap());
@@ -960,20 +1003,20 @@ mod tests {
                         Withdrawal {
                             address_index: AddressIndex {
                                 index: 123,
-                                last4: [1, 2, 3, 4]
+                                last4: [1, 2, 3, 4],
                             },
                             amount: 456,
-                            fee_amount: 789
+                            fee_amount: 789,
                         },
                         Withdrawal {
                             address_index: AddressIndex {
                                 index: 321,
-                                last4: [4, 3, 2, 1]
+                                last4: [4, 3, 2, 1],
                             },
                             amount: 654,
-                            fee_amount: 987
-                        }
-                    ]
+                            fee_amount: 987,
+                        },
+                    ],
                 },
                 TokenWithdrawals {
                     account_index: 1,
@@ -981,21 +1024,21 @@ mod tests {
                         Withdrawal {
                             address_index: AddressIndex {
                                 index: 111,
-                                last4: [1, 2, 3, 4]
+                                last4: [1, 2, 3, 4],
                             },
                             amount: 222,
-                            fee_amount: 333
+                            fee_amount: 333,
                         },
                         Withdrawal {
                             address_index: AddressIndex {
                                 index: 444,
-                                last4: [4, 3, 2, 1]
+                                last4: [4, 3, 2, 1],
                             },
                             amount: 555,
-                            fee_amount: 666
-                        }
-                    ]
-                }
+                            fee_amount: 666,
+                        },
+                    ],
+                },
             ]
         });
         assert_eq!(instruction, ProgramInstruction::decode_from_slice(&instruction.encode_to_vec().unwrap()).unwrap());
