@@ -277,12 +277,10 @@ fn verify_decrements(accounts: &[AccountInfo], account_index: u8, adjustments: V
         if adjustment.amount > current_balance {
             ProgramState::emit_event(
                 &accounts[0],
-                &Event {
-                    event_type: EventType::FailedSettlement,
+                &Event::FailedSettlement {
                     account_index,
                     address_index: adjustment.address_index.index,
                     requested_amount: adjustment.amount,
-                    fee_amount: 0,
                     balance: current_balance,
                     error_code: ERROR_INSUFFICIENT_BALANCE,
                 })?;
@@ -323,8 +321,7 @@ fn handle_withdrawals(
             Err(_) => {
                 ProgramState::emit_event(
                     &accounts[0],
-                    &Event {
-                        event_type: EventType::FailedWithdrawal,
+                    &Event::FailedWithdrawal {
                         account_index,
                         address_index: withdrawal.address_index.index,
                         requested_amount: withdrawal.amount,
