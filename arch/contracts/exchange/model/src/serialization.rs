@@ -1,7 +1,7 @@
 use std::io;
 use std::io::{Cursor, Error, Read, Write};
 use arch_program::pubkey::Pubkey;
-use crate::state::{Balance, Event, EventType, Hash, MAX_ADDRESS_SIZE, MAX_TOKEN_ID_SIZE, NetworkType, ProgramState, TokenState};
+use crate::state::{Balance, Event, EVENT_SIZE, Hash, MAX_ADDRESS_SIZE, MAX_TOKEN_ID_SIZE, NetworkType, ProgramState, TokenState};
 use crate::instructions::*;
 
 pub trait ReadExt: io::Read {
@@ -88,6 +88,7 @@ pub trait WriteExt: io::Write {
     fn write_u64(&mut self, v: u64) -> Result<usize, io::Error>;
     fn write_string(&mut self, v: &String) -> Result<usize, io::Error>;
     fn write_string_with_padding(&mut self, v: &String, size: usize) -> Result<usize, io::Error>;
+    fn write_padding(&mut self, padding_len: usize) -> Result<usize, io::Error>;
     fn write_pubkey(&mut self, v: &Pubkey) -> Result<usize, io::Error>;
     fn write_hash(&mut self, v: &Hash) -> Result<usize, io::Error>;
 }
@@ -139,14 +140,19 @@ impl<W: io::Write> WriteExt for W {
     fn write_string_with_padding(&mut self, v: &String, size: usize) -> Result<usize, io::Error> {
         let bytes = v.as_bytes();
         self.write_all(&bytes)?;
-        let mut bytes_written = bytes.len();
-        let padding_len = size - bytes.len();
-        if padding_len > 0 {
-            let padding = vec![0; padding_len];
-            self.write_all(&padding)?;
-            bytes_written += padding_len;
-        }
-        Ok(bytes_written)
+        Ok(bytes.len() + self.write_padding(size - bytes.len())?)
+    }
+
+    fn write_padding(&mut self, padding_len: usize) -> Result<usize, io::Error> {
+        Ok(
+            if padding_len > 0 {
+                let padding = vec![0; padding_len];
+                self.write_all(&padding)?;
+                padding_len
+            } else {
+                0
+            }
+        )
     }
 
     fn write_pubkey(&mut self, v: &Pubkey) -> Result<usize, io::Error> {
@@ -606,27 +612,57 @@ impl Codable for Balance {
 
 impl Codable for Event {
     fn decode<R: Read + ?Sized>(reader: &mut R) -> Result<Self, io::Error> {
-        Ok(Self {
-            event_type: EventType::decode(reader)?,
-            account_index: reader.read_u8()?,
-            address_index: reader.read_u32()?,
-            requested_amount: reader.read_u64()?,
-            fee_amount: reader.read_u64()?,
-            balance: reader.read_u64()?,
-            error_code: reader.read_u32()?,
-        })
+        let mut event_data = Vec::with_capacity(EVENT_SIZE);
+        reader.take(EVENT_SIZE as u64).read_to_end(&mut event_data)?;
+
+        let mut event_data_reader = Cursor::new(event_data);
+        let event_type = event_data_reader.read_u8()?;
+        match event_type {
+            0 => Ok(Self::FailedSettlement {
+                account_index: event_data_reader.read_u8()?,
+                address_index: event_data_reader.read_u32()?,
+                requested_amount: event_data_reader.read_u64()?,
+                balance: event_data_reader.read_u64()?,
+                error_code: event_data_reader.read_u32()?
+            }),
+            1 => Ok(Self::FailedWithdrawal {
+                account_index: event_data_reader.read_u8()?,
+                address_index: event_data_reader.read_u32()?,
+                requested_amount: event_data_reader.read_u64()?,
+                fee_amount: event_data_reader.read_u64()?,
+                balance: event_data_reader.read_u64()?,
+                error_code: event_data_reader.read_u32()?
+            }),
+            _ => Err(io::Error::new(io::ErrorKind::Other, "Invalid event type"))
+        }
     }
 
     fn encode<W: Write + ?Sized>(&self, mut writer: &mut W) -> Result<usize, io::Error> {
-        Ok(
-            self.event_type.encode(writer)? +
-                writer.write_u8(self.account_index)? +
-                writer.write_u32(self.address_index)? +
-                writer.write_u64(self.requested_amount)? +
-                writer.write_u64(self.fee_amount)? +
-                writer.write_u64(self.balance)? +
-                writer.write_u32(self.error_code)?
-        )
+        let bytes_written = match self {
+            Self::FailedSettlement { account_index, address_index, requested_amount, balance, error_code } => {
+                writer.write_u8(0)? +
+                    writer.write_u8(*account_index)? +
+                    writer.write_u32(*address_index)? +
+                    writer.write_u64(*requested_amount)? +
+                    writer.write_u64(*balance)? +
+                    writer.write_u32(*error_code)?
+            }
+            Self::FailedWithdrawal { account_index, address_index, requested_amount, fee_amount, balance, error_code } => {
+                writer.write_u8(1)? +
+                    writer.write_u8(*account_index)? +
+                    writer.write_u32(*address_index)? +
+                    writer.write_u64(*requested_amount)? +
+                    writer.write_u64(*fee_amount)? +
+                    writer.write_u64(*balance)? +
+                    writer.write_u32(*error_code)?
+            }
+        };
+
+        if bytes_written > EVENT_SIZE {
+            Err(io::Error::new(io::ErrorKind::Other, "Event is too large"))
+        } else {
+            writer.write_padding(EVENT_SIZE - bytes_written)
+        }
     }
 }
 

@@ -1,6 +1,4 @@
 use std::convert::TryInto;
-use std::{io, str, usize};
-use std::io::Write;
 use arch_program::{
     account::AccountInfo,
     entrypoint,
@@ -8,7 +6,7 @@ use arch_program::{
     program_error::ProgramError,
 };
 use crate::error::*;
-use crate::serialization::{Codable, ReadExt, WriteExt};
+use crate::serialization::Codable;
 
 pub const VERSION_SIZE: usize = 4;
 pub const PUBKEY_SIZE: usize = 32;
@@ -37,7 +35,7 @@ pub const LAST_SETTLEMENT_HASH_OFFSET: usize = SETTLEMENT_HASH_OFFSET + HASH_SIZ
 pub const LAST_WITHDRAWAL_HASH_OFFSET: usize = LAST_SETTLEMENT_HASH_OFFSET + HASH_SIZE;
 pub const EVENTS_SIZE_OFFSET: usize = LAST_WITHDRAWAL_HASH_OFFSET + HASH_SIZE;
 pub const EVENTS_OFFSET: usize = EVENTS_SIZE_OFFSET + 2;
-pub const EVENT_SIZE: usize = 34;
+pub const EVENT_SIZE: usize = 64;
 pub const MAX_EVENTS: usize = 100;
 
 pub const FEE_ADDRESS_INDEX: u32 = 0;
@@ -60,27 +58,29 @@ pub enum NetworkType {
 }
 
 
-#[derive(Clone, PartialEq, Debug)]
-pub enum EventType {
-    FailedSettlement,
-    FailedWithdrawal,
-}
-
 #[derive(Clone, Debug, PartialEq)]
 pub struct Balance {
     pub address: String,
     pub balance: u64,
 }
 
-#[derive(Clone, Debug, PartialEq)]
-pub struct Event {
-    pub event_type: EventType,
-    pub account_index: u8,
-    pub address_index: u32,
-    pub requested_amount: u64,
-    pub fee_amount: u64,
-    pub balance: u64,
-    pub error_code: u32,
+#[derive(Clone, PartialEq, Debug)]
+pub enum Event {
+    FailedSettlement {
+        account_index: u8,
+        address_index: u32,
+        requested_amount: u64,
+        balance: u64,
+        error_code: u32,
+    },
+    FailedWithdrawal {
+        account_index: u8,
+        address_index: u32,
+        requested_amount: u64,
+        fee_amount: u64,
+        balance: u64,
+        error_code: u32,
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -101,23 +101,6 @@ pub struct ProgramState {
     pub last_settlement_batch_hash: Hash,
     pub last_withdrawal_batch_hash: Hash,
     pub events: Vec<Event>,
-}
-
-impl Codable for EventType {
-    fn decode<R: io::Read + ?Sized>(reader: &mut R) -> Result<Self, io::Error> {
-        Ok(match reader.read_u8()? {
-            0 => Self::FailedSettlement,
-            1 => Self::FailedWithdrawal,
-            _ => Self::FailedSettlement
-        })
-    }
-
-    fn encode<W: Write + ?Sized>(&self, mut writer: &mut W) -> Result<usize, io::Error> {
-        Ok(writer.write_u8(match self {
-            Self::FailedSettlement => 0,
-            Self::FailedWithdrawal => 1,
-        })?)
-    }
 }
 
 impl TokenState {
@@ -318,8 +301,11 @@ impl ProgramState {
             let event = Event::decode_from_slice(
                 data[offset..offset + EVENT_SIZE].try_into().map_err(|_| ProgramError::InvalidAccountData)?
             ).map_err(|_| ProgramError::InvalidAccountData)?;
-            if event.event_type == EventType::FailedWithdrawal {
-                amount += event.requested_amount - event.fee_amount
+            match event {
+                Event::FailedWithdrawal { requested_amount, fee_amount, .. } => {
+                    amount += requested_amount - fee_amount
+                }
+                Event::FailedSettlement { .. } => {}
             }
         }
         Ok(amount)

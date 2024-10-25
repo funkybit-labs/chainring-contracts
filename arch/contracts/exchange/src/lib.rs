@@ -186,8 +186,7 @@ mod tests {
             None,
             Some(
                 vec![
-                    Event {
-                        event_type: EventType::FailedWithdrawal,
+                    Event::FailedWithdrawal {
                         account_index: 1,
                         address_index: 1,
                         requested_amount: 100000,
@@ -354,8 +353,7 @@ mod tests {
             Some(1500 + 11500 + 12000),
             Some(
                 vec![
-                    Event {
-                        event_type: EventType::FailedWithdrawal,
+                    Event::FailedWithdrawal {
                         account_index: 1,
                         address_index: 2,
                         requested_amount: 12000,
@@ -363,8 +361,7 @@ mod tests {
                         balance: 11000,
                         error_code: ERROR_INSUFFICIENT_BALANCE,
                     },
-                    Event {
-                        event_type: EventType::FailedWithdrawal,
+                    Event::FailedWithdrawal {
                         account_index: 1,
                         address_index: 3,
                         requested_amount: 12500,
@@ -615,21 +612,17 @@ mod tests {
             input2,
             Some(
                 vec![
-                    Event {
-                        event_type: EventType::FailedSettlement,
+                    Event::FailedSettlement {
                         account_index: 1,
                         address_index: get_or_create_balance_index(wallet1.address.to_string(), token1_account).index,
                         requested_amount: 101000,
-                        fee_amount: 0,
                         balance: 5000,
                         error_code: ERROR_INSUFFICIENT_BALANCE,
                     },
-                    Event {
-                        event_type: EventType::FailedSettlement,
+                    Event::FailedSettlement {
                         account_index: 2,
                         address_index: get_or_create_balance_index(wallet2.address.to_string(), token2_account).index,
                         requested_amount: 100000,
-                        fee_amount: 0,
                         balance: 7000,
                         error_code: ERROR_INSUFFICIENT_BALANCE,
                     },
