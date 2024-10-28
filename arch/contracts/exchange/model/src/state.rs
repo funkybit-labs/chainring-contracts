@@ -8,14 +8,15 @@ use arch_program::{
 use crate::error::*;
 use crate::serialization::Codable;
 
+pub const ACCOUNT_TYPE_SIZE: usize = 1;
 pub const VERSION_SIZE: usize = 4;
 pub const PUBKEY_SIZE: usize = 32;
-pub const PROGRAM_PUBKEY_OFFSET: usize = VERSION_SIZE;
+pub const PROGRAM_PUBKEY_OFFSET: usize = VERSION_SIZE + ACCOUNT_TYPE_SIZE;
 pub const MAX_TOKEN_ID_SIZE: usize = 32;
 pub const TOKEN_ID_OFFSET: usize = PROGRAM_PUBKEY_OFFSET + PUBKEY_SIZE;
 pub const BALANCE_COUNT_SIZE: usize = 4;
 pub const BALANCE_COUNT_OFFSET: usize = TOKEN_ID_OFFSET + MAX_TOKEN_ID_SIZE;
-pub const TOKEN_STATE_HEADER_SIZE: usize = VERSION_SIZE + PUBKEY_SIZE + MAX_TOKEN_ID_SIZE + BALANCE_COUNT_SIZE;
+pub const BALANCES_OFFSET: usize = BALANCE_COUNT_OFFSET + BALANCE_COUNT_SIZE;
 
 
 pub const MAX_ADDRESS_SIZE: usize = 92;
@@ -26,14 +27,14 @@ pub const BALANCE_SIZE: usize = MAX_ADDRESS_SIZE + BALANCE_AMOUNT_SIZE;
 pub const NETWORK_TYPE_SIZE: usize = 1;
 pub const HASH_SIZE: usize = 32;
 
-pub const FEE_ACCOUNT_OFFSET: usize = VERSION_SIZE;
+pub const WITHDRAW_ACCOUNT_PUBKEY_OFFSET: usize = VERSION_SIZE + ACCOUNT_TYPE_SIZE;
+pub const FEE_ACCOUNT_OFFSET: usize = WITHDRAW_ACCOUNT_PUBKEY_OFFSET + PUBKEY_SIZE;
 pub const PROGRAM_CHANGE_ADDRESS_OFFSET: usize = FEE_ACCOUNT_OFFSET + MAX_ADDRESS_SIZE;
 pub const NETWORK_TYPE_OFFSET: usize = PROGRAM_CHANGE_ADDRESS_OFFSET + MAX_ADDRESS_SIZE;
 
 pub const SETTLEMENT_HASH_OFFSET: usize = NETWORK_TYPE_OFFSET + NETWORK_TYPE_SIZE;
 pub const LAST_SETTLEMENT_HASH_OFFSET: usize = SETTLEMENT_HASH_OFFSET + HASH_SIZE;
-pub const LAST_WITHDRAWAL_HASH_OFFSET: usize = LAST_SETTLEMENT_HASH_OFFSET + HASH_SIZE;
-pub const EVENTS_SIZE_OFFSET: usize = LAST_WITHDRAWAL_HASH_OFFSET + HASH_SIZE;
+pub const EVENTS_SIZE_OFFSET: usize = LAST_SETTLEMENT_HASH_OFFSET + HASH_SIZE;
 pub const EVENTS_OFFSET: usize = EVENTS_SIZE_OFFSET + 2;
 pub const EVENT_SIZE: usize = 64;
 pub const MAX_EVENTS: usize = 100;
@@ -83,8 +84,17 @@ pub enum Event {
     }
 }
 
+#[derive(Clone, PartialEq, Debug)]
+pub enum AccountType {
+    Program,
+    Token,
+    Withdraw,
+    Unknown
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct TokenState {
+    pub account_type: AccountType,
     pub version: u32,
     pub program_state_account: Pubkey,
     pub token_id: String,
@@ -93,19 +103,29 @@ pub struct TokenState {
 
 #[derive(Clone, Debug)]
 pub struct ProgramState {
+    pub account_type: AccountType,
     pub version: u32,
+    pub withdraw_account: Pubkey,
     pub fee_account_address: String,
     pub program_change_address: String,
     pub network_type: NetworkType,
     pub settlement_batch_hash: Hash,
     pub last_settlement_batch_hash: Hash,
-    pub last_withdrawal_batch_hash: Hash,
     pub events: Vec<Event>,
+}
+
+#[derive(Clone, Debug)]
+pub struct WithdrawState {
+    pub account_type: AccountType,
+    pub version: u32,
+    pub program_state_account: Pubkey,
+    pub batch_hash: Hash,
 }
 
 impl TokenState {
     pub fn initialize(account: &AccountInfo, token_id: &str, fee_account_address: &str, pubkey: &Pubkey) -> Result<(), ProgramError> {
         Self::grow_balance_accounts_if_needed(account, 1)?;
+        set_type(account, AccountType::Token)?;
         Self::set_program_account(account, pubkey)?;
         set_string(account, TOKEN_ID_OFFSET, token_id, MAX_TOKEN_ID_SIZE)?;
         Self::set_num_balances(account, 1)?;
@@ -139,16 +159,6 @@ impl TokenState {
             .try_into().map_err(|_| ProgramError::InvalidAccountData)?))
     }
 
-    pub fn validate_account(accounts: &[AccountInfo], index: u8) -> Result<(), ProgramError> {
-        if index as usize >= accounts.len() {
-            return Err(ProgramError::Custom(ERROR_INVALID_ACCOUNT_INDEX));
-        }
-        if TokenState::get_program_state_account_key(&accounts[index as usize])? != *accounts[0].key {
-            return Err(ProgramError::Custom(ERROR_PROGRAM_STATE_MISMATCH));
-        }
-        Ok(())
-    }
-
     pub fn grow_balance_accounts_if_needed(account: &AccountInfo, additional_balances: usize) -> Result<(), ProgramError> {
         let original_data_len = unsafe { account.original_data_len() };
 
@@ -157,8 +167,8 @@ impl TokenState {
         } else {
             0
         };
-        if TOKEN_STATE_HEADER_SIZE + (num_balances + additional_balances) * BALANCE_SIZE > original_data_len {
-            account.realloc(original_data_len + entrypoint::MAX_PERMITTED_DATA_INCREASE as usize, true)?
+        if BALANCES_OFFSET + (num_balances + additional_balances) * BALANCE_SIZE > original_data_len {
+            account.realloc(original_data_len + entrypoint::MAX_PERMITTED_DATA_INCREASE, true)?
         }
         Ok(())
     }
@@ -173,7 +183,7 @@ impl TokenState {
 
 impl Balance {
     pub fn get_wallet_balance(account: &AccountInfo, index: usize) -> Result<u64, ProgramError> {
-        let offset = TOKEN_STATE_HEADER_SIZE + index * BALANCE_SIZE + BALANCE_AMOUNT_OFFSET;
+        let offset = BALANCES_OFFSET + index * BALANCE_SIZE + BALANCE_AMOUNT_OFFSET;
         Ok(u64::from_le_bytes(
             account.data.borrow()[offset..offset + 8]
                 .try_into()
@@ -182,7 +192,7 @@ impl Balance {
     }
 
     pub fn set_wallet_balance(account: &AccountInfo, index: usize, balance: u64) -> Result<(), ProgramError> {
-        let offset = TOKEN_STATE_HEADER_SIZE + index * BALANCE_SIZE + BALANCE_AMOUNT_OFFSET;
+        let offset = BALANCES_OFFSET + index * BALANCE_SIZE + BALANCE_AMOUNT_OFFSET;
         let mut data = account.data.try_borrow_mut().map_err(|_| ProgramError::InvalidAccountData)?;
         Ok(data[offset..offset + 8].copy_from_slice(
             balance.to_le_bytes().as_slice()
@@ -205,11 +215,11 @@ impl Balance {
     }
 
     pub fn get_wallet_address(account: &AccountInfo, index: usize) -> Result<String, ProgramError> {
-        get_address(account, TOKEN_STATE_HEADER_SIZE + index * BALANCE_SIZE)
+        get_address(account, BALANCES_OFFSET + index * BALANCE_SIZE)
     }
 
     pub fn set_wallet_address(account: &AccountInfo, index: usize, address: &str) -> Result<(), ProgramError> {
-        set_string(account, TOKEN_STATE_HEADER_SIZE + index * BALANCE_SIZE, address, MAX_ADDRESS_SIZE)
+        set_string(account, BALANCES_OFFSET + index * BALANCE_SIZE, address, MAX_ADDRESS_SIZE)
     }
 
     pub fn get_wallet_address_last4(account: &AccountInfo, index: usize) -> Result<WalletLast4, ProgramError> {
@@ -218,6 +228,12 @@ impl Balance {
 }
 
 impl ProgramState {
+
+    pub fn get_withdraw_account_key(account: &AccountInfo) -> Result<Pubkey, ProgramError> {
+        Ok(Pubkey::from_slice(account.data.borrow()[WITHDRAW_ACCOUNT_PUBKEY_OFFSET..WITHDRAW_ACCOUNT_PUBKEY_OFFSET + PUBKEY_SIZE]
+            .try_into().map_err(|_| ProgramError::InvalidAccountData)?))
+    }
+
     pub fn get_fee_account_address(account: &AccountInfo) -> Result<String, ProgramError> {
         get_address(account, FEE_ACCOUNT_OFFSET)
     }
@@ -250,20 +266,6 @@ impl ProgramState {
         Ok(data[LAST_SETTLEMENT_HASH_OFFSET..LAST_SETTLEMENT_HASH_OFFSET + HASH_SIZE].copy_from_slice(
             hash.as_slice()
         ))
-    }
-
-    pub fn set_last_withdrawal_hash(account: &AccountInfo, hash: Hash) -> Result<(), ProgramError> {
-        let mut data = account.data.try_borrow_mut().map_err(|_| ProgramError::InvalidAccountData)?;
-        Ok(data[LAST_WITHDRAWAL_HASH_OFFSET..LAST_WITHDRAWAL_HASH_OFFSET + HASH_SIZE].copy_from_slice(
-            hash.as_slice()
-        ))
-    }
-
-    pub fn validate_signer(accounts: &[AccountInfo]) -> Result<(), ProgramError> {
-        if !accounts[0].is_signer {
-            return Err(ProgramError::Custom(ERROR_INVALID_SIGNER));
-        }
-        Ok(())
     }
 
     pub fn clear_events(account: &AccountInfo) -> Result<(), ProgramError> {
@@ -312,6 +314,57 @@ impl ProgramState {
     }
 }
 
+pub const WITHDRAW_HASH_OFFSET: usize = PROGRAM_PUBKEY_OFFSET + PUBKEY_SIZE;
+pub const WITHDRAW_ACCOUNT_SIZE: usize = WITHDRAW_HASH_OFFSET + HASH_SIZE;
+impl WithdrawState {
+
+    pub fn initialize(accounts: &[AccountInfo]) -> Result<(), ProgramError> {
+        if accounts[1].data_is_empty() {
+            accounts[1].realloc(WITHDRAW_ACCOUNT_SIZE, true)?;
+            set_type(&accounts[1], AccountType::Withdraw)?;
+            Self::set_program_account(&accounts[1], accounts[0].key)
+        } else {
+            Ok(())
+        }
+    }
+
+    pub fn get_program_state_account_key(account: &AccountInfo) -> Result<Pubkey, ProgramError> {
+        Ok(Pubkey::from_slice(account.data.borrow()[PROGRAM_PUBKEY_OFFSET..PROGRAM_PUBKEY_OFFSET + PUBKEY_SIZE]
+            .try_into().map_err(|_| ProgramError::InvalidAccountData)?))
+    }
+
+    fn set_program_account(account: &AccountInfo, pubkey: &Pubkey) -> Result<(), ProgramError> {
+        let mut data = account.data.try_borrow_mut().map_err(|_| ProgramError::InvalidAccountData)?;
+        Ok(data[PROGRAM_PUBKEY_OFFSET..PROGRAM_PUBKEY_OFFSET + PUBKEY_SIZE].copy_from_slice(
+            pubkey.0.as_slice()
+        ))
+    }
+
+    pub fn get_hash(account: &AccountInfo) -> Result<Hash, ProgramError> {
+        hash_from_slice(account, WITHDRAW_HASH_OFFSET)
+    }
+
+    pub fn clear_hash(account: &AccountInfo) -> Result<(), ProgramError> {
+        Self::set_hash(account, [0u8; HASH_SIZE])
+    }
+
+    pub fn set_hash(account: &AccountInfo, hash: Hash) -> Result<(), ProgramError> {
+        let mut data = account.data.try_borrow_mut().map_err(|_| ProgramError::InvalidAccountData)?;
+        Ok(data[WITHDRAW_HASH_OFFSET..WITHDRAW_HASH_OFFSET + HASH_SIZE].copy_from_slice(
+            hash.as_slice()
+        ))
+    }
+}
+
+pub fn set_type(account: &AccountInfo, account_type: AccountType) -> Result<(), ProgramError> {
+    let mut data = account.data.try_borrow_mut().map_err(|_| ProgramError::InvalidAccountData)?;
+    Ok(data[0..1].copy_from_slice(account_type.encode_to_vec().unwrap().as_slice()))
+}
+
+pub fn get_type(account: &AccountInfo) -> Result<AccountType, ProgramError> {
+    Ok(AccountType::decode_from_slice(&account.data.borrow()[0..1]).map_err(|_| ProgramError::InvalidAccountData)?)
+}
+
 fn get_address(account: &AccountInfo, offset: usize) -> Result<String, ProgramError> {
     let mut tmp = [0u8; MAX_ADDRESS_SIZE];
     tmp[..MAX_ADDRESS_SIZE].copy_from_slice(&account.data.borrow()[offset..offset + MAX_ADDRESS_SIZE]);
@@ -339,5 +392,36 @@ pub fn wallet_last4(address: &str) -> WalletLast4 {
     let mut tmp: WalletLast4 = [0u8; 4];
     tmp[0..4].copy_from_slice(&address.as_bytes()[address.len() - 4..address.len()]);
     tmp
+}
+
+pub fn validate_account(accounts: &[AccountInfo], index: u8, is_signer: bool, is_writable: bool, account_type: Option<AccountType>, related_account_index: Option<u8>) -> Result<(), ProgramError> {
+    if index as usize >= accounts.len() {
+        return Err(ProgramError::Custom(ERROR_INVALID_ACCOUNT_INDEX));
+    }
+    let account = &accounts[index as usize];
+    if account.is_signer != is_signer || account.is_writable != is_writable {
+        return Err(ProgramError::Custom(ERROR_INVALID_ACCOUNT_FLAGS));
+    }
+    if let Some(account_type) = account_type {
+        if get_type(account)? != account_type {
+            return Err(ProgramError::Custom(ERROR_INVALID_ACCOUNT_TYPE));
+        }
+        if let Some(related_account_index) = related_account_index{
+            let related_key = match account_type {
+                AccountType::Program => ProgramState::get_withdraw_account_key(&account),
+                AccountType::Withdraw => WithdrawState::get_program_state_account_key(&account),
+                AccountType::Token => TokenState::get_program_state_account_key(&account),
+                _ => Err(ProgramError::Custom(ERROR_INVALID_ACCOUNT_TYPE))
+            }?;
+            if related_key != *accounts[related_account_index as usize].key {
+                return Err(ProgramError::Custom(ERROR_STATE_ACCOUNT_MISMATCH));
+            }
+        }
+    } else {
+        if !account.data_is_empty() {
+            return Err(ProgramError::Custom(ERROR_ALREADY_INITIALIZED))
+        }
+    }
+    Ok(())
 }
 

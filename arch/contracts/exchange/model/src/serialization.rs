@@ -1,7 +1,7 @@
 use std::io;
 use std::io::{Cursor, Error, Read, Write};
 use arch_program::pubkey::Pubkey;
-use crate::state::{Balance, Event, EVENT_SIZE, Hash, MAX_ADDRESS_SIZE, MAX_TOKEN_ID_SIZE, NetworkType, ProgramState, TokenState};
+use crate::state::{AccountType, Balance, Event, EVENT_SIZE, Hash, MAX_ADDRESS_SIZE, MAX_TOKEN_ID_SIZE, NetworkType, ProgramState, TokenState, WithdrawState};
 use crate::instructions::*;
 
 pub trait ReadExt: io::Read {
@@ -197,11 +197,12 @@ impl Codable for ProgramInstruction {
             1 => Ok(Self::InitTokenState(InitTokenStateParams::decode(reader)?)),
             2 => Ok(Self::InitWalletBalances(InitWalletBalancesParams::decode(reader)?)),
             3 => Ok(Self::BatchDeposit(DepositBatchParams::decode(reader)?)),
-            4 => Ok(Self::BatchWithdraw(WithdrawBatchParams::decode(reader)?)),
+            4 => Ok(Self::PrepareBatchWithdraw(WithdrawBatchParams::decode(reader)?)),
             5 => Ok(Self::PrepareBatchSettlement(SettlementBatchParams::decode(reader)?)),
             6 => Ok(Self::SubmitBatchSettlement(SettlementBatchParams::decode(reader)?)),
             7 => Ok(Self::RollbackBatchSettlement()),
             8 => Ok(Self::RollbackBatchWithdraw(RollbackWithdrawBatchParams::decode(reader)?)),
+            9 => Ok(Self::SubmitBatchWithdraw(WithdrawBatchParams::decode(reader)?)),
             _ => Err(io::Error::new(io::ErrorKind::Other, "Invalid instruction type"))
         }
     }
@@ -220,7 +221,7 @@ impl Codable for ProgramInstruction {
             Self::BatchDeposit(params) => {
                 Ok(writer.write_u8(3)? + params.encode(&mut writer)?)
             }
-            Self::BatchWithdraw(params) => {
+            Self::PrepareBatchWithdraw(params) => {
                 Ok(writer.write_u8(4)? + params.encode(&mut writer)?)
             }
             Self::PrepareBatchSettlement(params) => {
@@ -234,6 +235,9 @@ impl Codable for ProgramInstruction {
             }
             Self::RollbackBatchWithdraw(params) => {
                 Ok(writer.write_u8(8)? + params.encode(&mut writer)?)
+            }
+            Self::SubmitBatchWithdraw(params) => {
+                Ok(writer.write_u8(9)? + params.encode(&mut writer)?)
             }
         }
     }
@@ -668,6 +672,7 @@ impl Codable for Event {
 
 impl Codable for TokenState {
     fn decode<R: Read + ?Sized>(reader: &mut R) -> Result<Self, Error> {
+        let account_type = AccountType::decode(reader)?;
         let version = reader.read_u32()?;
         let program_state_account = reader.read_pubkey()?;
         let token_id = reader.read_string_with_padding(MAX_TOKEN_ID_SIZE)?;
@@ -679,6 +684,7 @@ impl Codable for TokenState {
         }
 
         Ok(Self {
+            account_type,
             version,
             program_state_account,
             token_id,
@@ -687,7 +693,8 @@ impl Codable for TokenState {
     }
 
     fn encode<W: Write + ?Sized>(&self, mut writer: &mut W) -> Result<usize, Error> {
-        let mut bytes_written = writer.write_u32(self.version)?;
+        let mut bytes_written = self.account_type.encode(writer)?;
+        bytes_written += writer.write_u32(self.version)?;
         bytes_written += writer.write_pubkey(&self.program_state_account)?;
         bytes_written += writer.write_string_with_padding(&self.token_id, MAX_TOKEN_ID_SIZE)?;
         bytes_written += writer.write_usize_as_u32(self.balances.len())?;
@@ -700,13 +707,14 @@ impl Codable for TokenState {
 
 impl Codable for ProgramState {
     fn decode<R: Read + ?Sized>(reader: &mut R) -> Result<Self, Error> {
+        let account_type = AccountType::decode(reader)?;
         let version = reader.read_u32()?;
+        let withdraw_account = reader.read_pubkey()?;
         let fee_account_address = reader.read_string_with_padding(MAX_ADDRESS_SIZE)?;
         let program_change_address = reader.read_string_with_padding(MAX_ADDRESS_SIZE)?;
         let network_type = NetworkType::decode(reader)?;
         let settlement_batch_hash = reader.read_hash()?;
         let last_settlement_batch_hash = reader.read_hash()?;
-        let last_withdrawal_batch_hash = reader.read_hash()?;
         let event_count = reader.read_u16_as_usize()?;
         let mut events = Vec::with_capacity(event_count);
         for _ in 0..event_count {
@@ -714,25 +722,27 @@ impl Codable for ProgramState {
         }
 
         Ok(Self {
+            account_type,
             version,
+            withdraw_account,
             fee_account_address,
             program_change_address,
             network_type,
             settlement_batch_hash,
             last_settlement_batch_hash,
-            last_withdrawal_batch_hash,
             events,
         })
     }
 
     fn encode<W: Write + ?Sized>(&self, mut writer: &mut W) -> Result<usize, Error> {
-        let mut bytes_written = writer.write_u32(self.version)? +
+        let mut bytes_written = self.account_type.encode(writer)? +
+            writer.write_u32(self.version)? +
+            writer.write_pubkey(&self.withdraw_account)? +
             writer.write_string_with_padding(&self.fee_account_address, MAX_ADDRESS_SIZE)? +
             writer.write_string_with_padding(&self.program_change_address, MAX_ADDRESS_SIZE)? +
             self.network_type.encode(writer)? +
             writer.write_hash(&self.settlement_batch_hash)? +
             writer.write_hash(&self.last_settlement_batch_hash)? +
-            writer.write_hash(&self.last_withdrawal_batch_hash)? +
             writer.write_usize_as_u16(self.events.len())?;
         for event in &self.events {
             bytes_written += event.encode(writer)?;
@@ -740,6 +750,47 @@ impl Codable for ProgramState {
         Ok(bytes_written)
     }
 }
+
+impl Codable for WithdrawState {
+    fn decode<R: Read + ?Sized>(reader: &mut R) -> Result<Self, Error> {
+        Ok(Self {
+            account_type: AccountType::decode(reader)?,
+            version: reader.read_u32()?,
+            program_state_account: reader.read_pubkey()?,
+            batch_hash: reader.read_hash()?,
+        })
+    }
+
+    fn encode<W: Write + ?Sized>(&self, mut writer: &mut W) -> Result<usize, Error> {
+        Ok(
+            self.account_type.encode(writer)? +
+                writer.write_u32(self.version)? +
+                writer.write_pubkey(&self.program_state_account)? +
+                writer.write_hash(&self.batch_hash)?
+        )
+    }
+}
+
+impl Codable for AccountType {
+    fn decode<R: io::Read + ?Sized>(reader: &mut R) -> Result<Self, io::Error> {
+        Ok(match reader.read_u8()? {
+            1 => Self::Program,
+            2 => Self::Token,
+            3 => Self::Withdraw,
+            _ => Self::Unknown,
+        })
+    }
+
+    fn encode<W: Write + ?Sized>(&self, mut writer: &mut W) -> Result<usize, io::Error> {
+        Ok(writer.write_u8(match self {
+            Self::Program => 1,
+            Self::Token => 2,
+            Self::Withdraw => 3,
+            Self::Unknown => 0
+        })?)
+    }
+}
+
 
 #[cfg(test)]
 mod tests {
@@ -825,7 +876,7 @@ mod tests {
         });
         assert_eq!(instruction, ProgramInstruction::decode_from_slice(&instruction.encode_to_vec().unwrap()).unwrap());
 
-        let instruction = ProgramInstruction::BatchWithdraw(WithdrawBatchParams {
+        let instruction = ProgramInstruction::PrepareBatchWithdraw(WithdrawBatchParams {
             tx_hex: vec![1, 2, 3],
             change_amount: 123,
             token_withdrawals: vec![
