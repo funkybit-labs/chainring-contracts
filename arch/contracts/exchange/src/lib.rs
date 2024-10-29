@@ -839,30 +839,33 @@ mod tests {
             .require_network(bitcoin::Network::Regtest)
             .unwrap();
 
-        let num_withdrawals_per_batch = 5;
-        let num_withdrawal_batches = 6;
-        let txs = (0..num_withdrawal_batches).enumerate().map(
-            |_| deposit_to_program(50000, &program_address)
+        let num_withdrawals_per_batch = 10;
+        let num_withdrawal_batches = 5;
+        let txs = (0..num_withdrawal_batches * num_withdrawals_per_batch).enumerate().map(
+            |_| deposit_to_program(8000, &program_address)
         ).collect::<Vec<(String, u32)>>();
+        let mut utxo_index: usize = 0;
 
 
         for index in 0..num_withdrawal_batches {
+            mine();
             let tx = Transaction {
                 version: Version::TWO,
-                input: vec![
+                input: (0..num_withdrawals_per_batch).map(|i|
                     TxIn {
                         previous_output: OutPoint {
-                            txid: Txid::from_str(&txs[index].0).unwrap(),
-                            vout: txs[index].1,
+                            txid: Txid::from_str(&txs[utxo_index + i].0).unwrap(),
+                            vout: txs[utxo_index + i].1,
                         },
                         script_sig: ScriptBuf::new(),
                         sequence: Sequence::MAX,
                         witness: Witness::new(),
-                    },
-                ],
+                    }
+                ).collect::<Vec<TxIn>>(),
                 output: vec![],
                 lock_time: LockTime::ZERO,
             };
+            utxo_index += num_withdrawals_per_batch;
             let mut withdrawals: Vec<Withdrawal> = vec![];
             for i in 0..num_withdrawals_per_batch {
                 withdrawals.push(
@@ -878,7 +881,7 @@ mod tests {
             }
             let withdraw_batch_params = WithdrawBatchParams {
                 tx_hex: hex::decode(tx.raw_hex()).unwrap(),
-                change_amount: (45000 - num_withdrawals_per_batch * 6000) as u64,
+                change_amount: (1000 * num_withdrawals_per_batch) as u64,
                 token_withdrawals: vec![
                     TokenWithdrawals {
                         account_index: 2,
@@ -933,7 +936,8 @@ mod tests {
                 ).encode_to_vec().unwrap(),
                 vec![submitter_keypair, withdraw_keypair],
             );
-            assert_ne!(processed_tx.bitcoin_txid, None)
+            assert_ne!(processed_tx.bitcoin_txid, None);
+            debug!("processed tx = {:?}", processed_tx.bitcoin_txid)
         }
 
         let account_info = read_account_info(NODE1_ADDRESS, token_account.clone()).unwrap();
@@ -941,7 +945,7 @@ mod tests {
         assert_eq!(wallets.len() + 1, token_balances.balances.len());
 
         for (i, _) in wallets.iter().enumerate() {
-            if i < 30 {
+            if i < num_withdrawal_batches * num_withdrawals_per_batch {
                 assert_eq!(token_balances.balances[i + 1].balance, 4000)
             } else if i < 100 {
                 assert_eq!(token_balances.balances[i + 1].balance, 10000)
