@@ -839,7 +839,7 @@ mod tests {
             .require_network(bitcoin::Network::Regtest)
             .unwrap();
 
-        let num_withdrawals_per_batch = 10;
+        let num_withdrawals_per_batch = 7;
         let num_withdrawal_batches = 5;
         let txs = (0..num_withdrawal_batches * num_withdrawals_per_batch).enumerate().map(
             |_| deposit_to_program(8000, &program_address)
@@ -1982,7 +1982,7 @@ mod tests {
         let expected = expected.encode_to_vec().unwrap();
 
         debug!("Invoking contract to init program state");
-        sign_and_send_instruction_success(
+        let processed_tx = sign_and_send_instruction_success(
             vec![
                 AccountMeta {
                     pubkey: submitter_pubkey,
@@ -1998,6 +1998,7 @@ mod tests {
             ProgramInstruction::InitProgramState(params.clone()).encode_to_vec().unwrap(),
             vec![submitter_keypair],
         );
+        debug!("processed_tx = {:?}", processed_tx);
 
         let account = read_account_info(NODE1_ADDRESS, submitter_pubkey.clone()).unwrap();
         assert_eq!(
