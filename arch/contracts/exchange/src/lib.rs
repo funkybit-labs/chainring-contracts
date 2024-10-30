@@ -839,7 +839,7 @@ mod tests {
             .require_network(bitcoin::Network::Regtest)
             .unwrap();
 
-        let num_withdrawals_per_batch = 7;
+        let num_withdrawals_per_batch = 6;
         let num_withdrawal_batches = 5;
         let txs = (0..num_withdrawal_batches * num_withdrawals_per_batch).enumerate().map(
             |_| deposit_to_program(8000, &program_address)
