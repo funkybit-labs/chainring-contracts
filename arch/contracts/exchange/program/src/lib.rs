@@ -6,6 +6,7 @@ use arch_program::{
     transaction_to_sign::TransactionToSign,
     program::set_transaction_to_sign,
     input_to_sign::InputToSign,
+    helper::get_state_transition_tx,
     msg,
 };
 use sha256::digest;
@@ -24,7 +25,6 @@ pub fn process_instruction(
     accounts: &[AccountInfo],
     instruction_data: &[u8],
 ) -> Result<(), ProgramError> {
-    ProgramState::validate_signer(accounts)?;
     let instruction = ProgramInstruction::decode_from_slice(instruction_data)
         .map_err(|_| ProgramError::InvalidInstructionData)?;
     let params_raw_data = ProgramInstruction::params_raw_data(&instruction_data);
@@ -34,40 +34,39 @@ pub fn process_instruction(
         ProgramInstruction::InitTokenState(params) => init_token_state(accounts, &params),
         ProgramInstruction::InitWalletBalances(params) => init_wallet_balances(accounts, &params),
         ProgramInstruction::BatchDeposit(params) => deposit_batch(accounts, &params),
-        ProgramInstruction::BatchWithdraw(params) => withdraw_batch(program_id, accounts, &params, &params_raw_data),
+        ProgramInstruction::PrepareBatchWithdraw(params) => prepare_withdraw_batch(accounts, &params, &params_raw_data),
         ProgramInstruction::SubmitBatchSettlement(params) => submit_settlement_batch(accounts, &params, &params_raw_data),
         ProgramInstruction::PrepareBatchSettlement(params) => prepare_settlement_batch(accounts, &params, &params_raw_data),
         ProgramInstruction::RollbackBatchSettlement() => rollback_settlement_batch(accounts),
-        ProgramInstruction::RollbackBatchWithdraw(params) => rollback_withdraw_batch(accounts, &params)
+        ProgramInstruction::RollbackBatchWithdraw(params) => rollback_withdraw_batch(accounts, &params),
+        ProgramInstruction::SubmitBatchWithdraw(params) => submit_withdraw_batch(program_id, accounts, &params, &params_raw_data),
     }
 }
 
 pub fn init_program_state(accounts: &[AccountInfo],
                           params: &InitProgramStateParams) -> Result<(), ProgramError> {
-    let state_data: Vec<u8> = get_account_data(accounts, 0)?;
-    if !state_data.is_empty() {
-        return Err(ProgramError::Custom(ERROR_ALREADY_INITIALIZED));
-    }
+    validate_account(accounts, 0, true, true, None, None)?;
+    validate_account(accounts, 1, false, true, None, None)?;
     validate_bitcoin_address(&params.program_change_address, params.network_type.clone())?;
     validate_bitcoin_address(&params.fee_account, params.network_type.clone())?;
     init_state_data(&accounts[0], ProgramState {
+        account_type: AccountType::Program,
         version: 0,
+        withdraw_account: *accounts[1].key,
         fee_account_address: params.fee_account.clone(),
         program_change_address: params.program_change_address.clone(),
         network_type: params.network_type.clone(),
         settlement_batch_hash: EMPTY_HASH,
         last_settlement_batch_hash: EMPTY_HASH,
-        last_withdrawal_batch_hash: EMPTY_HASH,
         events: vec![],
-    }.encode_to_vec().expect("Serialization error"), EVENT_SIZE * MAX_EVENTS)
+    }.encode_to_vec().expect("Serialization error"), EVENT_SIZE * MAX_EVENTS)?;
+    WithdrawState::initialize(&accounts)
 }
 
 pub fn init_token_state(accounts: &[AccountInfo],
                         params: &InitTokenStateParams) -> Result<(), ProgramError> {
-    let state_data: Vec<u8> = get_account_data(accounts, 1)?;
-    if !state_data.is_empty() {
-        return Err(ProgramError::Custom(ERROR_ALREADY_INITIALIZED));
-    }
+    validate_account(accounts, 0, true, false, Some(AccountType::Program), None)?;
+    validate_account(accounts, 1, false, true, None, None)?;
     TokenState::initialize(
         &accounts[1],
         &params.token_id,
@@ -77,9 +76,10 @@ pub fn init_token_state(accounts: &[AccountInfo],
 }
 
 pub fn init_wallet_balances(accounts: &[AccountInfo], params: &InitWalletBalancesParams) -> Result<(), ProgramError> {
+    validate_account(accounts, 0, true, false, Some(AccountType::Program), None)?;
     let network_type = ProgramState::get_network_type(&accounts[0]);
     for token_state_setup in &params.token_state_setups {
-        TokenState::validate_account(accounts, token_state_setup.account_index)?;
+        validate_account(accounts, token_state_setup.account_index, false, true, Some(AccountType::Token), Some(0))?;
         let account = &accounts[token_state_setup.account_index as usize];
         TokenState::grow_balance_accounts_if_needed(account, token_state_setup.wallet_addresses.len())?;
         let mut num_balances = TokenState::get_num_balances(account)?;
@@ -96,17 +96,24 @@ pub fn init_wallet_balances(accounts: &[AccountInfo], params: &InitWalletBalance
 
 pub fn deposit_batch(accounts: &[AccountInfo],
                      params: &DepositBatchParams) -> Result<(), ProgramError> {
+    validate_account(accounts, 0, true, false, Some(AccountType::Program), None)?;
     for token_deposits in &params.token_deposits {
-        TokenState::validate_account(accounts, token_deposits.account_index)?;
+        validate_account(accounts, token_deposits.account_index, false, true, Some(AccountType::Token), Some(0))?;
         handle_increments(&accounts[token_deposits.account_index as usize], token_deposits.clone().deposits)?;
     }
     Ok(())
 }
 
-pub fn withdraw_batch(program_id: &Pubkey, accounts: &[AccountInfo], params: &WithdrawBatchParams, params_raw_data: &[u8]) -> Result<(), ProgramError> {
+pub fn prepare_withdraw_batch(accounts: &[AccountInfo], params: &WithdrawBatchParams, params_raw_data: &[u8]) -> Result<(), ProgramError> {
+    validate_account(accounts, 0, true, true, Some(AccountType::Program), Some(1))?;
+    validate_account(accounts, 1, false, true, Some(AccountType::Withdraw), Some(0))?;
     if ProgramState::get_settlement_hash(&accounts[0])? != EMPTY_HASH {
         return Err(ProgramError::Custom(ERROR_SETTLEMENT_IN_PROGRESS));
     }
+    if WithdrawState::get_hash(&accounts[1])? != EMPTY_HASH {
+        return Err(ProgramError::Custom(ERROR_WITHDRAWAL_IN_PROGRESS));
+    }
+
     let mut tx: Transaction = bitcoin::consensus::deserialize(&params.tx_hex)
         .map_err(|_| ProgramError::Custom(ERROR_INVALID_INPUT_TX))?;
     if tx.output.len() > 0 {
@@ -116,10 +123,22 @@ pub fn withdraw_batch(program_id: &Pubkey, accounts: &[AccountInfo], params: &Wi
     let network_type = ProgramState::get_network_type(&accounts[0]);
 
     for token_withdrawals in &params.token_withdrawals {
-        TokenState::validate_account(accounts, token_withdrawals.account_index)?;
-        handle_withdrawals(
+        validate_account(accounts, token_withdrawals.account_index, false, true, Some(AccountType::Token), Some(0))?;
+        verify_withdrawals(
             &accounts,
             token_withdrawals.account_index,
+            token_withdrawals.clone().withdrawals,
+        )?;
+    }
+
+    if ProgramState::get_events_count(&accounts[0])? != 0 {
+        return Ok(());
+    }
+
+    // Apply all the changes in the batch
+    for token_withdrawals in &params.token_withdrawals {
+        handle_prepare_withdrawals(
+            &accounts[token_withdrawals.account_index as usize],
             token_withdrawals.clone().withdrawals,
             &ProgramState::get_fee_account_address(&accounts[0])?,
             &mut tx.output,
@@ -127,56 +146,92 @@ pub fn withdraw_batch(program_id: &Pubkey, accounts: &[AccountInfo], params: &Wi
         )?;
     }
 
-    ProgramState::set_last_withdrawal_hash(&accounts[0], hash(params_raw_data))?;
-
-    if tx.output.len() > 0 {
-        let failed_withdrawal_amount = ProgramState::get_failed_withdrawal_amount(&accounts[0])?;
-        if params.change_amount > 0 {
-            tx.output.push(
-                TxOut {
-                    value: Amount::from_sat(params.change_amount + failed_withdrawal_amount),
-                    script_pubkey: get_bitcoin_address(
-                        &ProgramState::get_program_change_address(&accounts[0])?,
-                        network_type.clone(),
-                    ).script_pubkey(),
-                }
-            );
-        }
-        msg!("withdrawal tx to send {:?}", tx);
-        let mut inputs_to_sign: Vec<InputToSign> = vec![];
-        for (index, _) in tx.input.iter().enumerate() {
-            inputs_to_sign.push(
-                InputToSign {
-                    index: index as u32,
-                    signer: program_id.clone(),
-                }
-            )
-        }
-        let tx_to_sign = TransactionToSign {
-            tx_bytes: &bitcoin::consensus::serialize(&tx),
-            inputs_to_sign: &inputs_to_sign,
-        };
-
-        set_transaction_to_sign(&[], tx_to_sign)
-    } else {
-        msg!("no outputs so no tx to send");
-        Ok(())
+    if tx.output.len() == 0 {
+        return Err(ProgramError::Custom(ERROR_NO_TX_OUTPUTS));
     }
+    WithdrawState::set_hash(&accounts[1], hash(params_raw_data))
+}
+
+pub fn submit_withdraw_batch(program_id: &Pubkey, accounts: &[AccountInfo], params: &WithdrawBatchParams, params_raw_data: &[u8]) -> Result<(), ProgramError> {
+    validate_account(accounts, 0, true, false, Some(AccountType::Program), Some(1))?;
+    validate_account(accounts, 1, true, true, Some(AccountType::Withdraw), Some(0))?;
+
+    if WithdrawState::get_hash(&accounts[1])? != hash(params_raw_data) {
+        return Err(ProgramError::Custom(ERROR_WITHDRAWAL_BATCH_MISMATCH));
+    }
+    let network_type = ProgramState::get_network_type(&accounts[0]);
+
+    let mut tx = get_state_transition_tx(accounts);
+
+    let tx_with_inputs: Transaction = bitcoin::consensus::deserialize(&params.tx_hex)
+        .map_err(|_| ProgramError::Custom(ERROR_INVALID_INPUT_TX))?;
+    for input in tx_with_inputs.input.iter() {
+        tx.input.push(input.clone())
+    }
+
+    for token_withdrawals in &params.token_withdrawals {
+        validate_account(accounts, token_withdrawals.account_index, false, false, Some(AccountType::Token), Some(0))?;
+        handle_submit_withdrawals(
+            &accounts[token_withdrawals.account_index as usize],
+            token_withdrawals.clone().withdrawals,
+            &mut tx.output,
+            network_type.clone(),
+        )?;
+    }
+
+    if params.change_amount > 0 {
+        tx.output.push(
+            TxOut {
+                value: Amount::from_sat(params.change_amount),
+                script_pubkey: get_bitcoin_address(
+                    &ProgramState::get_program_change_address(&accounts[0])?,
+                    network_type.clone(),
+                ).script_pubkey(),
+            }
+        );
+    }
+
+    let mut inputs_to_sign: Vec<InputToSign> = vec![];
+    for (index, _) in tx.input.iter().enumerate() {
+        inputs_to_sign.push(
+            InputToSign {
+                index: index as u32,
+                signer: if index == 0 {
+                    *accounts[1].key
+                } else {
+                    program_id.clone()
+                },
+            }
+        )
+    }
+
+    let tx_to_sign = TransactionToSign {
+        tx_bytes: &bitcoin::consensus::serialize(&tx),
+        inputs_to_sign: &inputs_to_sign,
+    };
+
+    set_transaction_to_sign(accounts, tx_to_sign)?;
+
+    WithdrawState::clear_hash(&accounts[1])
 }
 
 pub fn rollback_withdraw_batch(accounts: &[AccountInfo], params: &RollbackWithdrawBatchParams) -> Result<(), ProgramError> {
+    validate_account(accounts, 0, true, false, Some(AccountType::Program), Some(1))?;
+    validate_account(accounts, 1, false, true, Some(AccountType::Withdraw), Some(0))?;
     for token_withdrawals in &params.token_withdrawals {
-        TokenState::validate_account(accounts, token_withdrawals.account_index)?;
+        validate_account(accounts, token_withdrawals.account_index, false, true, Some(AccountType::Token), Some(0))?;
         handle_rollback_withdrawals(
             &accounts[token_withdrawals.account_index as usize],
             token_withdrawals.clone().withdrawals,
             &ProgramState::get_fee_account_address(&accounts[0])?,
         )?;
     }
+    WithdrawState::clear_hash(&accounts[1])?;
     Ok(())
 }
 
 pub fn submit_settlement_batch(accounts: &[AccountInfo], params: &SettlementBatchParams, raw_params_data: &[u8]) -> Result<(), ProgramError> {
+    validate_account(accounts, 0, true, true, Some(AccountType::Program), None)?;
     let current_hash = ProgramState::get_settlement_hash(&accounts[0])?;
     let params_hash = hash(raw_params_data);
 
@@ -188,7 +243,7 @@ pub fn submit_settlement_batch(accounts: &[AccountInfo], params: &SettlementBatc
     }
 
     for token_settlements in &params.settlements {
-        TokenState::validate_account(accounts, token_settlements.account_index)?;
+        validate_account(accounts, token_settlements.account_index, false, true, Some(AccountType::Token), Some(0))?;
         let mut increments = if token_settlements.fee_amount > 0 {
             vec![Adjustment {
                 address_index: AddressIndex {
@@ -210,6 +265,7 @@ pub fn submit_settlement_batch(accounts: &[AccountInfo], params: &SettlementBatc
 }
 
 pub fn prepare_settlement_batch(accounts: &[AccountInfo], params: &SettlementBatchParams, raw_params_data: &[u8]) -> Result<(), ProgramError> {
+    validate_account(accounts, 0, true, true, Some(AccountType::Program), None)?;
     if ProgramState::get_settlement_hash(&accounts[0])? != EMPTY_HASH {
         return Err(ProgramError::Custom(ERROR_SETTLEMENT_IN_PROGRESS));
     }
@@ -217,7 +273,7 @@ pub fn prepare_settlement_batch(accounts: &[AccountInfo], params: &SettlementBat
     let mut netting_results: HashMap<String, i64> = HashMap::new();
 
     for token_settlements in &params.settlements {
-        TokenState::validate_account(accounts, token_settlements.account_index)?;
+        validate_account(accounts, token_settlements.account_index, false, false, Some(AccountType::Token), Some(0))?;
         let increment_sum: u64 = token_settlements.clone().increments.into_iter().map(|x| x.amount).sum::<u64>() + token_settlements.fee_amount;
         let decrement_sum: u64 = token_settlements.clone().decrements.into_iter().map(|x| x.amount).sum::<u64>();
         verify_decrements(&accounts, token_settlements.account_index, token_settlements.clone().decrements)?;
@@ -240,6 +296,7 @@ pub fn prepare_settlement_batch(accounts: &[AccountInfo], params: &SettlementBat
 }
 
 pub fn rollback_settlement_batch(accounts: &[AccountInfo]) -> Result<(), ProgramError> {
+    validate_account(accounts, 0, true, true, Some(AccountType::Program), None)?;
     ProgramState::clear_settlement_hash(&accounts[0])
 }
 
@@ -289,37 +346,13 @@ fn verify_decrements(accounts: &[AccountInfo], account_index: u8, adjustments: V
     Ok(())
 }
 
-fn handle_withdrawals(
-    accounts: &[AccountInfo],
-    account_index: u8,
-    withdrawals: Vec<Withdrawal>,
-    fee_account_address: &str,
-    tx_outs: &mut Vec<TxOut>,
-    network_type: NetworkType,
-) -> Result<(), ProgramError> {
+fn verify_withdrawals(accounts: &[AccountInfo], account_index: u8, withdrawals: Vec<Withdrawal>) -> Result<(), ProgramError> {
     let account = &accounts[account_index as usize];
     for withdrawal in withdrawals {
         let index = get_validated_index(account, &withdrawal.address_index)?;
-        match Balance::decrement_wallet_balance(account, index, withdrawal.amount) {
-            Ok(()) => {
-                if withdrawal.fee_amount > 0 {
-                    if Balance::get_wallet_address(account, FEE_ADDRESS_INDEX as usize)? != fee_account_address {
-                        return Err(ProgramError::Custom(ERROR_ADDRESS_MISMATCH));
-                    }
-                    Balance::increment_wallet_balance(account, FEE_ADDRESS_INDEX as usize, withdrawal.fee_amount)?;
-                }
-                tx_outs.push(
-                    TxOut {
-                        value: Amount::from_sat(withdrawal.amount - withdrawal.fee_amount),
-                        script_pubkey: get_bitcoin_address(
-                            &Balance::get_wallet_address(account, index)?,
-                            network_type.clone(),
-                        ).script_pubkey(),
-                    }
-                );
-            }
-            Err(_) => {
-                ProgramState::emit_event(
+        let current_balance = Balance::get_wallet_balance(account, index)?;
+        if withdrawal.amount > current_balance {
+            ProgramState::emit_event(
                     &accounts[0],
                     &Event::FailedWithdrawal {
                         account_index,
@@ -330,12 +363,61 @@ fn handle_withdrawals(
                         error_code: ERROR_INSUFFICIENT_BALANCE,
                     },
                 )?;
-            }
-        }
+        };
     }
     Ok(())
 }
 
+fn handle_prepare_withdrawals(
+    account: &AccountInfo,
+    withdrawals: Vec<Withdrawal>,
+    fee_account_address: &str,
+    tx_outs: &mut Vec<TxOut>,
+    network_type: NetworkType,
+) -> Result<(), ProgramError> {
+    for withdrawal in withdrawals {
+        Balance::decrement_wallet_balance(account, withdrawal.address_index.index as usize, withdrawal.amount)?;
+        if withdrawal.fee_amount > 0 {
+            if Balance::get_wallet_address(account, FEE_ADDRESS_INDEX as usize)? != fee_account_address {
+                return Err(ProgramError::Custom(ERROR_ADDRESS_MISMATCH));
+            }
+            Balance::increment_wallet_balance(account, FEE_ADDRESS_INDEX as usize, withdrawal.fee_amount)?;
+        }
+        add_output(account, &withdrawal, tx_outs, network_type.clone())?;
+    }
+    Ok(())
+}
+
+fn handle_submit_withdrawals(
+    account: &AccountInfo,
+    withdrawals: Vec<Withdrawal>,
+    tx_outs: &mut Vec<TxOut>,
+    network_type: NetworkType,
+) -> Result<(), ProgramError> {
+    for withdrawal in withdrawals {
+        let _ = get_validated_index(account, &withdrawal.address_index)?;
+        add_output(account, &withdrawal, tx_outs, network_type.clone())?;
+    }
+    Ok(())
+}
+
+fn add_output(
+    account: &AccountInfo,
+    withdrawal: &Withdrawal,
+    tx_outs: &mut Vec<TxOut>,
+    network_type: NetworkType,
+) -> Result<(), ProgramError> {
+    tx_outs.push(
+        TxOut {
+            value: Amount::from_sat(withdrawal.amount - withdrawal.fee_amount),
+            script_pubkey: get_bitcoin_address(
+                &Balance::get_wallet_address(account, withdrawal.address_index.index as usize)?,
+                network_type.clone(),
+            ).script_pubkey(),
+        }
+    );
+    Ok(())
+}
 
 fn handle_rollback_withdrawals(
     account: &AccountInfo,
@@ -388,13 +470,6 @@ fn init_state_data(account: &AccountInfo, new_data: Vec<u8>, additional_bytes: u
     account.realloc(new_data.len() + additional_bytes, true)?;
     account.data.try_borrow_mut().unwrap()[0..EVENTS_OFFSET].copy_from_slice(new_data.as_slice());
     Ok(())
-}
-
-fn get_account_data(accounts: &[AccountInfo], index: u8) -> Result<Vec<u8>, ProgramError> {
-    if index as usize >= accounts.len() {
-        return Err(ProgramError::Custom(ERROR_INVALID_ACCOUNT_INDEX));
-    }
-    Ok(accounts[index as usize].data.try_borrow().unwrap().to_vec())
 }
 
 pub fn get_validated_index(account: &AccountInfo, address_index: &AddressIndex) -> Result<usize, ProgramError> {

@@ -446,7 +446,15 @@ pub fn get_processed_transaction(url: &str, tx_id: String) -> Result<ProcessedTr
     Ok(serde_json::from_value(processed_tx?).unwrap())
 }
 
-fn mine(rpc: &Client) {
+pub fn mine() {
+
+    let userpass = Auth::UserPass(
+        BITCOIN_NODE_USERNAME.to_string(),
+        BITCOIN_NODE_PASSWORD.to_string(),
+    );
+    let rpc =
+        Client::new(BITCOIN_NODE_ENDPOINT, userpass).expect("rpc shouldn not fail to be initiated");
+
     let generate_to_address =  Address::from_str("bcrt1q3nyukkpkg6yj0y5tj6nj80dh67m30p963mzxy7")
         .unwrap()
         .require_network(bitcoin::Network::Regtest)
@@ -546,7 +554,7 @@ pub fn send_utxo(pubkey: Pubkey) -> (String, u32) {
         .require_network(bitcoin::Network::Regtest)
         .unwrap();
 
-    mine(&rpc);
+    mine();
 
     info!("Sending UTXO to account address: {}", address);
 
@@ -563,7 +571,7 @@ pub fn send_utxo(pubkey: Pubkey) -> (String, u32) {
         )
         .expect("Failed to send SATs to address");
 
-    mine(&rpc);
+    mine();
 
     let sent_tx = rpc
         .get_raw_transaction(&txid, None)

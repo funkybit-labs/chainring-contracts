@@ -6,11 +6,12 @@ pub enum ProgramInstruction {
     InitTokenState(InitTokenStateParams),
     InitWalletBalances(InitWalletBalancesParams),
     BatchDeposit(DepositBatchParams),
-    BatchWithdraw(WithdrawBatchParams),
+    PrepareBatchWithdraw(WithdrawBatchParams),
     PrepareBatchSettlement(SettlementBatchParams),
     SubmitBatchSettlement(SettlementBatchParams),
     RollbackBatchSettlement(),
     RollbackBatchWithdraw(RollbackWithdrawBatchParams),
+    SubmitBatchWithdraw(WithdrawBatchParams),
 }
 
 #[derive(Clone, PartialEq, Debug)]
