@@ -1,7 +1,7 @@
 //! This module contains constants
 
 /// The file path where the caller stores information
-pub const CALLER_FILE_PATH: &str = "caller.json";
+pub const CALLER_FILE_PATH: &str = "../../data/program.json";
 pub const PROGRAM_FILE_PATH: &str = "../../data/program.json";
 
 /// Local address for node 1
@@ -27,11 +27,11 @@ pub const GET_ACCOUNT_ADDRESS: &str = "get_account_address";
 //     "https://bitcoin-node.dev.aws.archnetwork.xyz:18443/wallet/testwallet";
 // pub const BITCOIN_NODE_USERNAME: &str = "bitcoin";
 // pub const BITCOIN_NODE_PASSWORD: &str = "428bae8f3c94f8c39c50757fc89c39bc7e6ebc70ebf8f618";
-
 pub const BITCOIN_NODE_ENDPOINT: &str =
     "https://localhost:18443/wallet/testwallet";
 pub const BITCOIN_NODE_USERNAME: &str = "user";
 pub const BITCOIN_NODE_PASSWORD: &str = "password";
+pub const BITCOIN_NETWORK: bitcoin::Network = bitcoin::Network::Regtest;
 
 /// Hack for Error codes
 pub const TRANSACTION_NOT_FOUND_CODE: i64 = 404;
