@@ -56,7 +56,7 @@ mod tests {
     }
 
     use lazy_static::lazy_static;
-    use sdk::processed_transaction::*;
+    use common::processed_transaction::*;
     use model::error::*;
     use model::serialization::Codable;
 
@@ -813,7 +813,7 @@ mod tests {
                     token_deposits: vec![
                         TokenDeposits {
                             account_index: 1,
-                            deposits: adjustments
+                            deposits: adjustments,
                         }
                     ],
                 }
@@ -953,7 +953,6 @@ mod tests {
                 assert_eq!(token_balances.balances[i + 1].balance, 0)
             }
         }
-
     }
 
     #[test]
@@ -1511,6 +1510,7 @@ mod tests {
 
         let processed_tx = get_processed_transaction(NODE1_ADDRESS, txid.clone())
             .expect("get processed transaction should not fail");
+        debug!("sign_and_send: {:?}", processed_tx);
         assert_eq!(processed_tx.status, Status::Processed);
         processed_tx
     }
@@ -1531,6 +1531,7 @@ mod tests {
 
         let processed_tx = get_processed_transaction(NODE1_ADDRESS, txid.clone())
             .expect("get processed transaction should not fail");
+        debug!("sign_and_send: {:?}", processed_tx);
         assert_eq!(processed_tx.status, Status::Processed);
         processed_tx
     }
@@ -1878,6 +1879,7 @@ mod tests {
 
         let processed_tx = get_processed_transaction(NODE1_ADDRESS, txid)
             .expect("get processed transaction should not fail");
+        debug!("prepare_settlement: {:?}", processed_tx);
         assert_eq!(processed_tx.status, Status::Processed);
 
         let state_account = read_account_info(NODE1_ADDRESS, submitter_pubkey.clone()).unwrap();
@@ -1958,6 +1960,7 @@ mod tests {
 
         let processed_tx = get_processed_transaction(NODE1_ADDRESS, txid)
             .expect("get processed transaction should not fail");
+        debug!("submit_settlement: {:?}", processed_tx);
         assert_eq!(processed_tx.status, Status::Processed);
 
         let state_account = read_account_info(NODE1_ADDRESS, submitter_pubkey.clone()).unwrap();
@@ -1998,7 +2001,6 @@ mod tests {
             ProgramInstruction::InitProgramState(params.clone()).encode_to_vec().unwrap(),
             vec![submitter_keypair],
         );
-        debug!("processed_tx = {:?}", processed_tx);
 
         let account = read_account_info(NODE1_ADDRESS, submitter_pubkey.clone()).unwrap();
         assert_eq!(
@@ -2099,6 +2101,7 @@ mod tests {
 
         let processed_tx = get_processed_transaction(NODE1_ADDRESS, txid.clone())
             .expect("get processed transaction should not fail");
+        debug!("make account executable: {:?}", processed_tx);
         assert_eq!(processed_tx.status, Status::Processed);
 
         assert!(read_account_info(NODE1_ADDRESS, program_pubkey.clone()).unwrap().is_executable);
@@ -2114,6 +2117,7 @@ mod tests {
         debug!("Creating new account {}", file_path);
         let (txid, vout) = send_utxo(pubkey.clone());
         debug!("{}:{} {:?}", txid, vout, hex::encode(pubkey));
+        mine();
 
         let (txid, _) = sign_and_send_instruction(
             SystemInstruction::new_create_account_instruction(
@@ -2126,6 +2130,7 @@ mod tests {
 
         let processed_tx = get_processed_transaction(NODE1_ADDRESS, txid.clone())
             .expect("get processed transaction should not fail");
+        debug!("create_new_account: {:?}", processed_tx);
         assert_eq!(processed_tx.status, Status::Processed);
         (keypair, pubkey)
     }
@@ -2150,6 +2155,7 @@ mod tests {
 
         let processed_tx = get_processed_transaction(NODE1_ADDRESS, txid.clone())
             .expect("Failed to get processed transaction");
+        debug!("assign_ownership: {:?}", processed_tx);
         assert_eq!(processed_tx.status, Status::Processed);
 
         // 10. Verify that the program is owner of caller account
@@ -2246,11 +2252,29 @@ mod tests {
     }
 
     fn validate_error(processed_tx: ProcessedTransaction, expected_status_code: u32) {
+        debug!("validate:error: {:?}", processed_tx);
         let expected_custom_msg = format!("Custom program error: 0x{:x}", expected_status_code);
         match processed_tx.status {
             Status::Failed(value) => assert!(value.contains(&expected_custom_msg), "unexpected error"),
             Status::Processed => assert!(false, "status is Processed"),
             Status::Processing => assert!(false, "status is Processing")
         }
+    }
+
+    fn mine() {
+        let userpass = Auth::UserPass(
+            BITCOIN_NODE_USERNAME.to_string(),
+            BITCOIN_NODE_PASSWORD.to_string(),
+        );
+        let rpc =
+            Client::new(BITCOIN_NODE_ENDPOINT, userpass).expect("rpc shouldn not fail to be initiated");
+
+        let generate_to_address = Address::from_str("bcrt1q3nyukkpkg6yj0y5tj6nj80dh67m30p963mzxy7")
+            .unwrap()
+            .require_network(bitcoin::Network::Regtest)
+            .unwrap();
+        rpc
+            .generate_to_address(1, &generate_to_address)
+            .expect("failed to mine block");
     }
 }
