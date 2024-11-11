@@ -4,7 +4,7 @@ services:
   arch-local-validator:
     platform: linux/amd64
     container_name: arch-local-validator
-    image: ghcr.io/arch-network/local_validator:v0.2.16
+    image: ghcr.io/arch-network/local_validator:v0.2.17
     ports:
       - 9002:9002
     command: /usr/bin/local_validator --rpc-bind-ip 0.0.0.0 --rpc-bind-port 9002 --bitcoin-rpc-endpoint bitcoin --bitcoin-rpc-port 18443 --bitcoin-rpc-username user --bitcoin-rpc-password password
