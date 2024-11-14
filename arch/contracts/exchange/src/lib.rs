@@ -5,13 +5,23 @@ mod tests {
     use common::constants::*;
     use arch_program::{pubkey::Pubkey, system_instruction::SystemInstruction, instruction::Instruction, account::AccountMeta};
     use common::helper::*;
-    use std::fs;
+    use std::{env, fs};
     use std::str::FromStr;
-    use bitcoin::key::UntweakedKeypair;
-    use bitcoin::{Address, Amount, OutPoint, ScriptBuf, Sequence, Transaction, Txid, TxIn, TxOut, Witness};
-    use bitcoin::absolute::LockTime;
-    use bitcoin::transaction::Version;
+    use bitcoin::{
+        Address, Amount, OutPoint, ScriptBuf, Sequence, TapSighashType, Transaction, Txid, TxIn, TxOut, Witness,
+        opcodes,
+        absolute::LockTime,
+        transaction::Version,
+        secp256k1,
+        secp256k1::Secp256k1,
+        key::{TapTweak, TweakedKeypair, UntweakedKeypair},
+    };
+    use bitcoin::script::{Builder as ScriptBuilder, PushBytes};
+    use bitcoin::sighash::{Prevouts, SighashCache};
+    use bitcoin::taproot::{LeafVersion, TaprootBuilder, TapLeafHash, TaprootSpendInfo};
     use bitcoincore_rpc::{Auth, Client, RawTx, RpcApi};
+    use ordinals::{Etching, Rune, RuneId, Runestone};
+    use ord_reqwest::ord_client::{OrdClient};
 
     fn cleanup_account_keys() {
         for file in vec![WALLET1_FILE_PATH, WALLET2_FILE_PATH, WALLET3_FILE_PATH, SUBMITTER_FILE_PATH, WITHDRAW_ACCOUNT_FILE_PATH, FEE_ACCOUNT_FILE_PATH] {
@@ -64,6 +74,61 @@ mod tests {
         static ref SETUP: Setup = Setup::init();
     }
 
+    #[tokio::test]
+    async fn test_etch() {
+        unsafe { env::set_var("ORD_BASE_URL", "http://localhost:7080"); }
+        let wallet = CallerInfo::with_secret_key_file(WALLET1_FILE_PATH).unwrap();
+        let ord_client = OrdClient::new();
+        println!("address is {}", &wallet.address.to_string());
+        let address_response = ord_client.get_address(&wallet.address.to_string()).await;
+        assert_eq!(0, address_response.runes_balances.len());
+
+        let uncommon_goods_rune_id = etch_rune(Etching {
+            divisibility: Some(6u8),
+            premine: Some(1000000000000),
+            rune: Some(Rune::from_str("UNCOMMONGOODS").unwrap()),
+            spacers: Some(128),
+            symbol: Some('¢'),
+            terms: None,
+            turbo: false,
+        });
+        println!("Rune id is {:?}", uncommon_goods_rune_id);
+
+        let cats_and_dogs_rune_id = etch_rune(Etching {
+            divisibility: Some(6u8),
+            premine: Some(2000000000000),
+            rune: Some(Rune::from_str("CATSANDDOGSRUNE").unwrap()),
+            spacers: Some(8 + 64 + 1024),
+            symbol: Some('±'),
+            terms: None,
+            turbo: false,
+        });
+        println!("Rune id is {:?}", cats_and_dogs_rune_id);
+
+        // TODO: wait in loop till runes come over API - just sleep for now
+        std::thread::sleep(std::time::Duration::from_secs(5));
+
+        let uncommon_goods_rune = ord_client.fetch_rune_details(uncommon_goods_rune_id).await;
+        assert_eq!(6, uncommon_goods_rune.entry.divisibility);
+        assert_eq!("UNCOMMON•GOODS", uncommon_goods_rune.entry.spaced_rune);
+        assert_eq!(1000000000000, uncommon_goods_rune.entry.premine);
+
+        let cats_and_dog_rune = ord_client.fetch_rune_details(cats_and_dogs_rune_id).await;
+        assert_eq!(6, cats_and_dog_rune.entry.divisibility);
+        assert_eq!("CATS•AND•DOGS•RUNE", cats_and_dog_rune.entry.spaced_rune);
+        assert_eq!(2000000000000, cats_and_dog_rune.entry.premine);
+
+        // we premined to the wallet, verify its runes balances
+        let address_response = ord_client.get_address(&wallet.address.to_string()).await;
+        assert_eq!(2, address_response.runes_balances.len());
+        assert_eq!("UNCOMMON•GOODS", address_response.runes_balances[0].rune_name);
+        assert_eq!(Some("¢".to_string()), address_response.runes_balances[0].rune_symbol);
+        assert_eq!(1000000.000000, address_response.runes_balances[0].balance);
+        assert_eq!("CATS•AND•DOGS•RUNE", address_response.runes_balances[1].rune_name);
+        assert_eq!(Some("±".to_string()), address_response.runes_balances[1].rune_symbol);
+        assert_eq!(2000000.000000, address_response.runes_balances[1].balance);
+    }
+
     #[test]
     fn test_deposit_and_withdrawal() {
         cleanup_account_keys();
@@ -97,7 +162,7 @@ mod tests {
             .require_network(bitcoin::Network::Regtest)
             .unwrap();
 
-        let (txid, vout) = deposit_to_program(10000, &program_address);
+        let (txid, vout) = deposit_to_address(10000, &program_address);
 
         deposit(
             wallet.address.to_string().clone(),
@@ -120,7 +185,7 @@ mod tests {
         let (withdraw_tx, change_amount) = prepare_withdrawal(
             5000,
             1500,
-            &txid,
+            &txid.to_string(),
             vout,
         );
 
@@ -279,13 +344,13 @@ mod tests {
             .require_network(bitcoin::Network::Regtest)
             .unwrap();
 
-        let (txid, vout) = deposit_to_program(35000, &program_address);
+        let (txid, vout) = deposit_to_address(35000, &program_address);
 
 
         let (withdraw_tx, change_amount) = prepare_withdrawal(
             32500,
             1000,
-            &txid,
+            &txid.to_string(),
             vout,
         );
 
@@ -842,19 +907,19 @@ mod tests {
         let num_withdrawals_per_batch = 6;
         let num_withdrawal_batches = 5;
         let txs = (0..num_withdrawal_batches * num_withdrawals_per_batch).enumerate().map(
-            |_| deposit_to_program(8000, &program_address)
-        ).collect::<Vec<(String, u32)>>();
+            |_| deposit_to_address(8000, &program_address)
+        ).collect::<Vec<(Txid, u32)>>();
         let mut utxo_index: usize = 0;
 
 
         for index in 0..num_withdrawal_batches {
-            mine();
+            mine(1);
             let tx = Transaction {
                 version: Version::TWO,
                 input: (0..num_withdrawals_per_batch).map(|i|
                     TxIn {
                         previous_output: OutPoint {
-                            txid: Txid::from_str(&txs[utxo_index + i].0).unwrap(),
+                            txid: txs[utxo_index + i].0,
                             vout: txs[utxo_index + i].1,
                         },
                         script_sig: ScriptBuf::new(),
@@ -971,7 +1036,7 @@ mod tests {
             .require_network(bitcoin::Network::Regtest)
             .unwrap();
 
-        let (txid, vout) = deposit_to_program(10000, &program_address);
+        let (txid, vout) = deposit_to_address(10000, &program_address);
 
         let balances_after_deposit = vec![
             Balance {
@@ -995,7 +1060,7 @@ mod tests {
         let (withdraw_tx, change_amount) = prepare_withdrawal(
             5000,
             1500,
-            &txid,
+            &txid.to_string(),
             vout,
         );
 
@@ -1985,7 +2050,7 @@ mod tests {
         let expected = expected.encode_to_vec().unwrap();
 
         debug!("Invoking contract to init program state");
-        let processed_tx = sign_and_send_instruction_success(
+        let _ = sign_and_send_instruction_success(
             vec![
                 AccountMeta {
                     pubkey: submitter_pubkey,
@@ -2117,7 +2182,7 @@ mod tests {
         debug!("Creating new account {}", file_path);
         let (txid, vout) = send_utxo(pubkey.clone());
         debug!("{}:{} {:?}", txid, vout, hex::encode(pubkey));
-        mine();
+        mine(1);
 
         let (txid, _) = sign_and_send_instruction(
             SystemInstruction::new_create_account_instruction(
@@ -2166,10 +2231,10 @@ mod tests {
         );
     }
 
-    fn deposit_to_program(
+    fn deposit_to_address(
         amount: u64,
-        program_address: &Address,
-    ) -> (String, u32) {
+        address: &Address,
+    ) -> (Txid, u32) {
         let userpass = Auth::UserPass(
             BITCOIN_NODE_USERNAME.to_string(),
             BITCOIN_NODE_PASSWORD.to_string(),
@@ -2179,7 +2244,7 @@ mod tests {
 
         let txid = rpc
             .send_to_address(
-                program_address,
+                address,
                 Amount::from_sat(amount),
                 None,
                 None,
@@ -2196,11 +2261,11 @@ mod tests {
         let mut vout = 0;
 
         for (index, output) in sent_tx.output.iter().enumerate() {
-            if output.script_pubkey == program_address.script_pubkey() {
+            if output.script_pubkey == address.script_pubkey() {
                 vout = index as u32;
             }
         }
-        return (txid.to_string(), vout);
+        return (txid, vout);
     }
 
     fn prepare_withdrawal(
@@ -2261,7 +2326,7 @@ mod tests {
         }
     }
 
-    fn mine() {
+    fn mine(num_blocks: u64) {
         let userpass = Auth::UserPass(
             BITCOIN_NODE_USERNAME.to_string(),
             BITCOIN_NODE_PASSWORD.to_string(),
@@ -2274,7 +2339,242 @@ mod tests {
             .require_network(bitcoin::Network::Regtest)
             .unwrap();
         rpc
-            .generate_to_address(1, &generate_to_address)
+            .generate_to_address(num_blocks, &generate_to_address)
             .expect("failed to mine block");
+    }
+
+    pub fn etch_rune(etching: Etching) -> RuneId {
+        let userpass = Auth::UserPass(
+            BITCOIN_NODE_USERNAME.to_string(),
+            BITCOIN_NODE_PASSWORD.to_string(),
+        );
+        let rpc =
+            Client::new(BITCOIN_NODE_ENDPOINT, userpass).expect("rpc shouldn not fail to be initiated");
+
+        let wallet = CallerInfo::with_secret_key_file(WALLET1_FILE_PATH).unwrap();
+
+        // Create the Runestone
+        let runestone = Runestone {
+            edicts: Vec::new(), // No edicts for initial etching
+            etching: Some(etching),
+            mint: None,
+            pointer: None,
+        };
+
+        let rune_name_commitment_script = ScriptBuilder::new()
+            .push_opcode(opcodes::OP_FALSE)
+            .push_opcode(opcodes::all::OP_IF)
+            .push_slice::<&PushBytes>(
+                etching
+                    .rune
+                    .unwrap()
+                    .commitment()
+                    .as_slice()
+                    .try_into()
+                    .unwrap(),
+            )
+            .push_opcode(opcodes::all::OP_ENDIF)
+            .push_slice(wallet.public_key.serialize())
+            .push_opcode(opcodes::all::OP_CHECKSIG)
+            .into_script();
+
+        let secp = Secp256k1::new();
+
+        // Build taproot tree
+        let taproot_builder = TaprootBuilder::new()
+            .add_leaf(0, rune_name_commitment_script.clone())
+            .expect("error adding name commitment script leaf");
+
+        let taproot_spend_info = taproot_builder
+            .finalize(&secp, wallet.public_key)
+            .expect("error finalizing taproot builder");
+
+        // Create commit transaction output
+        let commit_tx_script = ScriptBuf::new_p2tr(
+            &secp,
+            taproot_spend_info.internal_key(),
+            taproot_spend_info.merkle_root(),
+        );
+
+
+        let postage = Amount::from_sat(20000);
+        let commit_network_fee = Amount::from_sat(5000);
+        let premine_amount = if etching.premine.is_some() { Amount::from_sat(546) } else { Amount::ZERO };
+
+        let (txid, vout) = deposit_to_address(postage.to_sat() + commit_network_fee.to_sat(), &wallet.address);
+
+        // Build commit transaction
+        let (commit_tx, commit_vout) = build_commit_transaction(
+            &wallet,
+            OutPoint { txid, vout },
+            postage,
+            commit_tx_script,
+        );
+
+        let mut etching_outputs = Vec::new();
+
+        // premine the supply to the wallet
+        if etching.premine.is_some() {
+            etching_outputs.push(TxOut {
+                script_pubkey: wallet.address.script_pubkey(),
+                value: premine_amount,
+            });
+        }
+
+        // Get the encoded runestone - already includes OP_RETURN and OP_PUSHNUM_13
+        let runestone_bytes = runestone.encipher().to_bytes();
+        let runestone_script = ScriptBuf::from_bytes(runestone_bytes.clone());
+        // Add runestone output using runestone_script
+        etching_outputs.push(TxOut {
+            script_pubkey: runestone_script,
+            value: Amount::from_sat(0),
+        });
+
+        // Build etching transaction with all outputs
+        let etching_tx = build_etching_transaction(
+            &wallet,
+            &rune_name_commitment_script,
+            &taproot_spend_info,
+            OutPoint {
+                txid: commit_tx.compute_txid(),
+                vout: commit_vout,
+            },
+            postage,
+            etching_outputs,
+        );
+
+        let commit_txid = rpc.send_raw_transaction(&commit_tx);
+        mine(6);
+        let etching_txid = rpc.send_raw_transaction(&etching_tx);
+        mine(1);
+        let block_count = rpc.get_block_count().unwrap();
+        let block = rpc.get_block_info(&rpc.get_block_hash(block_count).unwrap()).unwrap();
+        RuneId {
+            block: block_count,
+            tx: block.tx.iter().position(|&r| r == *etching_txid.as_ref().unwrap()).unwrap() as u32,
+        }
+    }
+
+    pub fn build_commit_transaction(
+        wallet: &CallerInfo,
+        prev_outpoint: OutPoint,
+        amount: Amount,
+        commit_script: ScriptBuf,
+    ) -> (Transaction, u32) {
+        let userpass = Auth::UserPass(
+            BITCOIN_NODE_USERNAME.to_string(),
+            BITCOIN_NODE_PASSWORD.to_string(),
+        );
+        let rpc =
+            Client::new(BITCOIN_NODE_ENDPOINT, userpass).expect("rpc shouldn not fail to be initiated");
+
+        // Create commit transaction
+        let mut tx = Transaction {
+            version: Version::TWO,
+            lock_time: LockTime::ZERO,
+            input: vec![TxIn {
+                previous_output: prev_outpoint,
+                script_sig: ScriptBuf::default(),
+                sequence: Sequence::ENABLE_RBF_NO_LOCKTIME,
+                witness: Witness::default(),
+            }],
+            output: vec![
+                TxOut {
+                    value: amount,
+                    script_pubkey: commit_script,
+                },
+            ],
+        };
+
+        let sighash_type = TapSighashType::NonePlusAnyoneCanPay;
+        let raw_tx = rpc
+            .get_raw_transaction(&prev_outpoint.txid, None)
+            .expect("raw transaction should not fail");
+        let prevouts = vec![raw_tx.output[prev_outpoint.vout as usize].clone()];
+        let prevouts = Prevouts::All(&prevouts);
+
+        let mut sighasher = SighashCache::new(&mut tx);
+        let sighash = sighasher
+            .taproot_key_spend_signature_hash(0, &prevouts, sighash_type)
+            .expect("should not fail to construct sighash");
+
+        // Sign the sighash using the secp256k1 library
+        let secp = Secp256k1::new();
+        let tweaked: TweakedKeypair = wallet.key_pair.tap_tweak(&secp, None);
+        let msg = secp256k1::Message::from(sighash);
+        let signature = secp.sign_schnorr(&msg, &tweaked.to_inner());
+
+        // Update the witness stack.
+        let signature = bitcoin::taproot::Signature {
+            signature,
+            sighash_type,
+        };
+        tx.input[0].witness.push(signature.to_vec());
+
+        (tx, 0)
+    }
+
+    pub fn build_etching_transaction(
+        wallet: &CallerInfo,
+        name_commitment_script: &ScriptBuf,
+        taproot_spend_info: &TaprootSpendInfo,
+        commit_outpoint: OutPoint,
+        amount: Amount,
+        additional_outputs: Vec<TxOut>,
+    ) -> Transaction {
+        let mut outputs = Vec::new();
+        outputs.extend(additional_outputs);
+        let mut etching_tx = Transaction {
+            version: Version::TWO,
+            lock_time: LockTime::ZERO,
+            input: vec![TxIn {
+                previous_output: commit_outpoint,
+                script_sig: ScriptBuf::default(),
+                sequence: Sequence::ENABLE_RBF_NO_LOCKTIME,
+                witness: Witness::default(),
+            }],
+            output: outputs,
+        };
+
+        let secp = Secp256k1::new();
+        let prev_tx_out = TxOut {
+            value: amount,
+            script_pubkey: ScriptBuf::new_p2tr(
+                &secp,
+                taproot_spend_info.internal_key(),
+                taproot_spend_info.merkle_root(),
+            ),
+        };
+
+        let mut sighash_cache = SighashCache::new(&mut etching_tx);
+        let leaf_hash = TapLeafHash::from_script(name_commitment_script, LeafVersion::TapScript);
+        let sighash = sighash_cache
+            .taproot_script_spend_signature_hash(
+                0,
+                &Prevouts::All(&[prev_tx_out]),
+                leaf_hash,
+                TapSighashType::Default,
+            )
+            .expect("Failed to construct sighash");
+
+        let signature = secp.sign_schnorr(
+            &secp256k1::Message::from_digest_slice(sighash.as_ref()).unwrap(),
+            &wallet.key_pair,
+        );
+
+        let witness = sighash_cache
+            .witness_mut(0)
+            .expect("getting mutable witness reference should work");
+
+        witness.push(signature.as_ref());
+        witness.push(name_commitment_script);
+        witness.push(
+            &taproot_spend_info
+                .control_block(&(name_commitment_script.clone(), LeafVersion::TapScript))
+                .expect("Failed to create control block")
+                .serialize(),
+        );
+
+        etching_tx
     }
 }

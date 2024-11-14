@@ -9,7 +9,7 @@ edition = "2021"
 [dependencies]
 arch_program = { path = "../../../program" }
 sha256 = "1.5.0"
-bitcoin = { version = "0.32.4", features = ["serde"] }
+bitcoin = { version = "0.32.3", features = ["serde"] }
 bitcoin-io = "=0.1.2"
 hex = { version = "0.4.3", default-features = false }
 model = { path = "../model" }
