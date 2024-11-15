@@ -12,7 +12,6 @@ services:
       RUST_LOG: "info"
       RUST_BACKTRACE: "1"
 
-
   bitcoin:
     image: ${BITCOIN_IMAGE:-bitcoin}
     platform: linux/amd64
@@ -23,6 +22,27 @@ services:
       - "28332:28332"
     stop_grace_period: 2s
 
+  ordinals-ord:
+    platform: linux/amd64
+    container_name: ord
+    restart: unless-stopped
+    image: ${ORD_IMAGE:-ord}
+    ports:
+      - "7080:7080"
+    depends_on:
+      - bitcoin
+    environment:
+      CORE_RPC_HOST: "bitcoin"
+      CORE_RPC_PORT: "18443"
+      CORE_RPC_USERNAME: "user"
+      CORE_RPC_PASSWORD: "password"
+      PORT: "7080"
+    healthcheck:
+      test: curl -f localhost:7080/blockheight || exit 1
+      start_period: 5s
+      interval: 5s
+      timeout: 5s
+      retries: 3
 
   electrs:
     image: mempool/electrs:v3.0.0
