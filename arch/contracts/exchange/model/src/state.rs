@@ -1,4 +1,5 @@
 use std::convert::TryInto;
+use std::str::FromStr;
 use arch_program::{
     account::AccountInfo,
     entrypoint,
@@ -8,7 +9,7 @@ use arch_program::{
 use bitcoin::Address;
 use crate::error::*;
 use crate::serialization::Codable;
-use std::str::FromStr;
+use ordinals::RuneId;
 
 pub const ACCOUNT_TYPE_SIZE: usize = 1;
 pub const VERSION_SIZE: usize = 4;
@@ -40,6 +41,7 @@ pub const EVENTS_SIZE_OFFSET: usize = LAST_SETTLEMENT_HASH_OFFSET + HASH_SIZE;
 pub const EVENTS_OFFSET: usize = EVENTS_SIZE_OFFSET + 2;
 pub const EVENT_SIZE: usize = 64;
 pub const MAX_EVENTS: usize = 100;
+pub const RUNE_RECEIVER_OFFSET: usize = EVENTS_OFFSET + EVENT_SIZE * MAX_EVENTS;
 
 pub const FEE_ADDRESS_INDEX: u32 = 0;
 
@@ -79,9 +81,12 @@ pub enum Event {
     FailedWithdrawal {
         account_index: u8,
         address_index: u32,
+        fee_account_index: u8,
+        fee_address_index: u32,
         requested_amount: u64,
         fee_amount: u64,
         balance: u64,
+        balance_in_fee_token: u64,
         error_code: u32,
     }
 }
@@ -91,6 +96,7 @@ pub enum AccountType {
     Program,
     Token,
     Withdraw,
+    RuneReceiver,
     Unknown
 }
 
@@ -124,14 +130,25 @@ pub struct WithdrawState {
     pub batch_hash: Hash,
 }
 
+#[derive(Clone, Debug)]
+pub struct RuneReceiverState {
+    pub account_type: AccountType,
+    pub version: u32,
+    pub program_state_account: Pubkey,
+}
+
 impl TokenState {
     pub fn initialize(account: &AccountInfo, token_id: &str, fee_account_address: &str, pubkey: &Pubkey) -> Result<(), ProgramError> {
         Self::grow_balance_accounts_if_needed(account, 1)?;
         set_type(account, AccountType::Token)?;
         Self::set_program_account(account, pubkey)?;
         set_string(account, TOKEN_ID_OFFSET, token_id, MAX_TOKEN_ID_SIZE)?;
-        Self::set_num_balances(account, 1)?;
-        Balance::set_wallet_address(account, 0, fee_account_address)
+        if !Self::is_rune_id(token_id) {
+            Self::set_num_balances(account, 1)?;
+            Balance::set_wallet_address(account, 0, fee_account_address)
+        } else {
+            Ok(())
+        }
     }
 
     pub fn get_num_balances(account: &AccountInfo) -> Result<usize, ProgramError> {
@@ -154,6 +171,23 @@ impl TokenState {
         tmp[..MAX_TOKEN_ID_SIZE].copy_from_slice(&account.data.borrow()[TOKEN_ID_OFFSET..TOKEN_ID_OFFSET + MAX_TOKEN_ID_SIZE]);
         let pos = tmp.iter().position(|&r| r == 0).unwrap_or(MAX_TOKEN_ID_SIZE);
         String::from_utf8(tmp[..pos].to_vec()).map_err(|_| ProgramError::InvalidAccountData)
+    }
+
+    pub fn get_rune_id(account: &AccountInfo) -> Result<RuneId, ProgramError> {
+        let token_id = Self::get_token_id(account)?;
+        RuneId::from_str(&token_id).map_err(|_| ProgramError::InvalidAccountData)
+    }
+
+    pub fn is_rune_account(account: &AccountInfo) -> bool {
+        let token_id = Self::get_token_id(account).unwrap();
+        Self::is_rune_id(&token_id)
+    }
+
+    pub fn is_rune_id(token_id: &str) -> bool {
+        match RuneId::from_str(&token_id) {
+            Ok(_) => true,
+            _ => false,
+        }
     }
 
     pub fn get_program_state_account_key(account: &AccountInfo) -> Result<Pubkey, ProgramError> {
@@ -314,6 +348,13 @@ impl ProgramState {
         }
         Ok(amount)
     }
+
+    fn set_rune_receiver(account: &AccountInfo, pubkey: &Pubkey) -> Result<(), ProgramError> {
+        let mut data = account.data.try_borrow_mut().map_err(|_| ProgramError::InvalidAccountData)?;
+        Ok(data[RUNE_RECEIVER_OFFSET..RUNE_RECEIVER_OFFSET + PUBKEY_SIZE].copy_from_slice(
+            pubkey.0.as_slice()
+        ))
+    }
 }
 
 pub const WITHDRAW_HASH_OFFSET: usize = PROGRAM_PUBKEY_OFFSET + PUBKEY_SIZE;
@@ -354,6 +395,38 @@ impl WithdrawState {
         let mut data = account.data.try_borrow_mut().map_err(|_| ProgramError::InvalidAccountData)?;
         Ok(data[WITHDRAW_HASH_OFFSET..WITHDRAW_HASH_OFFSET + HASH_SIZE].copy_from_slice(
             hash.as_slice()
+        ))
+    }
+}
+
+pub const RUNE_RECEIVER_ACCOUNT_SIZE: usize = PROGRAM_PUBKEY_OFFSET + PUBKEY_SIZE;
+impl RuneReceiverState {
+
+    pub fn initialize(accounts: &[AccountInfo], account_index: usize) -> Result<(), ProgramError> {
+        if accounts[1].data_is_empty() {
+            accounts[1].realloc(RUNE_RECEIVER_ACCOUNT_SIZE, true)?;
+            set_type(&accounts[account_index], AccountType::RuneReceiver)?;
+            Self::set_program_account(&accounts[account_index], accounts[0].key)?;
+            if accounts[0].data_len() == RUNE_RECEIVER_OFFSET {
+                accounts[0].realloc(RUNE_RECEIVER_OFFSET + PUBKEY_SIZE, true)?;
+                ProgramState::set_rune_receiver(&accounts[0], accounts[1].key)
+            } else {
+                Ok(())
+            }
+        } else {
+            Ok(())
+        }
+    }
+
+    pub fn get_program_state_account_key(account: &AccountInfo) -> Result<Pubkey, ProgramError> {
+        Ok(Pubkey::from_slice(account.data.borrow()[PROGRAM_PUBKEY_OFFSET..PROGRAM_PUBKEY_OFFSET + PUBKEY_SIZE]
+            .try_into().map_err(|_| ProgramError::InvalidAccountData)?))
+    }
+
+    fn set_program_account(account: &AccountInfo, pubkey: &Pubkey) -> Result<(), ProgramError> {
+        let mut data = account.data.try_borrow_mut().map_err(|_| ProgramError::InvalidAccountData)?;
+        Ok(data[PROGRAM_PUBKEY_OFFSET..PROGRAM_PUBKEY_OFFSET + PUBKEY_SIZE].copy_from_slice(
+            pubkey.0.as_slice()
         ))
     }
 }
@@ -413,6 +486,7 @@ pub fn validate_account(accounts: &[AccountInfo], index: u8, is_signer: bool, is
                 AccountType::Program => ProgramState::get_withdraw_account_key(&account),
                 AccountType::Withdraw => WithdrawState::get_program_state_account_key(&account),
                 AccountType::Token => TokenState::get_program_state_account_key(&account),
+                AccountType::RuneReceiver => RuneReceiverState::get_program_state_account_key(&account),
                 _ => Err(ProgramError::Custom(ERROR_INVALID_ACCOUNT_TYPE))
             }?;
             if related_key != *accounts[related_account_index as usize].key {

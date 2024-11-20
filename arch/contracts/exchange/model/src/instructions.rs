@@ -12,6 +12,7 @@ pub enum ProgramInstruction {
     RollbackBatchSettlement(),
     RollbackBatchWithdraw(RollbackWithdrawBatchParams),
     SubmitBatchWithdraw(WithdrawBatchParams),
+    InitRuneReceiverState(),
 }
 
 #[derive(Clone, PartialEq, Debug)]
@@ -37,10 +38,17 @@ pub struct DepositBatchParams {
 }
 
 #[derive(Clone, PartialEq, Debug)]
+pub enum InputUtxoType {
+    Bitcoin,
+    Rune
+}
+
+#[derive(Clone, PartialEq, Debug)]
 pub struct WithdrawBatchParams {
     pub tx_hex: Vec<u8>,
     pub change_amount: u64,
     pub token_withdrawals: Vec<TokenWithdrawals>,
+    pub input_utxo_types: Vec<InputUtxoType>,
 }
 
 #[derive(Clone, PartialEq, Debug)]
@@ -75,6 +83,7 @@ pub struct TokenStateSetup {
 pub struct Withdrawal {
     pub address_index: AddressIndex,
     pub amount: u64,
+    pub fee_address_index: AddressIndex,
     pub fee_amount: u64,
 }
 
@@ -87,6 +96,7 @@ pub struct TokenDeposits {
 #[derive(Clone, PartialEq, Debug)]
 pub struct TokenWithdrawals {
     pub account_index: u8,
+    pub fee_account_index: u8,
     pub withdrawals: Vec<Withdrawal>,
 }
 

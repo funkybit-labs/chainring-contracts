@@ -104,6 +104,18 @@ pub fn mine(num_blocks: u64) {
         .expect("failed to mine block");
 }
 
+pub fn get_block() -> u64 {
+    let userpass = Auth::UserPass(
+        BITCOIN_NODE_USERNAME.to_string(),
+        BITCOIN_NODE_PASSWORD.to_string(),
+    );
+
+    let rpc =
+        Client::new(BITCOIN_NODE_ENDPOINT, userpass).expect("rpc shouldn not fail to be initiated");
+
+    rpc.get_block_count().expect("should not fail to get block count")
+}
+
 pub fn prepare_fees(caller: &CallerInfo) -> Transaction {
     let userpass = Auth::UserPass(
         BITCOIN_NODE_USERNAME.to_string(),

@@ -3,4 +3,5 @@ pub mod bitcoin;
 pub mod constants;
 pub mod utils;
 pub mod ordclient;
+pub mod setup;
 
