@@ -1,0 +1,19 @@
+[package]
+name = "testutils"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+common = { path = "../common" }
+bitcoincore-rpc = "0.19.0"
+bitcoin = { version = "0.32.3", features = ["serde", "rand"] }
+rand_core = { version = "0.6.4", features = ["getrandom"] }
+rand = "0.8.5"
+ordinals = "0.0.12"
+reqwest = { version = "0.12", default-features = false, features = [
+    "json",
+    "rustls-tls",
+    "blocking",
+] }
+serde_json = "1.0.116"
+serde = { version = "1.0.198", features = ["derive"] }
