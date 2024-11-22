@@ -545,6 +545,98 @@ mod tests {
     }
 
     #[test]
+    fn test_deposit_and_withdrawal_with_mainnet_address() {
+        cleanup_account_keys();
+        let accounts = onboard_state_accounts(vec!["btc"]);
+
+        let token_account = accounts[2].clone();
+        let mainnet_address = "bc1qhz5a7xfh5dj00u32x0j5we6jfpa8vgpqhvaqug".to_string();
+        let fee_account = CallerInfo::with_secret_key_file(FEE_ACCOUNT_FILE_PATH).unwrap();
+
+        deposit(
+            mainnet_address.clone(),
+            "btc",
+            token_account.clone(),
+            10000,
+            vec![
+                Balance {
+                    address: fee_account.address.to_string().clone(),
+                    balance: 0,
+                },
+                Balance {
+                    address: mainnet_address.clone(),
+                    balance: 10000,
+                },
+            ],
+        );
+
+        let address = get_account_address(SETUP.program_pubkey);
+        let program_address = Address::from_str(&address)
+            .unwrap()
+            .require_network(bitcoin::Network::Regtest)
+            .unwrap();
+
+        let (txid, vout) = deposit_to_address(10000, &program_address);
+
+
+        let (withdraw_tx, change_amount) = prepare_withdrawal(
+            5000,
+            1500,
+            &txid.to_string(),
+            vout,
+        );
+
+        // perform withdrawal
+        assert_send_and_sign_withdrawal(
+            token_account,
+            WithdrawBatchParams {
+                token_withdrawals: vec![TokenWithdrawals {
+                    account_index: 2,
+                    withdrawals: vec![Withdrawal {
+                        address_index: AddressIndex {
+                            index: 1,
+                            last4: wallet_last4(&mainnet_address.clone()),
+                        },
+                        amount: 100000,
+                        fee_amount: 500,
+                    }],
+                }],
+                change_amount,
+                tx_hex: hex::decode(withdraw_tx).unwrap(),
+            },
+            TokenState {
+                account_type: AccountType::Token,
+                version: 0,
+                program_state_account: accounts[0],
+                token_id: "btc".to_string(),
+                balances: vec![
+                    Balance {
+                        address: fee_account.address.to_string().clone(),
+                        balance: 0,
+                    },
+                    Balance {
+                        address: mainnet_address.clone(),
+                        balance: 10000,
+                    },
+                ]
+            },
+            None,
+            Some(
+                vec![
+                    Event::FailedWithdrawal {
+                        account_index: 2,
+                        address_index: 1,
+                        requested_amount: 100000,
+                        fee_amount: 500,
+                        balance: 0,
+                        error_code: ERROR_INVALID_ADDRESS_NETWORK,
+                    },
+                ]
+            ),
+        );
+    }
+
+    #[test]
     fn test_settlement_submission() {
         cleanup_account_keys();
         let token1 = "btc";
@@ -1310,22 +1402,6 @@ mod tests {
                 }
             ),
             ERROR_INVALID_ADDRESS,
-        );
-
-        // invalid wallet address network
-        test_error_condition(
-            program_and_token_acct.clone(),
-            ProgramInstruction::InitWalletBalances(
-                InitWalletBalancesParams {
-                    token_state_setups: vec![
-                        TokenStateSetup {
-                            account_index: 1,
-                            wallet_addresses: vec!["bc1qar0srrr7xfkvy5l643lydnw9re59gtzzwf5mdq".to_string()],
-                        }
-                    ],
-                }
-            ),
-            ERROR_INVALID_ADDRESS_NETWORK,
         );
 
         // invalid address index

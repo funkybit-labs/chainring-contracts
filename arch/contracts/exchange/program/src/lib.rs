@@ -10,8 +10,7 @@ use arch_program::{
     msg,
 };
 use sha256::digest;
-use bitcoin::{address::Address, Amount, Transaction, TxOut};
-use std::str::FromStr;
+use bitcoin::{Amount, Transaction, TxOut};
 use std::collections::HashMap;
 
 use model::state::*;
@@ -47,8 +46,8 @@ pub fn init_program_state(accounts: &[AccountInfo],
                           params: &InitProgramStateParams) -> Result<(), ProgramError> {
     validate_account(accounts, 0, true, true, None, None)?;
     validate_account(accounts, 1, false, true, None, None)?;
-    validate_bitcoin_address(&params.program_change_address, params.network_type.clone())?;
-    validate_bitcoin_address(&params.fee_account, params.network_type.clone())?;
+    validate_bitcoin_address(&params.program_change_address, params.network_type.clone(), true)?;
+    validate_bitcoin_address(&params.fee_account, params.network_type.clone(), true)?;
     init_state_data(&accounts[0], ProgramState {
         account_type: AccountType::Program,
         version: 0,
@@ -84,7 +83,7 @@ pub fn init_wallet_balances(accounts: &[AccountInfo], params: &InitWalletBalance
         TokenState::grow_balance_accounts_if_needed(account, token_state_setup.wallet_addresses.len())?;
         let mut num_balances = TokenState::get_num_balances(account)?;
         for wallet_address in &token_state_setup.wallet_addresses {
-            validate_bitcoin_address(wallet_address, network_type.clone())?;
+            validate_bitcoin_address(wallet_address, network_type.clone(), false)?;
             Balance::set_wallet_address(account, num_balances, &wallet_address)?;
             num_balances += 1;
         }
@@ -128,6 +127,7 @@ pub fn prepare_withdraw_batch(accounts: &[AccountInfo], params: &WithdrawBatchPa
             &accounts,
             token_withdrawals.account_index,
             token_withdrawals.clone().withdrawals,
+            network_type.clone()
         )?;
     }
 
@@ -277,6 +277,7 @@ pub fn prepare_settlement_batch(accounts: &[AccountInfo], params: &SettlementBat
         let increment_sum: u64 = token_settlements.clone().increments.into_iter().map(|x| x.amount).sum::<u64>() + token_settlements.fee_amount;
         let decrement_sum: u64 = token_settlements.clone().decrements.into_iter().map(|x| x.amount).sum::<u64>();
         verify_decrements(&accounts, token_settlements.account_index, token_settlements.clone().decrements)?;
+        verify_increments(&accounts, token_settlements.account_index, token_settlements.clone().increments)?;
         let running_netting_total = netting_results.entry(TokenState::get_token_id(&accounts[token_settlements.account_index as usize])?).or_insert(0);
         *running_netting_total += increment_sum as i64 - decrement_sum as i64;
     }
@@ -346,24 +347,49 @@ fn verify_decrements(accounts: &[AccountInfo], account_index: u8, adjustments: V
     Ok(())
 }
 
-fn verify_withdrawals(accounts: &[AccountInfo], account_index: u8, withdrawals: Vec<Withdrawal>) -> Result<(), ProgramError> {
+fn verify_increments(accounts: &[AccountInfo], account_index: u8, adjustments: Vec<Adjustment>) -> Result<(), ProgramError> {
+    let account = &accounts[account_index as usize];
+    for adjustment in adjustments {
+        let _ = get_validated_index(account, &adjustment.address_index)?;
+    }
+    Ok(())
+}
+
+fn verify_withdrawals(accounts: &[AccountInfo], account_index: u8, withdrawals: Vec<Withdrawal>, network_type: NetworkType) -> Result<(), ProgramError> {
     let account = &accounts[account_index as usize];
     for withdrawal in withdrawals {
-        let index = get_validated_index(account, &withdrawal.address_index)?;
-        let current_balance = Balance::get_wallet_balance(account, index)?;
-        if withdrawal.amount > current_balance {
-            ProgramState::emit_event(
+        let index_result = get_validated_index_withdraw(account, &withdrawal.address_index, network_type.clone());
+        match index_result {
+            Ok(index) => {
+                let current_balance = Balance::get_wallet_balance(account, index)?;
+                if withdrawal.amount > current_balance {
+                    ProgramState::emit_event(
+                        &accounts[0],
+                        &Event::FailedWithdrawal {
+                            account_index,
+                            address_index: withdrawal.address_index.index,
+                            requested_amount: withdrawal.amount,
+                            fee_amount: withdrawal.fee_amount,
+                            balance: Balance::get_wallet_balance(account, withdrawal.address_index.index as usize)?,
+                            error_code: ERROR_INSUFFICIENT_BALANCE,
+                        },
+                    )?;
+                };
+            }
+            Err(_) => {
+                ProgramState::emit_event(
                     &accounts[0],
                     &Event::FailedWithdrawal {
                         account_index,
                         address_index: withdrawal.address_index.index,
                         requested_amount: withdrawal.amount,
                         fee_amount: withdrawal.fee_amount,
-                        balance: Balance::get_wallet_balance(account, withdrawal.address_index.index as usize)?,
-                        error_code: ERROR_INSUFFICIENT_BALANCE,
+                        balance: 0,
+                        error_code: ERROR_INVALID_ADDRESS_NETWORK,
                     },
                 )?;
-        };
+            }
+        }
     }
     Ok(())
 }
@@ -442,27 +468,6 @@ fn handle_rollback_withdrawals(
 // Helper methods
 //
 
-fn validate_bitcoin_address(address: &str, network_type: NetworkType) -> Result<(), ProgramError> {
-    Address::from_str(address)
-        .map_err(|_| ProgramError::Custom(ERROR_INVALID_ADDRESS))?
-        .require_network(map_network_type(network_type))
-        .map_err(|_| ProgramError::Custom(ERROR_INVALID_ADDRESS_NETWORK))?;
-    Ok(())
-}
-
-fn get_bitcoin_address(address: &str, network_type: NetworkType) -> Address {
-    Address::from_str(address).unwrap().require_network(map_network_type(network_type)).unwrap()
-}
-
-fn map_network_type(network_type: NetworkType) -> bitcoin::Network {
-    match network_type {
-        NetworkType::Bitcoin => bitcoin::Network::Bitcoin,
-        NetworkType::Testnet => bitcoin::Network::Testnet,
-        NetworkType::Signet => bitcoin::Network::Signet,
-        NetworkType::Regtest => bitcoin::Network::Regtest
-    }
-}
-
 fn init_state_data(account: &AccountInfo, new_data: Vec<u8>, additional_bytes: usize) -> Result<(), ProgramError> {
     if new_data.len() + additional_bytes > entrypoint::MAX_PERMITTED_DATA_LENGTH as usize {
         return Err(ProgramError::InvalidRealloc);
@@ -481,5 +486,12 @@ pub fn get_validated_index(account: &AccountInfo, address_index: &AddressIndex) 
     if wallet_last4(&wallet_address) != address_index.last4 {
         return Err(ProgramError::Custom(ERROR_WALLET_LAST4_MISMATCH));
     }
+    Ok(index)
+}
+
+pub fn get_validated_index_withdraw(account: &AccountInfo, address_index: &AddressIndex, network_type: NetworkType) -> Result<usize, ProgramError> {
+    let index = get_validated_index(account, address_index)?;
+    let wallet_address = Balance::get_wallet_address(account, index)?;
+    validate_bitcoin_address(&wallet_address, network_type, true)?;
     Ok(index)
 }
