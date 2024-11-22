@@ -5,8 +5,10 @@ use arch_program::{
     pubkey::Pubkey,
     program_error::ProgramError,
 };
+use bitcoin::Address;
 use crate::error::*;
 use crate::serialization::Codable;
+use std::str::FromStr;
 
 pub const ACCOUNT_TYPE_SIZE: usize = 1;
 pub const VERSION_SIZE: usize = 4;
@@ -425,3 +427,86 @@ pub fn validate_account(accounts: &[AccountInfo], index: u8, is_signer: bool, is
     Ok(())
 }
 
+pub fn validate_bitcoin_address(address: &str, network_type: NetworkType, strict: bool) -> Result<(), ProgramError> {
+    let network_unchecked_address = Address::from_str(address)
+        .map_err(|_| ProgramError::Custom(ERROR_INVALID_ADDRESS))?;
+
+    if strict || network_type == NetworkType::Bitcoin {
+        network_unchecked_address
+            .require_network(map_network_type(network_type))
+            .map_err(|_| ProgramError::Custom(ERROR_INVALID_ADDRESS_NETWORK))?;
+    }
+    Ok(())
+}
+
+pub fn get_bitcoin_address(address: &str, network_type: NetworkType) -> Address {
+    Address::from_str(address).unwrap().require_network(map_network_type(network_type)).unwrap()
+}
+
+fn map_network_type(network_type: NetworkType) -> bitcoin::Network {
+    match network_type {
+        NetworkType::Bitcoin => bitcoin::Network::Bitcoin,
+        NetworkType::Testnet => bitcoin::Network::Testnet,
+        NetworkType::Signet => bitcoin::Network::Signet,
+        NetworkType::Regtest => bitcoin::Network::Regtest
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use arch_program::program_error::ProgramError::Custom;
+    use crate::state::*;
+
+    #[test]
+    fn test_validate_bitcoin_address() {
+        // testnet address valid on testnet
+        assert_eq!(
+            validate_bitcoin_address(
+                "tb1q4sgwdxx8c3l08chkw2w3rewn5armr9urhe0pfk",
+                NetworkType::Testnet,
+                false
+            ),
+            Ok(())
+        );
+
+        // testnet address not valid in mainnet even if strict is false
+        assert_eq!(
+            validate_bitcoin_address(
+                "tb1q4sgwdxx8c3l08chkw2w3rewn5armr9urhe0pfk",
+                NetworkType::Bitcoin,
+                false
+            ),
+            Err(Custom(ERROR_INVALID_ADDRESS_NETWORK))
+        );
+
+        // mainnet address valid in testnet if strict checking off
+        assert_eq!(
+            validate_bitcoin_address(
+                "bc1qhz5a7xfh5dj00u32x0j5we6jfpa8vgpqhvaqug",
+                NetworkType::Testnet,
+                false
+            ),
+            Ok(())
+        );
+
+        // mainnet address fails in testnet if strict is true
+        assert_eq!(
+            validate_bitcoin_address(
+                "bc1qhz5a7xfh5dj00u32x0j5we6jfpa8vgpqhvaqug",
+                NetworkType::Testnet,
+                true
+            ),
+            Err(Custom(ERROR_INVALID_ADDRESS_NETWORK))
+        );
+
+        // mainnet on mainnet
+        assert_eq!(
+            validate_bitcoin_address(
+                "bc1qhz5a7xfh5dj00u32x0j5we6jfpa8vgpqhvaqug",
+                NetworkType::Bitcoin,
+                false
+            ),
+            Ok(())
+        );
+    }
+}
