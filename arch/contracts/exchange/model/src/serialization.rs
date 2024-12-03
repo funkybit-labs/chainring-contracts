@@ -1,7 +1,7 @@
 use std::io;
 use std::io::{Cursor, Error, Read, Write};
 use arch_program::pubkey::Pubkey;
-use crate::state::{AccountType, Balance, Event, EVENT_SIZE, Hash, MAX_ADDRESS_SIZE, MAX_TOKEN_ID_SIZE, NetworkType, ProgramState, TokenState, WithdrawState};
+use crate::state::{AccountType, Balance, Event, EVENT_SIZE, Hash, MAX_ADDRESS_SIZE, MAX_TOKEN_ID_SIZE, NetworkType, ProgramState, RuneReceiverState, TokenState, WithdrawState};
 use crate::instructions::*;
 
 pub trait ReadExt: io::Read {
@@ -203,6 +203,7 @@ impl Codable for ProgramInstruction {
             7 => Ok(Self::RollbackBatchSettlement()),
             8 => Ok(Self::RollbackBatchWithdraw(RollbackWithdrawBatchParams::decode(reader)?)),
             9 => Ok(Self::SubmitBatchWithdraw(WithdrawBatchParams::decode(reader)?)),
+            10 => Ok(Self::InitRuneReceiverState()),
             _ => Err(io::Error::new(io::ErrorKind::Other, "Invalid instruction type"))
         }
     }
@@ -239,6 +240,9 @@ impl Codable for ProgramInstruction {
             Self::SubmitBatchWithdraw(params) => {
                 Ok(writer.write_u8(9)? + params.encode(&mut writer)?)
             }
+            Self::InitRuneReceiverState() => {
+                Ok(writer.write_u8(10)?)
+            }
         }
     }
 }
@@ -260,6 +264,23 @@ impl Codable for NetworkType {
             Self::Testnet => 1,
             Self::Signet => 2,
             Self::Regtest => 3
+        })?)
+    }
+}
+
+impl Codable for InputUtxoType {
+    fn decode<R: io::Read + ?Sized>(reader: &mut R) -> Result<Self, io::Error> {
+        Ok(match reader.read_u8()? {
+            0 => Self::Bitcoin,
+            1 => Self::Rune,
+            _ => Self::Bitcoin
+        })
+    }
+
+    fn encode<W: Write + ?Sized>(&self, mut writer: &mut W) -> Result<usize, io::Error> {
+        Ok(writer.write_u8(match self {
+            Self::Bitcoin => 0,
+            Self::Rune => 1,
         })?)
     }
 }
@@ -333,6 +354,7 @@ impl Codable for Withdrawal {
         Ok(Self {
             address_index: AddressIndex::decode(reader)?,
             amount: reader.read_u64()?,
+            fee_address_index: AddressIndex::decode(reader)?,
             fee_amount: reader.read_u64()?,
         })
     }
@@ -341,6 +363,7 @@ impl Codable for Withdrawal {
         Ok(
             self.address_index.encode(writer)?
                 + writer.write_u64(self.amount)?
+                + self.fee_address_index.encode(writer)?
                 + writer.write_u64(self.fee_amount)?
         )
     }
@@ -375,6 +398,7 @@ impl Codable for TokenDeposits {
 impl Codable for TokenWithdrawals {
     fn decode<R: Read + ?Sized>(reader: &mut R) -> Result<Self, Error> {
         let account_index = reader.read_u8()?;
+        let fee_account_index = reader.read_u8()?;
 
         let withdrawals_count = reader.read_u16_as_usize()?;
         let mut withdrawals = Vec::with_capacity(withdrawals_count);
@@ -384,12 +408,14 @@ impl Codable for TokenWithdrawals {
 
         Ok(Self {
             account_index,
+            fee_account_index,
             withdrawals,
         })
     }
 
     fn encode<W: Write + ?Sized>(&self, mut writer: &mut W) -> Result<usize, Error> {
         let mut bytes_written = writer.write_u8(self.account_index)?;
+        bytes_written += writer.write_u8(self.fee_account_index)?;
 
         bytes_written += writer.write_usize_as_u16(self.withdrawals.len())?;
         for withdrawal in &self.withdrawals {
@@ -534,9 +560,16 @@ impl Codable for WithdrawBatchParams {
             token_withdrawals.push(TokenWithdrawals::decode(reader)?);
         }
 
+        let input_utxo_type_count = reader.read_u16_as_usize()?;
+        let mut input_utxo_types = Vec::with_capacity(input_utxo_type_count);
+        for _ in 0..input_utxo_type_count {
+            input_utxo_types.push(InputUtxoType::decode(reader)?);
+        }
+
         Ok(Self {
             tx_hex,
             change_amount,
+            input_utxo_types,
             token_withdrawals,
         })
     }
@@ -549,6 +582,10 @@ impl Codable for WithdrawBatchParams {
         bytes_written += writer.write_usize_as_u16(self.token_withdrawals.len())?;
         for token_withdrawals in &self.token_withdrawals {
             bytes_written += token_withdrawals.encode(writer)?;
+        }
+        bytes_written += writer.write_usize_as_u16(self.input_utxo_types.len())?;
+        for input_utxo_type in &self.input_utxo_types {
+            bytes_written += input_utxo_type.encode(writer)?;
         }
         Ok(bytes_written)
     }
@@ -632,9 +669,12 @@ impl Codable for Event {
             1 => Ok(Self::FailedWithdrawal {
                 account_index: event_data_reader.read_u8()?,
                 address_index: event_data_reader.read_u32()?,
+                fee_account_index: event_data_reader.read_u8()?,
+                fee_address_index: event_data_reader.read_u32()?,
                 requested_amount: event_data_reader.read_u64()?,
                 fee_amount: event_data_reader.read_u64()?,
                 balance: event_data_reader.read_u64()?,
+                balance_in_fee_token: event_data_reader.read_u64()?,
                 error_code: event_data_reader.read_u32()?
             }),
             _ => Err(io::Error::new(io::ErrorKind::Other, "Invalid event type"))
@@ -651,13 +691,16 @@ impl Codable for Event {
                     writer.write_u64(*balance)? +
                     writer.write_u32(*error_code)?
             }
-            Self::FailedWithdrawal { account_index, address_index, requested_amount, fee_amount, balance, error_code } => {
+            Self::FailedWithdrawal { account_index, address_index, fee_account_index, fee_address_index, requested_amount, fee_amount, balance, balance_in_fee_token, error_code } => {
                 writer.write_u8(1)? +
                     writer.write_u8(*account_index)? +
                     writer.write_u32(*address_index)? +
+                    writer.write_u8(*fee_account_index)? +
+                    writer.write_u32(*fee_address_index)? +
                     writer.write_u64(*requested_amount)? +
                     writer.write_u64(*fee_amount)? +
                     writer.write_u64(*balance)? +
+                    writer.write_u64(*balance_in_fee_token)? +
                     writer.write_u32(*error_code)?
             }
         };
@@ -771,12 +814,31 @@ impl Codable for WithdrawState {
     }
 }
 
+impl Codable for RuneReceiverState {
+    fn decode<R: Read + ?Sized>(reader: &mut R) -> Result<Self, Error> {
+        Ok(Self {
+            account_type: AccountType::decode(reader)?,
+            version: reader.read_u32()?,
+            program_state_account: reader.read_pubkey()?,
+        })
+    }
+
+    fn encode<W: Write + ?Sized>(&self, mut writer: &mut W) -> Result<usize, Error> {
+        Ok(
+            self.account_type.encode(writer)? +
+                writer.write_u32(self.version)? +
+                writer.write_pubkey(&self.program_state_account)?
+        )
+    }
+}
+
 impl Codable for AccountType {
     fn decode<R: io::Read + ?Sized>(reader: &mut R) -> Result<Self, io::Error> {
         Ok(match reader.read_u8()? {
             1 => Self::Program,
             2 => Self::Token,
             3 => Self::Withdraw,
+            4 => Self::RuneReceiver,
             _ => Self::Unknown,
         })
     }
@@ -786,6 +848,7 @@ impl Codable for AccountType {
             Self::Program => 1,
             Self::Token => 2,
             Self::Withdraw => 3,
+            Self::RuneReceiver => 4,
             Self::Unknown => 0
         })?)
     }
@@ -879,9 +942,11 @@ mod tests {
         let instruction = ProgramInstruction::PrepareBatchWithdraw(WithdrawBatchParams {
             tx_hex: vec![1, 2, 3],
             change_amount: 123,
+            input_utxo_types: vec![InputUtxoType::Bitcoin],
             token_withdrawals: vec![
                 TokenWithdrawals {
                     account_index: 0,
+                    fee_account_index: 0,
                     withdrawals: vec![
                         Withdrawal {
                             address_index: AddressIndex {
@@ -889,6 +954,10 @@ mod tests {
                                 last4: [1, 2, 3, 4],
                             },
                             amount: 456,
+                            fee_address_index: AddressIndex {
+                                index: 124,
+                                last4: [1, 2, 3, 5],
+                            },
                             fee_amount: 789,
                         },
                         Withdrawal {
@@ -897,12 +966,17 @@ mod tests {
                                 last4: [4, 3, 2, 1],
                             },
                             amount: 654,
+                            fee_address_index: AddressIndex {
+                                index: 421,
+                                last4: [5, 3, 2, 1],
+                            },
                             fee_amount: 987,
                         },
                     ],
                 },
                 TokenWithdrawals {
                     account_index: 1,
+                    fee_account_index: 1,
                     withdrawals: vec![
                         Withdrawal {
                             address_index: AddressIndex {
@@ -910,6 +984,10 @@ mod tests {
                                 last4: [1, 2, 3, 4],
                             },
                             amount: 222,
+                            fee_address_index: AddressIndex {
+                                index: 222,
+                                last4: [1, 2, 3, 6],
+                            },
                             fee_amount: 333,
                         },
                         Withdrawal {
@@ -918,6 +996,10 @@ mod tests {
                                 last4: [4, 3, 2, 1],
                             },
                             amount: 555,
+                            fee_address_index: AddressIndex {
+                                index: 555,
+                                last4: [1, 2, 3, 7],
+                            },
                             fee_amount: 666,
                         },
                     ],
@@ -1086,6 +1168,7 @@ mod tests {
             token_withdrawals: vec![
                 TokenWithdrawals {
                     account_index: 0,
+                    fee_account_index: 0,
                     withdrawals: vec![
                         Withdrawal {
                             address_index: AddressIndex {
@@ -1093,6 +1176,10 @@ mod tests {
                                 last4: [1, 2, 3, 4],
                             },
                             amount: 456,
+                            fee_address_index: AddressIndex {
+                                index: 123,
+                                last4: [1, 2, 3, 4],
+                            },
                             fee_amount: 789,
                         },
                         Withdrawal {
@@ -1101,12 +1188,17 @@ mod tests {
                                 last4: [4, 3, 2, 1],
                             },
                             amount: 654,
+                            fee_address_index: AddressIndex {
+                                index: 321,
+                                last4: [4, 3, 2, 1],
+                            },
                             fee_amount: 987,
                         },
                     ],
                 },
                 TokenWithdrawals {
                     account_index: 1,
+                    fee_account_index: 1,
                     withdrawals: vec![
                         Withdrawal {
                             address_index: AddressIndex {
@@ -1114,6 +1206,10 @@ mod tests {
                                 last4: [1, 2, 3, 4],
                             },
                             amount: 222,
+                            fee_address_index: AddressIndex {
+                                index: 111,
+                                last4: [1, 2, 3, 4],
+                            },
                             fee_amount: 333,
                         },
                         Withdrawal {
@@ -1122,6 +1218,10 @@ mod tests {
                                 last4: [4, 3, 2, 1],
                             },
                             amount: 555,
+                            fee_address_index: AddressIndex {
+                                index: 111,
+                                last4: [1, 2, 3, 4],
+                            },
                             fee_amount: 666,
                         },
                     ],

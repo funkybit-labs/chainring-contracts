@@ -1,0 +1,13 @@
+[package]
+name = "cli_tools"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+clap = { version = "4.5.21", features = ["derive"] }
+common = { path = "../common" }
+testutils = { path = "../testutils" }
+arch_program = { path = "../program" }
+ordinals = "0.0.12"
+bitcoin = { version = "0.32.3", features = ["serde", "rand"] }
+

@@ -1,7 +1,7 @@
 use common::constants::*;
 use common::models::*;
 use bitcoin::{
-    Amount, OutPoint, ScriptBuf, Sequence, TapSighashType, Transaction, TxIn, TxOut, Witness,
+    Address, Amount, OutPoint, ScriptBuf, Sequence, TapSighashType, Transaction, TxIn, TxOut, Witness,
     opcodes,
     absolute::LockTime,
     transaction::Version,
@@ -13,15 +13,69 @@ use bitcoin::script::{Builder as ScriptBuilder, PushBytes};
 use bitcoin::sighash::{Prevouts, SighashCache};
 use bitcoin::taproot::{LeafVersion, TaprootBuilder, TapLeafHash, TaprootSpendInfo};
 use bitcoincore_rpc::{Auth, Client, RpcApi};
+use arch_program::pubkey::Pubkey;
 use ordinals::{Edict, Etching, RuneId, Runestone};
-
+use model::state::Balance;
 use crate::bitcoin::{mine, deposit_to_address};
-use crate::ordclient::Output;
+use crate::ordclient::{OrdClient, Output, wait_for_block};
 use std::str::FromStr;
+use common::helper::{get_account_address, with_secret_key_file};
+use crate::constants::RUNE_RECEIVER_ACCOUNT_FILE_PATH;
+use crate::setup::deposit;
 
 pub struct ReceiverInfo<'a> {
     pub transfer_amount: u64,
-    pub wallet: &'a CallerInfo,
+    pub address: &'a Address,
+}
+
+pub fn transfer_and_deposit_runes_to_exchange(
+    ord_client: &OrdClient,
+    sender: &CallerInfo,
+    token_account: Pubkey,
+    rune_id: RuneId,
+    rune_name: &str,
+    deposit_amount: u64,
+    expected_balance: u64,
+) {
+    let (_, rune_receiver_pubkey) = with_secret_key_file(RUNE_RECEIVER_ACCOUNT_FILE_PATH).unwrap();
+    let rune_deposit_address = Address::from_str(&get_account_address(rune_receiver_pubkey))
+        .unwrap()
+        .require_network(bitcoin::Network::Regtest)
+        .unwrap();
+
+    let outputs: Vec<Output> = ord_client.get_outputs_for_address(&sender.address.to_string());
+    let output = outputs
+        .iter()
+        .find(|&x| x.runes.contains_key(rune_name) && !x.spent)
+        .unwrap();
+
+    // transfer runes
+    let block = transfer_runes(
+        &sender,
+        rune_id,
+        output,
+        vec![
+            ReceiverInfo {
+                transfer_amount: deposit_amount,
+                address: &rune_deposit_address,
+            },
+        ],
+    );
+
+    deposit(
+        sender.address.to_string().clone(),
+        &rune_id.to_string(),
+        token_account,
+        deposit_amount,
+        vec![
+            Balance {
+                address: sender.address.to_string().clone(),
+                balance: expected_balance,
+            },
+        ],
+    );
+
+    wait_for_block(&ord_client, block);
 }
 
 pub fn transfer_runes(
@@ -37,17 +91,30 @@ pub fn transfer_runes(
     let rpc =
         Client::new(BITCOIN_NODE_ENDPOINT, userpass).expect("rpc shouldn not fail to be initiated");
 
+    let mut edicts: Vec<Edict> = receiver_infos
+        .iter()
+        .enumerate()
+        .map(
+            |(i, ri)|
+                Edict {
+                    id: rune_id,
+                    amount: ri.transfer_amount as u128,
+                    output: i as u32 + 1,
+                },
+        ).collect();
+
+    edicts.push(
+        Edict {
+            id: rune_id,
+            amount: 0,
+            output: 0,
+        },
+    );
     let runestone = Runestone {
-        edicts: receiver_infos.iter().enumerate().map(|(i, ri)|
-                                                          Edict {
-                                                              id: rune_id,
-                                                              amount: ri.transfer_amount as u128,
-                                                              output: i as u32 + 1,
-                                                          },
-        ).collect(),
+        edicts,
         etching: None,
         mint: None,
-        pointer: Some(0),
+        pointer: None,
     };
 
     let runestone_bytes = runestone.encipher().to_bytes();
@@ -69,7 +136,7 @@ pub fn transfer_runes(
         output.push(
             TxOut {
                 value: Amount::from_sat(min_utxo_amount),
-                script_pubkey: ri.wallet.address.script_pubkey(),
+                script_pubkey: ri.address.script_pubkey(),
             },
         )
     }
@@ -88,17 +155,17 @@ pub fn transfer_runes(
             TxIn {
                 previous_output: OutPoint::from_str(&prev_output.outpoint).unwrap(),
                 script_sig: ScriptBuf::default(),
-                sequence: Sequence::ENABLE_RBF_NO_LOCKTIME,
-                witness: Witness::default()
+                sequence: Sequence::MAX,
+                witness: Witness::default(),
             }
         ],
-        output
+        output,
     };
 
 
     let binding = vec![TxOut {
         value: Amount::from_sat(prev_output.value),
-        script_pubkey: sender.address.script_pubkey()
+        script_pubkey: sender.address.script_pubkey(),
     }];
 
     let prevouts = Prevouts::All(&binding);
@@ -129,7 +196,11 @@ pub fn transfer_runes(
     rpc.get_block_count().unwrap()
 }
 
-pub fn etch_rune(wallet: &CallerInfo, etching: Etching) -> RuneId {
+pub fn etch_rune(
+    wallet: &CallerInfo,
+    etching: Etching,
+    premine_address: Option<Address>
+) -> RuneId {
     let userpass = Auth::UserPass(
         BITCOIN_NODE_USERNAME.to_string(),
         BITCOIN_NODE_PASSWORD.to_string(),
@@ -200,7 +271,11 @@ pub fn etch_rune(wallet: &CallerInfo, etching: Etching) -> RuneId {
     // premine the supply to the wallet
     if etching.premine.is_some() {
         etching_outputs.push(TxOut {
-            script_pubkey: wallet.address.script_pubkey(),
+            script_pubkey: if let Some(address) = premine_address {
+                address
+            } else {
+                wallet.address.clone()
+            }.script_pubkey(),
             value: premine_amount,
         });
     }
@@ -259,7 +334,7 @@ pub fn build_commit_transaction(
         input: vec![TxIn {
             previous_output: prev_outpoint,
             script_sig: ScriptBuf::default(),
-            sequence: Sequence::ENABLE_RBF_NO_LOCKTIME,
+            sequence: Sequence::MAX,
             witness: Witness::default(),
         }],
         output: vec![
@@ -314,7 +389,7 @@ pub fn build_etching_transaction(
         input: vec![TxIn {
             previous_output: commit_outpoint,
             script_sig: ScriptBuf::default(),
-            sequence: Sequence::ENABLE_RBF_NO_LOCKTIME,
+            sequence: Sequence::MAX,
             witness: Witness::default(),
         }],
         output: outputs,
