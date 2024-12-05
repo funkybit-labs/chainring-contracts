@@ -47,6 +47,8 @@ pub const FEE_ADDRESS_INDEX: u32 = 0;
 
 pub const EMPTY_HASH: [u8; 32] = [0u8; 32];
 
+pub const DUST_THRESHOLD: u64 = 546;
+
 pub type Hash = [u8; 32];
 pub type WalletLast4 = [u8; 4];
 

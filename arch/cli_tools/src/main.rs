@@ -59,7 +59,8 @@ fn main() {
             terms: None,
             turbo: false,
         },
-        Some(mint_address.clone())
+        Some(mint_address.clone()),
+        Some(546)
     );
 
     let ord_client = OrdClient::new("http://localhost:7080".to_string());
