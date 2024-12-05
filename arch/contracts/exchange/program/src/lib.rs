@@ -150,11 +150,9 @@ pub fn prepare_withdraw_batch(accounts: &[AccountInfo], params: &WithdrawBatchPa
 
     for token_withdrawals in &params.token_withdrawals {
         validate_account(accounts, token_withdrawals.account_index, false, true, Some(AccountType::Token), Some(0))?;
-        validate_account(accounts, token_withdrawals.fee_account_index, false, true, Some(AccountType::Token), Some(0))?;
         verify_withdrawals(
             &accounts,
             token_withdrawals.account_index,
-            token_withdrawals.fee_account_index,
             token_withdrawals.clone().withdrawals,
             network_type.clone(),
         )?;
@@ -169,9 +167,8 @@ pub fn prepare_withdraw_batch(accounts: &[AccountInfo], params: &WithdrawBatchPa
     // Apply all the changes in the batch
     for token_withdrawals in &params.token_withdrawals {
         handle_prepare_withdrawals(
-            &accounts[token_withdrawals.account_index as usize],
-            &accounts[token_withdrawals.fee_account_index as usize],
-            token_withdrawals.clone().withdrawals,
+            accounts,
+            token_withdrawals,
             &ProgramState::get_fee_account_address(&accounts[0])?,
             &mut tx.output,
             network_type.clone(),
@@ -193,7 +190,7 @@ pub fn submit_withdraw_batch(program_id: &Pubkey, accounts: &[AccountInfo], para
     validate_account(accounts, 0, true, false, Some(AccountType::Program), Some(1))?;
     validate_account(accounts, 1, true, true, Some(AccountType::Withdraw), Some(0))?;
     let has_rune_receiver = if get_type(&accounts[2])? == AccountType::RuneReceiver {
-        validate_account(accounts, 2, true, true, Some(AccountType::RuneReceiver), Some(0))?;
+        validate_account(accounts, 2, true, false, Some(AccountType::RuneReceiver), Some(0))?;
         true
     } else {
         false
@@ -206,8 +203,6 @@ pub fn submit_withdraw_batch(program_id: &Pubkey, accounts: &[AccountInfo], para
 
     let mut tx = get_state_transition_tx(accounts);
 
-    let num_state_transitions = tx.output.len();
-
     let tx_with_inputs: Transaction = bitcoin::consensus::deserialize(&params.tx_hex)
         .map_err(|_| ProgramError::Custom(ERROR_INVALID_INPUT_TX))?;
     for input in tx_with_inputs.input.iter() {
@@ -218,10 +213,9 @@ pub fn submit_withdraw_batch(program_id: &Pubkey, accounts: &[AccountInfo], para
 
     for token_withdrawals in &params.token_withdrawals {
         validate_account(accounts, token_withdrawals.account_index, false, false, Some(AccountType::Token), Some(0))?;
-        validate_account(accounts, token_withdrawals.fee_account_index, false, false, Some(AccountType::Token), Some(0))?;
         handle_submit_withdrawals(
-            &accounts[token_withdrawals.account_index as usize],
-            token_withdrawals.clone().withdrawals,
+            accounts,
+            token_withdrawals,
             &mut tx.output,
             network_type.clone(),
             &mut edicts,
@@ -244,7 +238,7 @@ pub fn submit_withdraw_batch(program_id: &Pubkey, accounts: &[AccountInfo], para
     if !edicts.is_empty() {
         let rune_ids: HashSet<RuneId> = HashSet::from_iter(edicts.iter().map(|e| e.id).collect::<Vec<RuneId>>().to_vec());
         rune_ids.into_iter().for_each(|rune_id| {
-            add_edict_and_ouput(
+            add_edict_and_output(
                 rune_id,
                 &mut tx.output,
                 &mut edicts,
@@ -277,10 +271,8 @@ pub fn submit_withdraw_batch(program_id: &Pubkey, accounts: &[AccountInfo], para
                 index: index as u32,
                 signer: if index == 0 {
                     *accounts[1].key
-                } else if has_rune_receiver && index == 1 {
-                    *accounts[2].key
                 } else {
-                    if params.input_utxo_types[index - num_state_transitions] == InputUtxoType::Bitcoin {
+                    if params.input_utxo_types[index - 1] == InputUtxoType::Bitcoin {
                         program_id.clone()
                     } else {
                         *accounts[2].key
@@ -296,7 +288,8 @@ pub fn submit_withdraw_batch(program_id: &Pubkey, accounts: &[AccountInfo], para
         inputs_to_sign: &inputs_to_sign,
     };
 
-    set_transaction_to_sign(accounts, tx_to_sign)?;
+    //set_transaction_to_sign(&accounts[1..2], tx_to_sign)?;
+    set_transaction_to_sign(vec![accounts[1].clone()].as_slice(), tx_to_sign)?;
 
     WithdrawState::clear_hash(&accounts[1])
 }
@@ -306,11 +299,9 @@ pub fn rollback_withdraw_batch(accounts: &[AccountInfo], params: &RollbackWithdr
     validate_account(accounts, 1, false, true, Some(AccountType::Withdraw), Some(0))?;
     for token_withdrawals in &params.token_withdrawals {
         validate_account(accounts, token_withdrawals.account_index, false, true, Some(AccountType::Token), Some(0))?;
-        validate_account(accounts, token_withdrawals.fee_account_index, false, true, Some(AccountType::Token), Some(0))?;
         handle_rollback_withdrawals(
-            &accounts[token_withdrawals.account_index as usize],
-            &accounts[token_withdrawals.fee_account_index as usize],
-            token_withdrawals.clone().withdrawals,
+            accounts,
+            token_withdrawals,
             &ProgramState::get_fee_account_address(&accounts[0])?,
         )?;
     }
@@ -461,11 +452,12 @@ fn verify_increments(accounts: &[AccountInfo], account_index: u8, adjustments: V
     Ok(())
 }
 
-fn verify_withdrawals(accounts: &[AccountInfo], account_index: u8, fee_account_index: u8, withdrawals: Vec<Withdrawal>, network_type: NetworkType) -> Result<(), ProgramError> {
+fn verify_withdrawals(accounts: &[AccountInfo], account_index: u8, withdrawals: Vec<Withdrawal>, network_type: NetworkType) -> Result<(), ProgramError> {
     let account = &accounts[account_index as usize];
-    let fee_account = &accounts[fee_account_index as usize];
     for withdrawal in withdrawals {
         let index_result = get_validated_index_withdraw(account, &withdrawal.address_index, network_type.clone());
+        validate_account(accounts, withdrawal.fee_account_index, false, true, Some(AccountType::Token), Some(0))?;
+        let fee_account = &accounts[withdrawal.fee_account_index as usize];
         match index_result {
             Ok(index) => {
                 let current_balance = Balance::get_wallet_balance(account, index)?;
@@ -477,7 +469,7 @@ fn verify_withdrawals(accounts: &[AccountInfo], account_index: u8, fee_account_i
                         &Event::FailedWithdrawal {
                             account_index,
                             address_index: withdrawal.address_index.index,
-                            fee_account_index,
+                            fee_account_index: withdrawal.fee_account_index,
                             fee_address_index: withdrawal.fee_address_index.index,
                             requested_amount: withdrawal.amount,
                             fee_amount: withdrawal.fee_amount,
@@ -494,7 +486,7 @@ fn verify_withdrawals(accounts: &[AccountInfo], account_index: u8, fee_account_i
                     &Event::FailedWithdrawal {
                         account_index,
                         address_index: withdrawal.address_index.index,
-                        fee_account_index,
+                        fee_account_index: withdrawal.fee_account_index,
                         fee_address_index: withdrawal.fee_address_index.index,
                         requested_amount: withdrawal.amount,
                         fee_amount: withdrawal.fee_amount,
@@ -510,17 +502,18 @@ fn verify_withdrawals(accounts: &[AccountInfo], account_index: u8, fee_account_i
 }
 
 fn handle_prepare_withdrawals(
-    account: &AccountInfo,
-    fee_account: &AccountInfo,
-    withdrawals: Vec<Withdrawal>,
+    accounts: &[AccountInfo],
+    token_withdrawals: &TokenWithdrawals,
     fee_account_address: &str,
     tx_outs: &mut Vec<TxOut>,
     network_type: NetworkType,
     edicts: &mut Vec<Edict>,
 ) -> Result<(), ProgramError> {
-    for withdrawal in withdrawals {
+    let account = &accounts[token_withdrawals.account_index as usize];
+    for withdrawal in &token_withdrawals.withdrawals {
         Balance::decrement_wallet_balance(account, withdrawal.address_index.index as usize, withdrawal.amount)?;
         if withdrawal.fee_amount > 0 {
+            let fee_account = &accounts[withdrawal.fee_account_index as usize];
             if Balance::get_wallet_address(fee_account, FEE_ADDRESS_INDEX as usize)? != fee_account_address {
                 return Err(ProgramError::Custom(ERROR_ADDRESS_MISMATCH));
             }
@@ -535,13 +528,15 @@ fn handle_prepare_withdrawals(
 }
 
 fn handle_submit_withdrawals(
-    account: &AccountInfo,
-    withdrawals: Vec<Withdrawal>,
+    accounts: &[AccountInfo],
+    token_withdrawals: &TokenWithdrawals,
     tx_outs: &mut Vec<TxOut>,
     network_type: NetworkType,
     edicts: &mut Vec<Edict>,
 ) -> Result<(), ProgramError> {
-    for withdrawal in withdrawals {
+    let account = &accounts[token_withdrawals.account_index as usize];
+    for withdrawal in &token_withdrawals.withdrawals {
+        validate_account(accounts, withdrawal.fee_account_index, false, false, Some(AccountType::Token), Some(0))?;
         let _ = get_validated_index(account, &withdrawal.address_index)?;
         add_withdrawal_output(account, &withdrawal, tx_outs, network_type.clone(), edicts)?;
     }
@@ -557,7 +552,7 @@ fn add_withdrawal_output(
 ) -> Result<(), ProgramError> {
     let is_rune = TokenState::is_rune_account(account);
     if is_rune {
-        add_edict_and_ouput(
+        add_edict_and_output(
             TokenState::get_rune_id(account)?,
             tx_outs,
             edicts,
@@ -581,7 +576,7 @@ fn add_withdrawal_output(
     Ok(())
 }
 
-fn add_edict_and_ouput(
+fn add_edict_and_output(
     rune_id: RuneId,
     tx_outs: &mut Vec<TxOut>,
     edicts: &mut Vec<Edict>,
@@ -595,7 +590,7 @@ fn add_edict_and_ouput(
     });
     tx_outs.push(
         TxOut {
-            value: Amount::from_sat(547),
+            value: Amount::from_sat(DUST_THRESHOLD),
             script_pubkey: script_buf,
         }
     );
@@ -603,15 +598,17 @@ fn add_edict_and_ouput(
 }
 
 fn handle_rollback_withdrawals(
-    account: &AccountInfo,
-    fee_account: &AccountInfo,
-    withdrawals: Vec<Withdrawal>,
+    accounts: &[AccountInfo],
+    token_withdrawals: &TokenWithdrawals,
     fee_account_address: &str,
 ) -> Result<(), ProgramError> {
-    for withdrawal in withdrawals {
+    let account = &accounts[token_withdrawals.account_index as usize];
+    for withdrawal in &token_withdrawals.withdrawals {
         let index = get_validated_index(account, &withdrawal.address_index)?;
         Balance::increment_wallet_balance(account, index, withdrawal.amount)?;
         if withdrawal.fee_amount > 0 {
+            validate_account(accounts, withdrawal.fee_account_index, false, true, Some(AccountType::Token), Some(0))?;
+            let fee_account = &accounts[withdrawal.fee_account_index as usize];
             if Balance::get_wallet_address(fee_account, FEE_ADDRESS_INDEX as usize)? != fee_account_address {
                 return Err(ProgramError::Custom(ERROR_ADDRESS_MISMATCH));
             }

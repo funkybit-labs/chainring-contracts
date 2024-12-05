@@ -566,7 +566,7 @@ pub fn assert_send_and_sign_withdrawal(
             AccountMeta {
                 pubkey: rune_receiver_pubkey,
                 is_signer: true,
-                is_writable: true,
+                is_writable: false,
             }
         )
     }
@@ -629,10 +629,10 @@ pub fn assert_send_and_sign_withdrawal(
         let mut has_rune: bool = false;
 
         for output in sent_tx.output.iter() {
-            if output.script_pubkey == wallet.address.script_pubkey() && output.value != Amount::from_sat(547) {
+            if output.script_pubkey == wallet.address.script_pubkey() && output.value != Amount::from_sat(DUST_THRESHOLD) {
                 wallet_amount = output.value.to_sat();
             }
-            if output.script_pubkey == wallet.address.script_pubkey() && output.value == Amount::from_sat(547) {
+            if output.script_pubkey == wallet.address.script_pubkey() && output.value == Amount::from_sat(DUST_THRESHOLD) {
                 has_rune = true
             }
             if output.script_pubkey == program_change_address.script_pubkey() {
