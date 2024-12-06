@@ -288,7 +288,6 @@ pub fn submit_withdraw_batch(program_id: &Pubkey, accounts: &[AccountInfo], para
         inputs_to_sign: &inputs_to_sign,
     };
 
-    //set_transaction_to_sign(&accounts[1..2], tx_to_sign)?;
     set_transaction_to_sign(vec![accounts[1].clone()].as_slice(), tx_to_sign)?;
 
     WithdrawState::clear_hash(&accounts[1])
