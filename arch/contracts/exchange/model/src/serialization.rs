@@ -354,6 +354,7 @@ impl Codable for Withdrawal {
         Ok(Self {
             address_index: AddressIndex::decode(reader)?,
             amount: reader.read_u64()?,
+            fee_account_index: reader.read_u8()?,
             fee_address_index: AddressIndex::decode(reader)?,
             fee_amount: reader.read_u64()?,
         })
@@ -363,6 +364,7 @@ impl Codable for Withdrawal {
         Ok(
             self.address_index.encode(writer)?
                 + writer.write_u64(self.amount)?
+                + writer.write_u8(self.fee_account_index)?
                 + self.fee_address_index.encode(writer)?
                 + writer.write_u64(self.fee_amount)?
         )
@@ -398,7 +400,6 @@ impl Codable for TokenDeposits {
 impl Codable for TokenWithdrawals {
     fn decode<R: Read + ?Sized>(reader: &mut R) -> Result<Self, Error> {
         let account_index = reader.read_u8()?;
-        let fee_account_index = reader.read_u8()?;
 
         let withdrawals_count = reader.read_u16_as_usize()?;
         let mut withdrawals = Vec::with_capacity(withdrawals_count);
@@ -408,14 +409,12 @@ impl Codable for TokenWithdrawals {
 
         Ok(Self {
             account_index,
-            fee_account_index,
             withdrawals,
         })
     }
 
     fn encode<W: Write + ?Sized>(&self, mut writer: &mut W) -> Result<usize, Error> {
         let mut bytes_written = writer.write_u8(self.account_index)?;
-        bytes_written += writer.write_u8(self.fee_account_index)?;
 
         bytes_written += writer.write_usize_as_u16(self.withdrawals.len())?;
         for withdrawal in &self.withdrawals {
@@ -946,7 +945,6 @@ mod tests {
             token_withdrawals: vec![
                 TokenWithdrawals {
                     account_index: 0,
-                    fee_account_index: 0,
                     withdrawals: vec![
                         Withdrawal {
                             address_index: AddressIndex {
@@ -954,6 +952,7 @@ mod tests {
                                 last4: [1, 2, 3, 4],
                             },
                             amount: 456,
+                            fee_account_index: 0,
                             fee_address_index: AddressIndex {
                                 index: 124,
                                 last4: [1, 2, 3, 5],
@@ -966,6 +965,7 @@ mod tests {
                                 last4: [4, 3, 2, 1],
                             },
                             amount: 654,
+                            fee_account_index: 0,
                             fee_address_index: AddressIndex {
                                 index: 421,
                                 last4: [5, 3, 2, 1],
@@ -976,7 +976,6 @@ mod tests {
                 },
                 TokenWithdrawals {
                     account_index: 1,
-                    fee_account_index: 1,
                     withdrawals: vec![
                         Withdrawal {
                             address_index: AddressIndex {
@@ -984,6 +983,7 @@ mod tests {
                                 last4: [1, 2, 3, 4],
                             },
                             amount: 222,
+                            fee_account_index: 1,
                             fee_address_index: AddressIndex {
                                 index: 222,
                                 last4: [1, 2, 3, 6],
@@ -996,6 +996,7 @@ mod tests {
                                 last4: [4, 3, 2, 1],
                             },
                             amount: 555,
+                            fee_account_index: 1,
                             fee_address_index: AddressIndex {
                                 index: 555,
                                 last4: [1, 2, 3, 7],
@@ -1168,7 +1169,6 @@ mod tests {
             token_withdrawals: vec![
                 TokenWithdrawals {
                     account_index: 0,
-                    fee_account_index: 0,
                     withdrawals: vec![
                         Withdrawal {
                             address_index: AddressIndex {
@@ -1176,6 +1176,7 @@ mod tests {
                                 last4: [1, 2, 3, 4],
                             },
                             amount: 456,
+                            fee_account_index: 0,
                             fee_address_index: AddressIndex {
                                 index: 123,
                                 last4: [1, 2, 3, 4],
@@ -1188,6 +1189,7 @@ mod tests {
                                 last4: [4, 3, 2, 1],
                             },
                             amount: 654,
+                            fee_account_index: 0,
                             fee_address_index: AddressIndex {
                                 index: 321,
                                 last4: [4, 3, 2, 1],
@@ -1198,7 +1200,6 @@ mod tests {
                 },
                 TokenWithdrawals {
                     account_index: 1,
-                    fee_account_index: 1,
                     withdrawals: vec![
                         Withdrawal {
                             address_index: AddressIndex {
@@ -1206,6 +1207,7 @@ mod tests {
                                 last4: [1, 2, 3, 4],
                             },
                             amount: 222,
+                            fee_account_index: 1,
                             fee_address_index: AddressIndex {
                                 index: 111,
                                 last4: [1, 2, 3, 4],
@@ -1218,6 +1220,7 @@ mod tests {
                                 last4: [4, 3, 2, 1],
                             },
                             amount: 555,
+                            fee_account_index: 1,
                             fee_address_index: AddressIndex {
                                 index: 111,
                                 last4: [1, 2, 3, 4],

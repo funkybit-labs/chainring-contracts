@@ -86,6 +86,7 @@ mod tests {
                 turbo: false,
             },
             None,
+            None,
         );
         println!("Rune id is {:?}", uncommon_goods_rune_id);
 
@@ -101,6 +102,7 @@ mod tests {
                 turbo: false,
             },
             None,
+            None
         );
         println!("Rune id is {:?}", cats_and_dogs_rune_id);
 
@@ -304,13 +306,13 @@ mod tests {
         let input = WithdrawBatchParams {
             token_withdrawals: vec![TokenWithdrawals {
                 account_index: 2,
-                fee_account_index: 2,
                 withdrawals: vec![Withdrawal {
                     address_index: AddressIndex {
                         index: 1,
                         last4: wallet_last4(&wallet.address.to_string()),
                     },
                     amount: 5500,
+                    fee_account_index: 2,
                     fee_address_index: AddressIndex {
                         index: 1,
                         last4: wallet_last4(&wallet.address.to_string()),
@@ -349,13 +351,13 @@ mod tests {
         let input2 = WithdrawBatchParams {
             token_withdrawals: vec![TokenWithdrawals {
                 account_index: 2,
-                fee_account_index: 2,
                 withdrawals: vec![Withdrawal {
                     address_index: AddressIndex {
                         index: 1,
                         last4: wallet_last4(&wallet.address.to_string()),
                     },
                     amount: 100000,
+                    fee_account_index: 2,
                     fee_address_index: AddressIndex {
                         index: 1,
                         last4: wallet_last4(&wallet.address.to_string()),
@@ -484,7 +486,6 @@ mod tests {
         let input = WithdrawBatchParams {
             token_withdrawals: vec![TokenWithdrawals {
                 account_index: 2,
-                fee_account_index: 2,
                 withdrawals: vec![
                     Withdrawal {
                         address_index: AddressIndex {
@@ -492,6 +493,7 @@ mod tests {
                             last4: wallet_last4(&wallet1.address.to_string()),
                         },
                         amount: 10000,
+                        fee_account_index: 2,
                         fee_address_index: AddressIndex {
                             index: 1,
                             last4: wallet_last4(&wallet1.address.to_string()),
@@ -504,6 +506,7 @@ mod tests {
                             last4: wallet_last4(&wallet2.address.to_string()),
                         },
                         amount: 12000,
+                        fee_account_index: 2,
                         fee_address_index: AddressIndex {
                             index: 2,
                             last4: wallet_last4(&wallet2.address.to_string()),
@@ -516,6 +519,7 @@ mod tests {
                             last4: wallet_last4(&wallet3.address.to_string()),
                         },
                         amount: 12500,
+                        fee_account_index: 2,
                         fee_address_index: AddressIndex {
                             index: 3,
                             last4: wallet_last4(&wallet3.address.to_string()),
@@ -634,13 +638,13 @@ mod tests {
             WithdrawBatchParams {
                 token_withdrawals: vec![TokenWithdrawals {
                     account_index: 2,
-                    fee_account_index: 2,
                     withdrawals: vec![Withdrawal {
                         address_index: AddressIndex {
                             index: 1,
                             last4: wallet_last4(&mainnet_address.clone()),
                         },
                         amount: 100000,
+                        fee_account_index: 2,
                         fee_address_index: AddressIndex {
                             index: 1,
                             last4: wallet_last4(&mainnet_address.clone()),
@@ -1190,6 +1194,7 @@ mod tests {
                             last4: wallet_last4(&wallets[num_withdrawals_per_batch * index + i]),
                         },
                         amount: 6000,
+                        fee_account_index: 2,
                         fee_address_index: AddressIndex {
                             index: (num_withdrawals_per_batch * index + i + 1) as u32,
                             last4: wallet_last4(&wallets[num_withdrawals_per_batch * index + i]),
@@ -1204,7 +1209,6 @@ mod tests {
                 token_withdrawals: vec![
                     TokenWithdrawals {
                         account_index: 2,
-                        fee_account_index: 2,
                         withdrawals,
                     }
                 ],
@@ -1322,13 +1326,13 @@ mod tests {
 
         let token_withdrawals = vec![TokenWithdrawals {
             account_index: 2,
-            fee_account_index: 2,
             withdrawals: vec![Withdrawal {
                 address_index: AddressIndex {
                     index: 1,
                     last4: wallet_last4(&wallet.address.to_string()),
                 },
                 amount: 5500,
+                fee_account_index: 2,
                 fee_address_index: AddressIndex {
                     index: 1,
                     last4: wallet_last4(&wallet.address.to_string()),
@@ -1577,11 +1581,11 @@ mod tests {
             token_withdrawals: vec![
                 TokenWithdrawals {
                     account_index: 1,
-                    fee_account_index: 1,
                     withdrawals: vec![
                         Withdrawal {
                             address_index: AddressIndex { index: 0, last4: wallet_last4(&fee_account.address.to_string()) },
                             amount: 100000000,
+                            fee_account_index: 1,
                             fee_address_index: AddressIndex { index: 0, last4: wallet_last4(&fee_account.address.to_string()) },
                             fee_amount: 0,
                         }
@@ -1805,6 +1809,7 @@ mod tests {
                 turbo: false,
             },
             None,
+            None,
         );
         let spaced_rune_name = format!("{}", SpacedRune { rune, spacers: 128 });
 
@@ -1898,13 +1903,13 @@ mod tests {
             token_withdrawals: vec![
                 TokenWithdrawals {
                     account_index: 3,
-                    fee_account_index: 4,
                     withdrawals: vec![Withdrawal {
                         address_index: AddressIndex {
                             index: 0,
                             last4: wallet_last4(&wallet.address.to_string()),
                         },
                         amount: withdraw_amount,
+                        fee_account_index: 4,
                         fee_address_index: AddressIndex {
                             index: 1,
                             last4: wallet_last4(&wallet.address.to_string()),
@@ -1964,7 +1969,6 @@ mod tests {
         assert_eq!(spaced_rune_name, address_response.runes_balances[0].rune_name);
         assert_eq!(1000.000000 - 400.000000, address_response.runes_balances[0].balance);
 
-        // check that rollback works
     }
 
     #[test]
@@ -1987,6 +1991,7 @@ mod tests {
                 terms: None,
                 turbo: false,
             },
+            None,
             None,
         )).collect::<Vec<RuneId>>();
 
@@ -2136,7 +2141,6 @@ mod tests {
             token_withdrawals: vec![
                 TokenWithdrawals {
                     account_index: 5,
-                    fee_account_index: 5,
                     withdrawals: vec![
                         Withdrawal {
                             address_index: AddressIndex {
@@ -2144,6 +2148,7 @@ mod tests {
                                 last4: wallet_last4(&wallet1.address.to_string()),
                             },
                             amount: btc_withdraw_amount,
+                            fee_account_index: 5,
                             fee_address_index: AddressIndex {
                                 index: 1,
                                 last4: wallet_last4(&wallet1.address.to_string()),
@@ -2156,6 +2161,7 @@ mod tests {
                                 last4: wallet_last4(&wallet2.address.to_string()),
                             },
                             amount: btc_withdraw_amount2,
+                            fee_account_index: 5,
                             fee_address_index: AddressIndex {
                                 index: 2,
                                 last4: wallet_last4(&wallet2.address.to_string()),
@@ -2166,7 +2172,6 @@ mod tests {
                 },
                 TokenWithdrawals {
                     account_index: 3,
-                    fee_account_index: 5,
                     withdrawals: vec![
                         Withdrawal {
                             address_index: AddressIndex {
@@ -2174,6 +2179,7 @@ mod tests {
                                 last4: wallet_last4(&wallet1.address.to_string()),
                             },
                             amount: rune_withdraw_base_amount,
+                            fee_account_index: 5,
                             fee_address_index: AddressIndex {
                                 index: 1,
                                 last4: wallet_last4(&wallet1.address.to_string()),
@@ -2186,6 +2192,7 @@ mod tests {
                                 last4: wallet_last4(&wallet2.address.to_string()),
                             },
                             amount: rune_withdraw_base_amount2,
+                            fee_account_index: 5,
                             fee_address_index: AddressIndex {
                                 index: 2,
                                 last4: wallet_last4(&wallet2.address.to_string()),
@@ -2196,7 +2203,6 @@ mod tests {
                 },
                 TokenWithdrawals {
                     account_index: 4,
-                    fee_account_index: 5,
                     withdrawals: vec![
                         Withdrawal {
                             address_index: AddressIndex {
@@ -2204,6 +2210,7 @@ mod tests {
                                 last4: wallet_last4(&wallet1.address.to_string()),
                             },
                             amount: rune_withdraw_base_amount + 2000000,
+                            fee_account_index: 5,
                             fee_address_index: AddressIndex {
                                 index: 1,
                                 last4: wallet_last4(&wallet1.address.to_string()),
@@ -2216,6 +2223,7 @@ mod tests {
                                 last4: wallet_last4(&wallet2.address.to_string()),
                             },
                             amount: rune_withdraw_base_amount2 + 20000,
+                            fee_account_index: 5,
                             fee_address_index: AddressIndex {
                                 index: 2,
                                 last4: wallet_last4(&wallet2.address.to_string()),
