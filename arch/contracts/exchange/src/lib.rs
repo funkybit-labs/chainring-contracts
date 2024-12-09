@@ -1973,6 +1973,132 @@ mod tests {
     }
 
     #[test]
+    fn test_runes_setup() {
+        cleanup_account_keys();
+        let rune = Rune::from_str(&generate_upper_case_string(15)).unwrap();
+
+        let wallet = CallerInfo::with_secret_key_file(WALLET1_FILE_PATH).unwrap();
+        let ord_client = OrdClient::new("http://localhost:7080".to_string());
+
+        let accounts = onboard_state_accounts(vec!["btc", "0:250"]);
+
+        let btc_token_account = accounts[2].clone();
+        get_or_create_balance_index(wallet.address.to_string().clone(), btc_token_account);
+        let rune_token_account = accounts[3].clone();
+
+        // give wallet a runes balance on exchange
+        deposit(
+            wallet.address.to_string().clone(),
+            "0:250",
+            rune_token_account.clone(),
+            10000,
+            vec![
+                Balance {
+                    address: wallet.address.to_string().clone(),
+                    balance: 10000,
+                },
+            ],
+        );
+
+        // check we can't withdraw from it
+        assert_send_and_sign_withdrawal(
+            vec![btc_token_account, rune_token_account],
+            WithdrawBatchParams {
+                token_withdrawals: vec![TokenWithdrawals {
+                    account_index: 3,
+                    withdrawals: vec![Withdrawal {
+                        address_index: AddressIndex {
+                            index: 0,
+                            last4: wallet_last4(&wallet.address.to_string()),
+                        },
+                        amount: 10000,
+                        fee_account_index: 2,
+                        fee_address_index: AddressIndex {
+                            index: 1,
+                            last4: wallet_last4(&wallet.address.to_string()),
+                        },
+                        fee_amount: 0,
+                    }],
+                }],
+                change_amount: 0,
+                tx_hex: hex::decode(get_empty_tx()).unwrap(),
+                input_utxo_types: vec![],
+            },
+            vec![],
+            None,
+            Some(
+                vec![
+                    Event::FailedWithdrawal {
+                        account_index: 3,
+                        address_index: 0,
+                        fee_account_index: 2,
+                        fee_address_index: 1,
+                        requested_amount: 10000,
+                        fee_amount: 0,
+                        balance: 0,
+                        balance_in_fee_token: 0,
+                        error_code: ERROR_WITHDRAWAL_NOT_ALLOWED,
+                    },
+                ]
+            ),
+        );
+
+        // etch rune and change rune id for the token
+        let rune_id = etch_rune(
+            &wallet,
+            Etching {
+                divisibility: Some(6u8),
+                premine: Some(1000000000000),
+                rune: Some(rune),
+                spacers: Some(128),
+                symbol: Some('¢'),
+                terms: None,
+                turbo: false,
+            },
+            None,
+            None,
+        );
+
+        // now set the rune id
+        set_token_rune_id(rune_token_account, rune_id.to_string());
+
+        // check we can't change it after setting it
+        let (submitter_keypair, submitter_pubkey) = with_secret_key_file(SUBMITTER_FILE_PATH).unwrap();
+        let program_and_token_acct = vec![
+            AccountMeta {
+                pubkey: submitter_pubkey,
+                is_signer: true,
+                is_writable: false,
+            },
+            AccountMeta {
+                pubkey: rune_token_account,
+                is_signer: false,
+                is_writable: true,
+            },
+        ];
+        test_error_condition(
+            program_and_token_acct.clone(),
+            ProgramInstruction::SetTokeRuneId(
+                SetTokenRuneIdParams {
+                    rune_id: "25:100".to_string(),
+                }
+            ),
+            ERROR_RUNE_ALREADY_SET,
+        );
+
+        test_error_condition(
+            program_and_token_acct.clone(),
+            ProgramInstruction::SetTokeRuneId(
+                SetTokenRuneIdParams {
+                    rune_id: "invalid format".to_string(),
+                }
+            ),
+            ERROR_INVALID_RUNE_ID,
+        );
+
+    }
+
+    #[test]
     fn test_deposit_and_withdraw_multiple_runes_and_btc() {
         cleanup_account_keys();
         let runes = (0..2).map(|_| Rune::from_str(&generate_upper_case_string(15)).unwrap()).collect::<Vec<Rune>>();
