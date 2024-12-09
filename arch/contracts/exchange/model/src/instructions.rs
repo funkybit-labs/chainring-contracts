@@ -14,6 +14,7 @@ pub enum ProgramInstruction {
     SubmitBatchWithdraw(WithdrawBatchParams),
     UpdateWithdrawStateUtxo(UpdateWithdrawStateUtxoParams),
     InitRuneReceiverState(),
+    SetTokeRuneId(SetTokenRuneIdParams),
 }
 
 #[derive(Clone, PartialEq, Debug)]
@@ -26,6 +27,11 @@ pub struct InitProgramStateParams {
 #[derive(Clone, PartialEq, Debug)]
 pub struct InitTokenStateParams {
     pub token_id: String,
+}
+
+#[derive(Clone, PartialEq, Debug)]
+pub struct SetTokenRuneIdParams {
+    pub rune_id: String,
 }
 
 #[derive(Clone, PartialEq, Debug)]

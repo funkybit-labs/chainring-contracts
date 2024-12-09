@@ -205,6 +205,7 @@ impl Codable for ProgramInstruction {
             9 => Ok(Self::SubmitBatchWithdraw(WithdrawBatchParams::decode(reader)?)),
             10 => Ok(Self::UpdateWithdrawStateUtxo(UpdateWithdrawStateUtxoParams::decode(reader)?)),
             11 => Ok(Self::InitRuneReceiverState()),
+            12 => Ok(Self::SetTokeRuneId(SetTokenRuneIdParams::decode(reader)?)),
             _ => Err(io::Error::new(io::ErrorKind::Other, "Invalid instruction type"))
         }
     }
@@ -246,6 +247,9 @@ impl Codable for ProgramInstruction {
             }
             Self::InitRuneReceiverState() => {
                 Ok(writer.write_u8(11)?)
+            }
+            Self::SetTokeRuneId(params) => {
+                Ok(writer.write_u8(12)? + params.encode(&mut writer)?)
             }
         }
     }
@@ -500,6 +504,18 @@ impl Codable for InitTokenStateParams {
 
     fn encode<W: Write + ?Sized>(&self, mut writer: &mut W) -> Result<usize, io::Error> {
         writer.write_string(&self.token_id)
+    }
+}
+
+impl Codable for SetTokenRuneIdParams {
+    fn decode<R: io::Read + ?Sized>(reader: &mut R) -> Result<Self, io::Error> {
+        Ok(Self {
+            rune_id: reader.read_string()?
+        })
+    }
+
+    fn encode<W: Write + ?Sized>(&self, mut writer: &mut W) -> Result<usize, io::Error> {
+        writer.write_string(&self.rune_id)
     }
 }
 
