@@ -15,7 +15,7 @@ use bitcoin::taproot::{LeafVersion, TaprootBuilder, TapLeafHash, TaprootSpendInf
 use bitcoincore_rpc::{Auth, Client, RpcApi};
 use arch_program::pubkey::Pubkey;
 use ordinals::{Edict, Etching, RuneId, Runestone};
-use model::state::Balance;
+use model::state::{Balance, DUST_THRESHOLD};
 use crate::bitcoin::{mine, deposit_to_address};
 use crate::ordclient::{OrdClient, Output, wait_for_block};
 use std::str::FromStr;
@@ -122,7 +122,7 @@ pub fn transfer_runes(
     let min_utxo_amount: u64 = if prev_output.value > 10000 {
         5000
     } else {
-        547
+        DUST_THRESHOLD
     };
 
     // this is the 0 output - he will get the remainder
@@ -199,7 +199,8 @@ pub fn transfer_runes(
 pub fn etch_rune(
     wallet: &CallerInfo,
     etching: Etching,
-    premine_address: Option<Address>
+    premine_address: Option<Address>,
+    premine_utxo_sats: Option<u64>
 ) -> RuneId {
     let userpass = Auth::UserPass(
         BITCOIN_NODE_USERNAME.to_string(),
@@ -254,7 +255,6 @@ pub fn etch_rune(
 
     let postage = Amount::from_sat(100000);
     let commit_network_fee = Amount::from_sat(3000);
-    let premine_amount = if etching.premine.is_some() { Amount::from_sat(97000) } else { Amount::ZERO };
 
     let (txid, vout) = deposit_to_address(postage.to_sat() + commit_network_fee.to_sat(), &wallet.address);
 
@@ -276,7 +276,7 @@ pub fn etch_rune(
             } else {
                 wallet.address.clone()
             }.script_pubkey(),
-            value: premine_amount,
+            value: Amount::from_sat(if premine_utxo_sats.is_some() { premine_utxo_sats.unwrap() } else { 97000 })
         });
     }
 

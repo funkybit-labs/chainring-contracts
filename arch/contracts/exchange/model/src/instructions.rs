@@ -84,6 +84,7 @@ pub struct TokenStateSetup {
 pub struct Withdrawal {
     pub address_index: AddressIndex,
     pub amount: u64,
+    pub fee_account_index: u8,
     pub fee_address_index: AddressIndex,
     pub fee_amount: u64,
 }
@@ -97,7 +98,6 @@ pub struct TokenDeposits {
 #[derive(Clone, PartialEq, Debug)]
 pub struct TokenWithdrawals {
     pub account_index: u8,
-    pub fee_account_index: u8,
     pub withdrawals: Vec<Withdrawal>,
 }
 
