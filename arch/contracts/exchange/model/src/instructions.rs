@@ -12,6 +12,7 @@ pub enum ProgramInstruction {
     RollbackBatchSettlement(),
     RollbackBatchWithdraw(RollbackWithdrawBatchParams),
     SubmitBatchWithdraw(WithdrawBatchParams),
+    UpdateWithdrawStateUtxo(UpdateWithdrawStateUtxoParams),
 }
 
 #[derive(Clone, PartialEq, Debug)]
@@ -96,5 +97,11 @@ pub struct SettlementAdjustments {
     pub increments: Vec<Adjustment>,
     pub decrements: Vec<Adjustment>,
     pub fee_amount: u64,
+}
+
+#[derive(Clone, PartialEq, Debug)]
+pub struct UpdateWithdrawStateUtxoParams {
+    pub tx_id: String,
+    pub vout: u32,
 }
 

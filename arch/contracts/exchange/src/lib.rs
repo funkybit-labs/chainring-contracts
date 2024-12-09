@@ -237,6 +237,7 @@ mod tests {
     fn test_deposit_and_withdrawal() {
         cleanup_account_keys();
         let accounts = onboard_state_accounts(vec!["btc"]);
+        update_withdraw_state_utxo();
 
         let token_account = accounts[2].clone();
 
@@ -2256,6 +2257,44 @@ mod tests {
         let withdraw_state = WithdrawState::decode_from_slice(account.data.as_slice()).unwrap();
         assert_eq!(submitter_pubkey, withdraw_state.program_state_account);
         assert_eq!(EMPTY_HASH, withdraw_state.batch_hash);
+    }
+
+    fn update_withdraw_state_utxo() {
+        let (submitter_keypair, submitter_pubkey) = with_secret_key_file(SUBMITTER_FILE_PATH).unwrap();
+        let (withdraw_keypair, withdraw_pubkey) = with_secret_key_file(WITHDRAW_ACCOUNT_FILE_PATH).unwrap();
+        let account = read_account_info(NODE1_ADDRESS, withdraw_pubkey.clone()).unwrap();
+        debug!("utxo id on account is {:?}", account.utxo);
+
+        let (new_txid, vout) = send_utxo(withdraw_pubkey.clone());
+
+        debug!("Invoking contract to update withdraw state utxo");
+        let _ = sign_and_send_instruction_success(
+            vec![
+                AccountMeta {
+                    pubkey: submitter_pubkey,
+                    is_signer: true,
+                    is_writable: false,
+                },
+                AccountMeta {
+                    pubkey: withdraw_pubkey,
+                    is_signer: true,
+                    is_writable: true,
+                },
+            ],
+            ProgramInstruction::UpdateWithdrawStateUtxo(
+                UpdateWithdrawStateUtxoParams {
+                    tx_id: new_txid.clone(),
+                    vout,
+                }
+            ).encode_to_vec().unwrap(),
+            vec![submitter_keypair, withdraw_keypair],
+        );
+
+        let account = read_account_info(NODE1_ADDRESS, withdraw_pubkey.clone()).unwrap();
+        debug!("new utxo id on account is {:?}", account.utxo);
+        assert_eq!(
+            format!("{}:{}", new_txid, vout), account.utxo
+        );
     }
 
     fn init_token_state_account(
