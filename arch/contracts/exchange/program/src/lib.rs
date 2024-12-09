@@ -12,6 +12,7 @@ use arch_program::{
 use sha256::digest;
 use bitcoin::{Amount, Transaction, TxOut};
 use std::collections::HashMap;
+use arch_program::utxo::UtxoMeta;
 
 use model::state::*;
 use model::instructions::*;
@@ -39,6 +40,7 @@ pub fn process_instruction(
         ProgramInstruction::RollbackBatchSettlement() => rollback_settlement_batch(accounts),
         ProgramInstruction::RollbackBatchWithdraw(params) => rollback_withdraw_batch(accounts, &params),
         ProgramInstruction::SubmitBatchWithdraw(params) => submit_withdraw_batch(program_id, accounts, &params, &params_raw_data),
+        ProgramInstruction::UpdateWithdrawStateUtxo(params) => update_withdraw_state_utxo(accounts, &params),
     }
 }
 
@@ -228,6 +230,24 @@ pub fn rollback_withdraw_batch(accounts: &[AccountInfo], params: &RollbackWithdr
     }
     WithdrawState::clear_hash(&accounts[1])?;
     Ok(())
+}
+
+pub fn update_withdraw_state_utxo(accounts: &[AccountInfo], params: &UpdateWithdrawStateUtxoParams) -> Result<(), ProgramError> {
+    validate_account(accounts, 0, true, false, Some(AccountType::Program), Some(1))?;
+    validate_account(accounts, 1, true, true, Some(AccountType::Withdraw), Some(0))?;
+
+    accounts[1].set_utxo(
+        &UtxoMeta::from(
+            hex::decode(params.clone().tx_id)
+                .unwrap()
+                .try_into()
+                .unwrap(),
+            params.clone().vout
+        )
+    );
+
+    Ok(())
+
 }
 
 pub fn submit_settlement_batch(accounts: &[AccountInfo], params: &SettlementBatchParams, raw_params_data: &[u8]) -> Result<(), ProgramError> {

@@ -203,6 +203,7 @@ impl Codable for ProgramInstruction {
             7 => Ok(Self::RollbackBatchSettlement()),
             8 => Ok(Self::RollbackBatchWithdraw(RollbackWithdrawBatchParams::decode(reader)?)),
             9 => Ok(Self::SubmitBatchWithdraw(WithdrawBatchParams::decode(reader)?)),
+            10 => Ok(Self::UpdateWithdrawStateUtxo(UpdateWithdrawStateUtxoParams::decode(reader)?)),
             _ => Err(io::Error::new(io::ErrorKind::Other, "Invalid instruction type"))
         }
     }
@@ -238,6 +239,9 @@ impl Codable for ProgramInstruction {
             }
             Self::SubmitBatchWithdraw(params) => {
                 Ok(writer.write_u8(9)? + params.encode(&mut writer)?)
+            }
+            Self::UpdateWithdrawStateUtxo(params) => {
+                Ok(writer.write_u8(10)? + params.encode(&mut writer)?)
             }
         }
     }
@@ -553,6 +557,22 @@ impl Codable for WithdrawBatchParams {
         Ok(bytes_written)
     }
 }
+
+impl Codable for UpdateWithdrawStateUtxoParams {
+    fn decode<R: io::Read + ?Sized>(reader: &mut R) -> Result<Self, io::Error> {
+        Ok(Self {
+            tx_id: reader.read_string()?,
+            vout: reader.read_u32()?
+        })
+    }
+
+    fn encode<W: Write + ?Sized>(&self, mut writer: &mut W) -> Result<usize, io::Error> {
+        let mut bytes_written = writer.write_string(&self.tx_id)?;
+        bytes_written += writer.write_u32(self.vout)?;
+        Ok(bytes_written)
+    }
+}
+
 
 impl Codable for SettlementBatchParams {
     fn decode<R: Read + ?Sized>(reader: &mut R) -> Result<Self, io::Error> {
