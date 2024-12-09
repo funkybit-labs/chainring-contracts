@@ -850,9 +850,9 @@ pub fn assert_send_and_sign_submit_settlement(
     );
 
     assert_eq!(
-            hash(&params.encode_to_vec().unwrap()),
-            hex::encode(program_state.last_settlement_batch_hash),
-        );
+        hash(&params.encode_to_vec().unwrap()),
+        hex::encode(program_state.last_settlement_batch_hash),
+    );
 }
 
 pub fn update_withdraw_state_utxo() {
@@ -891,4 +891,37 @@ pub fn update_withdraw_state_utxo() {
     assert_eq!(
         format!("{}:{}", new_txid, vout), account.utxo
     );
+}
+
+pub fn set_token_rune_id(token_account: Pubkey, rune_id: String) {
+    let (submitter_keypair, submitter_pubkey) = with_secret_key_file(SUBMITTER_FILE_PATH).unwrap();
+
+    debug!("Invoking contract to update token rune id");
+    let _ = sign_and_send_instruction_success(
+        vec![
+            AccountMeta {
+                pubkey: submitter_pubkey,
+                is_signer: true,
+                is_writable: false,
+            },
+            AccountMeta {
+                pubkey: token_account,
+                is_signer: false,
+                is_writable: true,
+            },
+        ],
+        ProgramInstruction::SetTokeRuneId(
+            SetTokenRuneIdParams {
+                rune_id: rune_id.clone(),
+            }
+        ).encode_to_vec().unwrap(),
+        vec![submitter_keypair],
+    );
+
+    let state_account = read_account_info(NODE1_ADDRESS, token_account.clone()).unwrap();
+    let token_state: TokenState = TokenState::decode_from_slice(&state_account.data).unwrap();
+    assert_eq!(
+        rune_id,
+        token_state.token_id
+    )
 }
