@@ -12,7 +12,7 @@ use bitcoin::{
 use bitcoin::script::{Builder as ScriptBuilder, PushBytes};
 use bitcoin::sighash::{Prevouts, SighashCache};
 use bitcoin::taproot::{LeafVersion, TaprootBuilder, TapLeafHash, TaprootSpendInfo};
-use bitcoincore_rpc::{Auth, Client, RpcApi};
+use bitcoincore_rpc::{Auth, Client, RawTx, RpcApi};
 use arch_program::pubkey::Pubkey;
 use ordinals::{Edict, Etching, RuneId, Runestone};
 use model::state::{Balance, DUST_THRESHOLD};
@@ -209,6 +209,51 @@ pub fn etch_rune(
     let rpc =
         Client::new(BITCOIN_NODE_ENDPOINT, userpass).expect("rpc shouldn not fail to be initiated");
 
+    let postage = Amount::from_sat(100000);
+    let commit_network_fee = Amount::from_sat(3000);
+    let change_amount = Amount::from_sat(20000);
+
+    let (txid, vout) = deposit_to_address(postage.to_sat() + commit_network_fee.to_sat() + change_amount.to_sat(), &wallet.address);
+
+    let funding_psbt_hex = build_funding_psbt(wallet, OutPoint { txid, vout }, change_amount);
+    let (commit_tx_hex, etching_tx_hex) = build_commit_and_etch_transactions(
+        etching,
+        if let Some(address) = premine_address {
+            address
+        } else {
+            wallet.address.clone()
+        },
+        funding_psbt_hex,
+        postage,
+        Amount::from_sat(3000)
+    );
+
+    let commit_tx: Transaction = bitcoin::consensus::deserialize(&hex::decode(commit_tx_hex).unwrap()).unwrap();
+    let _ = rpc.send_raw_transaction(&commit_tx).unwrap();
+    mine(6);
+    let etching_tx: Transaction = bitcoin::consensus::deserialize(&hex::decode(etching_tx_hex).unwrap()).unwrap();
+    let _ = rpc.send_raw_transaction(&etching_tx).unwrap();
+    mine(1);
+    let block_count = rpc.get_block_count().unwrap();
+    let block = rpc.get_block_info(&rpc.get_block_hash(block_count).unwrap()).unwrap();
+    RuneId {
+        block: block_count,
+        tx: block.tx.iter().position(|&r| r == etching_tx.compute_txid()).unwrap() as u32,
+    }
+}
+
+pub fn build_commit_and_etch_transactions(
+    etching: Etching,
+    premine_address: Address,
+    funding_psbt_hex: String,
+    postage: Amount,
+    etching_network_fee: Amount
+) -> (String, String) {
+
+    let ephemeral = CallerInfo::generate_new().unwrap();
+
+    let mut commit_tx: Transaction = bitcoin::consensus::deserialize(&hex::decode(funding_psbt_hex).unwrap()).unwrap();
+
     // Create the Runestone
     let runestone = Runestone {
         edicts: Vec::new(), // No edicts for initial etching
@@ -230,7 +275,7 @@ pub fn etch_rune(
                 .unwrap(),
         )
         .push_opcode(opcodes::all::OP_ENDIF)
-        .push_slice(wallet.public_key.serialize())
+        .push_slice(ephemeral.public_key.serialize())
         .push_opcode(opcodes::all::OP_CHECKSIG)
         .into_script();
 
@@ -242,7 +287,7 @@ pub fn etch_rune(
         .expect("error adding name commitment script leaf");
 
     let taproot_spend_info = taproot_builder
-        .finalize(&secp, wallet.public_key)
+        .finalize(&secp, ephemeral.public_key)
         .expect("error finalizing taproot builder");
 
     // Create commit transaction output
@@ -252,31 +297,21 @@ pub fn etch_rune(
         taproot_spend_info.merkle_root(),
     );
 
-
-    let postage = Amount::from_sat(100000);
-    let commit_network_fee = Amount::from_sat(3000);
-
-    let (txid, vout) = deposit_to_address(postage.to_sat() + commit_network_fee.to_sat(), &wallet.address);
-
-    // Build commit transaction
-    let (commit_tx, commit_vout) = build_commit_transaction(
-        &wallet,
-        OutPoint { txid, vout },
-        postage,
-        commit_tx_script,
+    commit_tx.output.push(
+        TxOut {
+            value: postage,
+            script_pubkey: commit_tx_script,
+        },
     );
+    let commit_vout = commit_tx.output.len() as u32 - 1;
 
     let mut etching_outputs = Vec::new();
 
     // premine the supply to the wallet
     if etching.premine.is_some() {
         etching_outputs.push(TxOut {
-            script_pubkey: if let Some(address) = premine_address {
-                address
-            } else {
-                wallet.address.clone()
-            }.script_pubkey(),
-            value: Amount::from_sat(if premine_utxo_sats.is_some() { premine_utxo_sats.unwrap() } else { 97000 })
+            script_pubkey: premine_address.script_pubkey(),
+            value: postage - etching_network_fee
         });
     }
 
@@ -291,7 +326,7 @@ pub fn etch_rune(
 
     // Build etching transaction with all outputs
     let etching_tx = build_etching_transaction(
-        &wallet,
+        &ephemeral,
         &rune_name_commitment_script,
         &taproot_spend_info,
         OutPoint {
@@ -302,24 +337,14 @@ pub fn etch_rune(
         etching_outputs,
     );
 
-    let _ = rpc.send_raw_transaction(&commit_tx);
-    mine(6);
-    let etching_txid = rpc.send_raw_transaction(&etching_tx);
-    mine(1);
-    let block_count = rpc.get_block_count().unwrap();
-    let block = rpc.get_block_info(&rpc.get_block_hash(block_count).unwrap()).unwrap();
-    RuneId {
-        block: block_count,
-        tx: block.tx.iter().position(|&r| r == *etching_txid.as_ref().unwrap()).unwrap() as u32,
-    }
+    (commit_tx.raw_hex(), etching_tx.raw_hex())
 }
 
-pub fn build_commit_transaction(
+pub fn build_funding_psbt(
     wallet: &CallerInfo,
     prev_outpoint: OutPoint,
-    amount: Amount,
-    commit_script: ScriptBuf,
-) -> (Transaction, u32) {
+    change_amount: Amount
+) -> String {
     let userpass = Auth::UserPass(
         BITCOIN_NODE_USERNAME.to_string(),
         BITCOIN_NODE_PASSWORD.to_string(),
@@ -337,12 +362,16 @@ pub fn build_commit_transaction(
             sequence: Sequence::MAX,
             witness: Witness::default(),
         }],
-        output: vec![
-            TxOut {
-                value: amount,
-                script_pubkey: commit_script,
-            },
-        ],
+        output: if change_amount > Amount::from_sat(0) {
+            vec![
+                TxOut {
+                    value: change_amount,
+                    script_pubkey: wallet.address.script_pubkey(),
+                }
+            ]
+        } else {
+            vec![]
+        },
     };
 
     let sighash_type = TapSighashType::NonePlusAnyoneCanPay;
@@ -370,11 +399,11 @@ pub fn build_commit_transaction(
     };
     tx.input[0].witness.push(signature.to_vec());
 
-    (tx, 0)
+    tx.raw_hex()
 }
 
 pub fn build_etching_transaction(
-    wallet: &CallerInfo,
+    ephemeral: &CallerInfo,
     name_commitment_script: &ScriptBuf,
     taproot_spend_info: &TaprootSpendInfo,
     commit_outpoint: OutPoint,
@@ -418,7 +447,7 @@ pub fn build_etching_transaction(
 
     let signature = secp.sign_schnorr(
         &secp256k1::Message::from_digest_slice(sighash.as_ref()).unwrap(),
-        &wallet.key_pair,
+        &ephemeral.key_pair,
     );
 
     let witness = sighash_cache

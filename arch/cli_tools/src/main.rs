@@ -1,9 +1,7 @@
 use clap::Parser;
-use common::models::CallerInfo;
 use ordinals::{Etching, Rune};
-use testutils::ordclient::{OrdClient, wait_for_block};
 use std::str::FromStr;
-use bitcoin::{Network, Address};
+use bitcoin::{Network, Address, Amount};
 
 /// CLI tools for funkybit arch tools.
 #[derive(Parser, Debug)]
@@ -32,24 +30,30 @@ struct CliArgs {
     #[arg(long, default_value = "¢")]
     symbol: String,
 
+    #[arg(short, long)]
+    funding_tx_hex: String,
+
+    #[arg(short, long, default_value_t = 2546)]
+    postage: u64,
+
+    #[arg(short, long, default_value_t = 2000)]
+    etching_network_fee: u64,
 }
 
-use testutils::runes::etch_rune;
+use testutils::runes::build_commit_and_etch_transactions;
 
 
 fn main() {
     let args = CliArgs::parse();
 
     let rune = Rune::from_str(&args.name).unwrap();
-    let wallet = CallerInfo::generate_new().unwrap();
 
     let mint_address = Address::from_str(&args.mint_address)
         .unwrap()
         .require_network(Network::Regtest)
         .unwrap();
 
-    let rune_id = etch_rune(
-        &wallet,
+    let (commit_tx_hex, etching_tx_hex) = build_commit_and_etch_transactions(
         Etching {
             divisibility: Some(args.divisibility),
             premine: Some(args.amount),
@@ -59,12 +63,11 @@ fn main() {
             terms: None,
             turbo: false,
         },
-        Some(mint_address.clone()),
-        Some(546)
+        mint_address.clone(),
+        args.funding_tx_hex,
+        Amount::from_sat(args.postage),
+        Amount::from_sat(args.etching_network_fee)
     );
 
-    let ord_client = OrdClient::new("http://localhost:7080".to_string());
-    wait_for_block(&ord_client, rune_id.block);
-    let _ = ord_client.fetch_rune_details(rune_id);
-    println!("{:?}", rune_id.to_string())
+    println!("{}:{}", commit_tx_hex, etching_tx_hex)
 }
