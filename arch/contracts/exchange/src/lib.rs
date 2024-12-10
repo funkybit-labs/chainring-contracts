@@ -86,7 +86,6 @@ mod tests {
                 turbo: false,
             },
             None,
-            None,
         );
         println!("Rune id is {:?}", uncommon_goods_rune_id);
 
@@ -102,7 +101,6 @@ mod tests {
                 turbo: false,
             },
             None,
-            None
         );
         println!("Rune id is {:?}", cats_and_dogs_rune_id);
 
@@ -1810,7 +1808,6 @@ mod tests {
                 turbo: false,
             },
             None,
-            None,
         );
         let spaced_rune_name = format!("{}", SpacedRune { rune, spacers: 128 });
 
@@ -1978,7 +1975,6 @@ mod tests {
         let rune = Rune::from_str(&generate_upper_case_string(15)).unwrap();
 
         let wallet = CallerInfo::with_secret_key_file(WALLET1_FILE_PATH).unwrap();
-        let ord_client = OrdClient::new("http://localhost:7080".to_string());
 
         let accounts = onboard_state_accounts(vec!["btc", "0:250"]);
 
@@ -2056,14 +2052,13 @@ mod tests {
                 turbo: false,
             },
             None,
-            None,
         );
 
         // now set the rune id
         set_token_rune_id(rune_token_account, rune_id.to_string());
 
         // check we can't change it after setting it
-        let (submitter_keypair, submitter_pubkey) = with_secret_key_file(SUBMITTER_FILE_PATH).unwrap();
+        let (_, submitter_pubkey) = with_secret_key_file(SUBMITTER_FILE_PATH).unwrap();
         let program_and_token_acct = vec![
             AccountMeta {
                 pubkey: submitter_pubkey,
@@ -2118,7 +2113,6 @@ mod tests {
                 terms: None,
                 turbo: false,
             },
-            None,
             None,
         )).collect::<Vec<RuneId>>();
 
