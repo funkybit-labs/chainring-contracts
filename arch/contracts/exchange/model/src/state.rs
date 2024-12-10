@@ -144,13 +144,17 @@ impl TokenState {
         Self::grow_balance_accounts_if_needed(account, 1)?;
         set_type(account, AccountType::Token)?;
         Self::set_program_account(account, pubkey)?;
-        set_string(account, TOKEN_ID_OFFSET, token_id, MAX_TOKEN_ID_SIZE)?;
+        Self::set_token_id(account, &token_id)?;
         if !Self::is_rune_id(token_id) {
             Self::set_num_balances(account, 1)?;
             Balance::set_wallet_address(account, 0, fee_account_address)
         } else {
             Ok(())
         }
+    }
+
+    pub fn set_token_id(account: &AccountInfo, token_id: &str) -> Result<(), ProgramError> {
+        set_string(account, TOKEN_ID_OFFSET, token_id, MAX_TOKEN_ID_SIZE)
     }
 
     pub fn get_num_balances(account: &AccountInfo) -> Result<usize, ProgramError> {
@@ -183,6 +187,15 @@ impl TokenState {
     pub fn is_rune_account(account: &AccountInfo) -> bool {
         let token_id = Self::get_token_id(account).unwrap();
         Self::is_rune_id(&token_id)
+    }
+
+    pub fn is_pending_rune_id(token_id: &str) -> bool {
+        !Self::is_rune_id(token_id) || RuneId::from_str(token_id).unwrap().block == 0
+    }
+
+    pub fn can_withdraw(account: &AccountInfo) -> bool {
+        let token_id = Self::get_token_id(account).unwrap();
+        !Self::is_rune_id(&token_id) || RuneId::from_str(&token_id).unwrap().block != 0
     }
 
     pub fn is_rune_id(token_id: &str) -> bool {
@@ -455,6 +468,7 @@ pub fn set_string(account: &AccountInfo, offset: usize, string: &str, max_size: 
         return Err(ProgramError::Custom(ERROR_VALUE_TOO_LARGE));
     }
     let mut data = account.data.try_borrow_mut().map_err(|_| ProgramError::InvalidAccountData)?;
+    data[offset..offset+max_size].fill(0);
     Ok(data[offset..offset + bytes.len()].copy_from_slice(bytes))
 }
 

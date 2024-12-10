@@ -43,6 +43,7 @@ pub fn process_instruction(
         ProgramInstruction::SubmitBatchWithdraw(params) => submit_withdraw_batch(program_id, accounts, &params, &params_raw_data),
         ProgramInstruction::UpdateWithdrawStateUtxo(params) => update_withdraw_state_utxo(accounts, &params),
         ProgramInstruction::InitRuneReceiverState() => init_rune_receiver_state(accounts),
+        ProgramInstruction::SetTokeRuneId(params) => set_token_rune_id(accounts, &params)
     }
 }
 
@@ -83,6 +84,21 @@ pub fn init_token_state(accounts: &[AccountInfo],
         accounts[0].key,
     )
 }
+
+pub fn set_token_rune_id(accounts: &[AccountInfo],
+                         params: &SetTokenRuneIdParams) -> Result<(), ProgramError> {
+    validate_account(accounts, 0, true, false, Some(AccountType::Program), None)?;
+    validate_account(accounts, 1, false, true, Some(AccountType::Token), Some(0))?;
+    let token_id = TokenState::get_token_id(&accounts[1])?;
+    if !TokenState::is_rune_id(&params.clone().rune_id) {
+        return Err(ProgramError::Custom(ERROR_INVALID_RUNE_ID));
+    }
+    if !TokenState::is_pending_rune_id(&token_id) {
+        return Err(ProgramError::Custom(ERROR_RUNE_ALREADY_SET));
+    }
+    TokenState::set_token_id(&accounts[1], &params.rune_id)
+}
+
 
 pub fn init_rune_receiver_state(accounts: &[AccountInfo]) -> Result<(), ProgramError> {
     validate_account(accounts, 0, true, true, Some(AccountType::Program), None)?;
@@ -318,12 +334,11 @@ pub fn update_withdraw_state_utxo(accounts: &[AccountInfo], params: &UpdateWithd
                 .unwrap()
                 .try_into()
                 .unwrap(),
-            params.clone().vout
+            params.clone().vout,
         )
     );
 
     Ok(())
-
 }
 
 pub fn submit_settlement_batch(accounts: &[AccountInfo], params: &SettlementBatchParams, raw_params_data: &[u8]) -> Result<(), ProgramError> {
@@ -479,7 +494,7 @@ fn verify_withdrawals(accounts: &[AccountInfo], account_index: u8, withdrawals: 
                     )?;
                 };
             }
-            Err(_) => {
+            Err(program_error) => {
                 ProgramState::emit_event(
                     &accounts[0],
                     &Event::FailedWithdrawal {
@@ -491,7 +506,7 @@ fn verify_withdrawals(accounts: &[AccountInfo], account_index: u8, withdrawals: 
                         fee_amount: withdrawal.fee_amount,
                         balance: 0,
                         balance_in_fee_token: 0,
-                        error_code: ERROR_INVALID_ADDRESS_NETWORK,
+                        error_code: u64::from(program_error) as u32,
                     },
                 )?;
             }
@@ -650,5 +665,9 @@ pub fn get_validated_index_withdraw(account: &AccountInfo, address_index: &Addre
     let index = get_validated_index(account, address_index)?;
     let wallet_address = Balance::get_wallet_address(account, index)?;
     validate_bitcoin_address(&wallet_address, network_type, true)?;
-    Ok(index)
+    if TokenState::can_withdraw(account) {
+        Ok(index)
+    } else {
+        Err(ProgramError::Custom(ERROR_WITHDRAWAL_NOT_ALLOWED))
+    }
 }
