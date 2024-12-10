@@ -199,8 +199,7 @@ pub fn transfer_runes(
 pub fn etch_rune(
     wallet: &CallerInfo,
     etching: Etching,
-    premine_address: Option<Address>,
-    premine_utxo_sats: Option<u64>
+    premine_address: Option<Address>
 ) -> RuneId {
     let userpass = Auth::UserPass(
         BITCOIN_NODE_USERNAME.to_string(),
@@ -225,7 +224,7 @@ pub fn etch_rune(
         },
         funding_psbt_hex,
         postage,
-        Amount::from_sat(3000)
+        Amount::from_sat(2000)
     );
 
     let commit_tx: Transaction = bitcoin::consensus::deserialize(&hex::decode(commit_tx_hex).unwrap()).unwrap();

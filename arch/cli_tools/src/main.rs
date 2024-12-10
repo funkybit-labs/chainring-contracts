@@ -35,9 +35,6 @@ struct CliArgs {
 
     #[arg(short, long, default_value_t = 2546)]
     postage: u64,
-
-    #[arg(short, long, default_value_t = 2000)]
-    etching_network_fee: u64,
 }
 
 use testutils::runes::build_commit_and_etch_transactions;
@@ -66,7 +63,7 @@ fn main() {
         mint_address.clone(),
         args.funding_tx_hex,
         Amount::from_sat(args.postage),
-        Amount::from_sat(args.etching_network_fee)
+        Amount::from_sat(args.postage - 546)
     );
 
     println!("{}:{}", commit_tx_hex, etching_tx_hex)
