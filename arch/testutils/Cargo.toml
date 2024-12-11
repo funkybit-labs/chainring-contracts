@@ -22,3 +22,4 @@ serde = { version = "1.0.198", features = ["derive"] }
 sha256 = "1.5.0"
 log = "0.4.22"
 hex = "0.4.3"
+anyhow = "1.0.94"
