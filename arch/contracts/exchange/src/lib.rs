@@ -69,7 +69,7 @@ mod tests {
         let uncommon_goods_rune = Rune::from_str(&generate_upper_case_string(15)).unwrap();
         let cats_and_dog_rune = Rune::from_str(&generate_upper_case_string(16)).unwrap();
 
-        let wallet = CallerInfo::generate_new().unwrap();
+        let wallet = CallerInfo::generate_new(bitcoin::Network::Regtest);
         let ord_client = OrdClient::new("http://localhost:7080".to_string());
         let address_response = ord_client.get_address(&wallet.address.to_string());
         assert_eq!(0, address_response.runes_balances.len());
@@ -131,8 +131,8 @@ mod tests {
 
         let outputs: Vec<Output> = ord_client.get_outputs_for_address(&wallet.address.to_string());
         // lets transfer some uncommon goods to wallet 2 amd wallet 3
-        let wallet2 = CallerInfo::generate_new().unwrap();
-        let wallet3 = CallerInfo::generate_new().unwrap();
+        let wallet2 = CallerInfo::generate_new(bitcoin::Network::Regtest);
+        let wallet3 = CallerInfo::generate_new(bitcoin::Network::Regtest);
 
         let output = outputs
             .iter()
@@ -1039,7 +1039,7 @@ mod tests {
 
         // create 1000 wallets
         let wallets = (0..1000)
-            .map(|_| CallerInfo::generate_new().unwrap().address.to_string())
+            .map(|_| CallerInfo::generate_new(bitcoin::Network::Regtest).address.to_string())
             .collect::<Vec<String>>();
 
         // send in chunks not to exceed max instruction size

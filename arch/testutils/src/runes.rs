@@ -214,7 +214,7 @@ pub fn etch_rune(
 
     let (txid, vout) = deposit_to_address(postage.to_sat() + commit_network_fee.to_sat() + change_amount.to_sat(), &wallet.address);
 
-    let funding_psbt_hex = build_funding_psbt(wallet, OutPoint { txid, vout }, change_amount);
+    let funding_psbt = build_funding_psbt(wallet, OutPoint { txid, vout }, change_amount);
     let (commit_tx_hex, etching_tx_hex) = build_commit_and_etch_transactions(
         etching,
         if let Some(address) = premine_address {
@@ -222,9 +222,10 @@ pub fn etch_rune(
         } else {
             wallet.address.clone()
         },
-        funding_psbt_hex,
+        funding_psbt,
         postage,
-        Amount::from_sat(2000)
+        Amount::from_sat(2000),
+        bitcoin::Network::Regtest
     );
 
     let commit_tx: Transaction = bitcoin::consensus::deserialize(&hex::decode(commit_tx_hex).unwrap()).unwrap();
@@ -244,14 +245,13 @@ pub fn etch_rune(
 pub fn build_commit_and_etch_transactions(
     etching: Etching,
     premine_address: Address,
-    funding_psbt_hex: String,
+    funding_psbt: Transaction,
     postage: Amount,
-    etching_network_fee: Amount
+    etching_network_fee: Amount,
+    network: bitcoin::Network
 ) -> (String, String) {
-
-    let ephemeral = CallerInfo::generate_new().unwrap();
-
-    let mut commit_tx: Transaction = bitcoin::consensus::deserialize(&hex::decode(funding_psbt_hex).unwrap()).unwrap();
+    let ephemeral = CallerInfo::generate_new(network);
+    let mut commit_tx = funding_psbt.clone();
 
     // Create the Runestone
     let runestone = Runestone {
@@ -343,7 +343,7 @@ pub fn build_funding_psbt(
     wallet: &CallerInfo,
     prev_outpoint: OutPoint,
     change_amount: Amount
-) -> String {
+) -> Transaction {
     let userpass = Auth::UserPass(
         BITCOIN_NODE_USERNAME.to_string(),
         BITCOIN_NODE_PASSWORD.to_string(),
@@ -398,7 +398,7 @@ pub fn build_funding_psbt(
     };
     tx.input[0].witness.push(signature.to_vec());
 
-    tx.raw_hex()
+    tx
 }
 
 pub fn build_etching_transaction(
