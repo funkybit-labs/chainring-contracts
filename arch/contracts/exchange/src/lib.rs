@@ -2057,6 +2057,9 @@ mod tests {
         // now set the rune id
         set_token_rune_id(rune_token_account, rune_id.to_string());
 
+        // check idempotency
+        set_token_rune_id(rune_token_account, rune_id.to_string());
+
         // check we can't change it after setting it
         let (_, submitter_pubkey) = with_secret_key_file(SUBMITTER_FILE_PATH).unwrap();
         let program_and_token_acct = vec![
