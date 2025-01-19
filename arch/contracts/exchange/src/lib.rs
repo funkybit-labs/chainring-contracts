@@ -2054,13 +2054,17 @@ mod tests {
             None,
         );
 
+        // set to earlier block and make sure we can update it
+        let earlier_rune_id = RuneId { block: rune_id.block - 1, tx: 1 };
+        set_token_rune_id(rune_token_account, earlier_rune_id.to_string());
+
         // now set the rune id
         set_token_rune_id(rune_token_account, rune_id.to_string());
 
         // check idempotency
         set_token_rune_id(rune_token_account, rune_id.to_string());
 
-        // check we can't change it after setting it
+        // check we can't change it to an earlier block now
         let (_, submitter_pubkey) = with_secret_key_file(SUBMITTER_FILE_PATH).unwrap();
         let program_and_token_acct = vec![
             AccountMeta {
@@ -2078,7 +2082,7 @@ mod tests {
             program_and_token_acct.clone(),
             ProgramInstruction::SetTokeRuneId(
                 SetTokenRuneIdParams {
-                    rune_id: "25:100".to_string(),
+                    rune_id: earlier_rune_id.to_string(),
                 }
             ),
             ERROR_RUNE_ALREADY_SET,
