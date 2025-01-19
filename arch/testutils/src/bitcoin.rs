@@ -87,6 +87,15 @@ pub fn prepare_withdrawal(
     (tx.raw_hex(), change_amount)
 }
 
+pub fn get_empty_tx() -> String {
+    Transaction {
+        version: Version::TWO,
+        input: vec![],
+        output: vec![],
+        lock_time: LockTime::ZERO,
+    }.raw_hex()
+}
+
 pub fn mine(num_blocks: u64) {
     let userpass = Auth::UserPass(
         BITCOIN_NODE_USERNAME.to_string(),
@@ -102,6 +111,18 @@ pub fn mine(num_blocks: u64) {
     rpc
         .generate_to_address(num_blocks, &generate_to_address)
         .expect("failed to mine block");
+}
+
+pub fn get_block() -> u64 {
+    let userpass = Auth::UserPass(
+        BITCOIN_NODE_USERNAME.to_string(),
+        BITCOIN_NODE_PASSWORD.to_string(),
+    );
+
+    let rpc =
+        Client::new(BITCOIN_NODE_ENDPOINT, userpass).expect("rpc shouldn not fail to be initiated");
+
+    rpc.get_block_count().expect("should not fail to get block count")
 }
 
 pub fn prepare_fees(caller: &CallerInfo) -> Transaction {

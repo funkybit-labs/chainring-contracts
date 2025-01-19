@@ -5,6 +5,8 @@ edition = "2021"
 
 [dependencies]
 common = { path = "../common" }
+arch_program = { path = "../program" }
+model = { path = "../contracts/exchange/model" }
 bitcoincore-rpc = "0.19.0"
 bitcoin = { version = "0.32.3", features = ["serde", "rand"] }
 rand_core = { version = "0.6.4", features = ["getrandom"] }
@@ -17,3 +19,7 @@ reqwest = { version = "0.12", default-features = false, features = [
 ] }
 serde_json = "1.0.116"
 serde = { version = "1.0.198", features = ["derive"] }
+sha256 = "1.5.0"
+log = "0.4.22"
+hex = "0.4.3"
+anyhow = "1.0.94"
