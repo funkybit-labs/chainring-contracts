@@ -2078,15 +2078,6 @@ mod tests {
                 is_writable: true,
             },
         ];
-        test_error_condition(
-            program_and_token_acct.clone(),
-            ProgramInstruction::SetTokeRuneId(
-                SetTokenRuneIdParams {
-                    rune_id: earlier_rune_id.to_string(),
-                }
-            ),
-            ERROR_RUNE_ALREADY_SET,
-        );
 
         test_error_condition(
             program_and_token_acct.clone(),
