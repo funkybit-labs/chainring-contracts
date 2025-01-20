@@ -1,3 +1,4 @@
+use std::str::FromStr;
 use arch_program::{
     account::{AccountInfo},
     entrypoint,
@@ -97,7 +98,8 @@ pub fn set_token_rune_id(accounts: &[AccountInfo],
     if token_id == rune_id {
         return Ok(())
     }
-    if !TokenState::is_pending_rune_id(&token_id) {
+    // only allowed to set it to the same or higher block
+    if RuneId::from_str(&rune_id).unwrap().block < RuneId::from_str(&token_id).unwrap().block {
         return Err(ProgramError::Custom(ERROR_RUNE_ALREADY_SET));
     }
     TokenState::set_token_id(&accounts[1], &rune_id)
