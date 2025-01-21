@@ -90,17 +90,9 @@ pub fn set_token_rune_id(accounts: &[AccountInfo],
                          params: &SetTokenRuneIdParams) -> Result<(), ProgramError> {
     validate_account(accounts, 0, true, false, Some(AccountType::Program), None)?;
     validate_account(accounts, 1, false, true, Some(AccountType::Token), Some(0))?;
-    let token_id = TokenState::get_token_id(&accounts[1])?;
     let rune_id = params.clone().rune_id;
     if !TokenState::is_rune_id(&rune_id) {
         return Err(ProgramError::Custom(ERROR_INVALID_RUNE_ID));
-    }
-    if token_id == rune_id {
-        return Ok(())
-    }
-    // only allowed to set it to the same or higher block
-    if RuneId::from_str(&rune_id).unwrap().block < RuneId::from_str(&token_id).unwrap().block {
-        return Err(ProgramError::Custom(ERROR_RUNE_ALREADY_SET));
     }
     TokenState::set_token_id(&accounts[1], &rune_id)
 }
