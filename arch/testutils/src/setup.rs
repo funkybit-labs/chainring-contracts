@@ -4,7 +4,7 @@ use bitcoin::key::UntweakedKeypair;
 use bitcoincore_rpc::{Auth, Client, RpcApi};
 use common::constants::{BITCOIN_NODE_ENDPOINT, BITCOIN_NODE_PASSWORD, BITCOIN_NODE_USERNAME, NODE1_ADDRESS, PROGRAM_FILE_PATH};
 use arch_program::{pubkey::Pubkey, instruction::Instruction, account::AccountMeta, system_instruction::SystemInstruction};
-use common::helper::{deploy_program_txs, get_account_address, get_processed_transaction, read_account_info, send_utxo, sign_and_send_instruction, with_secret_key_file};
+use common::helper::{deploy_program_txs, get_account_address, get_processed_transaction, read_account_info, send_utxo, sign_and_send_instruction, sign_and_send_instructions, with_secret_key_file};
 use common::models::CallerInfo;
 use common::processed_transaction::{ProcessedTransaction, Status};
 use crate::bitcoin::mine;
@@ -15,6 +15,7 @@ use model::state::*;
 use model::instructions::*;
 use model::serialization::Codable;
 use std::str::FromStr;
+use arch_program::bitcoin::XOnlyPublicKey;
 
 pub fn sign_and_send_instruction_success(
     accounts: Vec<AccountMeta>,
@@ -237,6 +238,37 @@ pub fn create_new_account(file_path: &str) -> (UntweakedKeypair, Pubkey) {
     debug!("create_new_account: {:?}", processed_tx);
     assert_eq!(processed_tx.status, Status::Processed);
     (keypair, pubkey)
+}
+
+pub fn create_new_rune_account(program_pubkey: Pubkey) -> (String, Pubkey) {
+    let callerInfo = CallerInfo::generate_new(bitcoin::Network::Regtest);
+    let pubkey = Pubkey::from_slice(&callerInfo.public_key.serialize());
+    let (txid, vout) = send_utxo(pubkey.clone());
+    debug!("{}:{} {:?}", txid, vout, hex::encode(pubkey));
+    mine(1);
+    let mut instruction_data = vec![3];
+    instruction_data.extend(program_pubkey.serialize());
+
+    let (txid, _) = sign_and_send_instructions(
+        vec![
+            SystemInstruction::new_create_account_instruction(
+                hex::decode(txid).unwrap().try_into().unwrap(),
+                vout,
+                pubkey.clone(),
+            ),
+            Instruction {
+                program_id: Pubkey::system_program(),
+                accounts: vec![AccountMeta {
+                    pubkey: pubkey.clone(),
+                    is_signer: true,
+                    is_writable: true,
+                }],
+                data: instruction_data,
+            }
+        ],
+        vec![callerInfo.key_pair],
+    ).expect("signing and sending a transaction should not fail");
+    (txid, pubkey)
 }
 
 pub fn assign_ownership(account_keypair: UntweakedKeypair, account_pubkey: Pubkey, program_pubkey: Pubkey) {

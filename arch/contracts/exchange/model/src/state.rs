@@ -274,7 +274,7 @@ impl Balance {
     }
 
     pub fn get_wallet_address_last4(account: &AccountInfo, index: usize) -> Result<WalletLast4, ProgramError> {
-        Ok(wallet_last4(&Self::get_wallet_address(account, index)?))
+        get_wallet_last4(account, BALANCES_OFFSET + index * BALANCE_SIZE)
     }
 }
 
@@ -462,6 +462,13 @@ fn get_address(account: &AccountInfo, offset: usize) -> Result<String, ProgramEr
     String::from_utf8(tmp[..pos].to_vec()).map_err(|_| ProgramError::InvalidAccountData)
 }
 
+fn get_wallet_last4(account: &AccountInfo, offset: usize) -> Result<WalletLast4, ProgramError> {
+    let mut tmp = [0u8; MAX_ADDRESS_SIZE];
+    tmp[..MAX_ADDRESS_SIZE].copy_from_slice(&account.data.borrow()[offset..offset + MAX_ADDRESS_SIZE]);
+    let pos = tmp.iter().position(|&r| r == 0).unwrap_or(MAX_ADDRESS_SIZE);
+    tmp[pos-4 .. pos].try_into().map_err(|_| ProgramError::InvalidAccountData)
+}
+
 pub fn set_string(account: &AccountInfo, offset: usize, string: &str, max_size: usize) -> Result<(), ProgramError> {
     let bytes = string.as_bytes();
     if bytes.len() >= max_size {
@@ -517,11 +524,11 @@ pub fn validate_account(accounts: &[AccountInfo], index: u8, is_signer: bool, is
     Ok(())
 }
 
-pub fn validate_bitcoin_address(address: &str, network_type: NetworkType, strict: bool) -> Result<(), ProgramError> {
+pub fn validate_bitcoin_address(address: &str, network_type: &NetworkType, strict: bool) -> Result<(), ProgramError> {
     let network_unchecked_address = Address::from_str(address)
         .map_err(|_| ProgramError::Custom(ERROR_INVALID_ADDRESS))?;
 
-    if strict || network_type == NetworkType::Bitcoin {
+    if strict || *network_type == NetworkType::Bitcoin {
         network_unchecked_address
             .require_network(map_network_type(network_type))
             .map_err(|_| ProgramError::Custom(ERROR_INVALID_ADDRESS_NETWORK))?;
@@ -529,12 +536,12 @@ pub fn validate_bitcoin_address(address: &str, network_type: NetworkType, strict
     Ok(())
 }
 
-pub fn get_bitcoin_address(address: &str, network_type: NetworkType) -> Address {
+pub fn get_bitcoin_address(address: &str, network_type: &NetworkType) -> Address {
     Address::from_str(address).unwrap().require_network(map_network_type(network_type)).unwrap()
 }
 
-fn map_network_type(network_type: NetworkType) -> bitcoin::Network {
-    match network_type {
+fn map_network_type(network_type: &NetworkType) -> bitcoin::Network {
+    match *network_type {
         NetworkType::Bitcoin => bitcoin::Network::Bitcoin,
         NetworkType::Testnet => bitcoin::Network::Testnet,
         NetworkType::Signet => bitcoin::Network::Signet,
@@ -553,7 +560,7 @@ mod tests {
         assert_eq!(
             validate_bitcoin_address(
                 "tb1q4sgwdxx8c3l08chkw2w3rewn5armr9urhe0pfk",
-                NetworkType::Testnet,
+                &NetworkType::Testnet,
                 false
             ),
             Ok(())
@@ -563,7 +570,7 @@ mod tests {
         assert_eq!(
             validate_bitcoin_address(
                 "tb1q4sgwdxx8c3l08chkw2w3rewn5armr9urhe0pfk",
-                NetworkType::Bitcoin,
+                &NetworkType::Bitcoin,
                 false
             ),
             Err(Custom(ERROR_INVALID_ADDRESS_NETWORK))
@@ -573,7 +580,7 @@ mod tests {
         assert_eq!(
             validate_bitcoin_address(
                 "bc1qhz5a7xfh5dj00u32x0j5we6jfpa8vgpqhvaqug",
-                NetworkType::Testnet,
+                &NetworkType::Testnet,
                 false
             ),
             Ok(())
@@ -583,7 +590,7 @@ mod tests {
         assert_eq!(
             validate_bitcoin_address(
                 "bc1qhz5a7xfh5dj00u32x0j5we6jfpa8vgpqhvaqug",
-                NetworkType::Testnet,
+                &NetworkType::Testnet,
                 true
             ),
             Err(Custom(ERROR_INVALID_ADDRESS_NETWORK))
@@ -593,7 +600,7 @@ mod tests {
         assert_eq!(
             validate_bitcoin_address(
                 "bc1qhz5a7xfh5dj00u32x0j5we6jfpa8vgpqhvaqug",
-                NetworkType::Bitcoin,
+                &NetworkType::Bitcoin,
                 false
             ),
             Ok(())
