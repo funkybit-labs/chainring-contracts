@@ -1,4 +1,3 @@
-use std::str::FromStr;
 use arch_program::{
     account::{AccountInfo},
     entrypoint,
@@ -13,7 +12,7 @@ use arch_program::{
 use sha256::digest;
 use arch_program::utxo::UtxoMeta;
 use bitcoin::{Amount, ScriptBuf, Transaction, TxOut};
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashSet};
 use ordinals::{Edict, RuneId, Runestone};
 
 use model::state::*;
@@ -55,8 +54,8 @@ pub fn init_program_state(accounts: &[AccountInfo],
     if accounts.len() == 3 {
         validate_account(accounts, 2, false, true, None, None)?;
     }
-    validate_bitcoin_address(&params.program_change_address, params.network_type.clone(), true)?;
-    validate_bitcoin_address(&params.fee_account, params.network_type.clone(), true)?;
+    validate_bitcoin_address(&params.program_change_address, &params.network_type, true)?;
+    validate_bitcoin_address(&params.fee_account, &params.network_type, true)?;
     init_state_data(&accounts[0], ProgramState {
         account_type: AccountType::Program,
         version: 0,
@@ -90,11 +89,11 @@ pub fn set_token_rune_id(accounts: &[AccountInfo],
                          params: &SetTokenRuneIdParams) -> Result<(), ProgramError> {
     validate_account(accounts, 0, true, false, Some(AccountType::Program), None)?;
     validate_account(accounts, 1, false, true, Some(AccountType::Token), Some(0))?;
-    let rune_id = params.clone().rune_id;
-    if !TokenState::is_rune_id(&rune_id) {
+    let rune_id = &params.rune_id;
+    if !TokenState::is_rune_id(rune_id) {
         return Err(ProgramError::Custom(ERROR_INVALID_RUNE_ID));
     }
-    TokenState::set_token_id(&accounts[1], &rune_id)
+    TokenState::set_token_id(&accounts[1], rune_id)
 }
 
 
@@ -114,7 +113,7 @@ pub fn init_wallet_balances(accounts: &[AccountInfo], params: &InitWalletBalance
         TokenState::grow_balance_accounts_if_needed(account, token_state_setup.wallet_addresses.len())?;
         let mut num_balances = TokenState::get_num_balances(account)?;
         for wallet_address in &token_state_setup.wallet_addresses {
-            validate_bitcoin_address(wallet_address, network_type.clone(), false)?;
+            validate_bitcoin_address(wallet_address, &network_type, false)?;
             Balance::set_wallet_address(account, num_balances, &wallet_address)?;
             num_balances += 1;
         }
@@ -129,7 +128,7 @@ pub fn deposit_batch(accounts: &[AccountInfo],
     validate_account(accounts, 0, true, false, Some(AccountType::Program), None)?;
     for token_deposits in &params.token_deposits {
         validate_account(accounts, token_deposits.account_index, false, true, Some(AccountType::Token), Some(0))?;
-        handle_increments(&accounts[token_deposits.account_index as usize], token_deposits.clone().deposits)?;
+        handle_increments(&accounts[token_deposits.account_index as usize], &token_deposits.deposits)?;
     }
     Ok(())
 }
@@ -167,8 +166,8 @@ pub fn prepare_withdraw_batch(accounts: &[AccountInfo], params: &WithdrawBatchPa
         verify_withdrawals(
             &accounts,
             token_withdrawals.account_index,
-            token_withdrawals.clone().withdrawals,
-            network_type.clone(),
+            &token_withdrawals.withdrawals,
+            &network_type,
         )?;
     }
 
@@ -185,7 +184,7 @@ pub fn prepare_withdraw_batch(accounts: &[AccountInfo], params: &WithdrawBatchPa
             token_withdrawals,
             &ProgramState::get_fee_account_address(&accounts[0])?,
             &mut tx.output,
-            network_type.clone(),
+            &network_type,
             &mut edicts,
         )?;
     }
@@ -231,7 +230,7 @@ pub fn submit_withdraw_batch(program_id: &Pubkey, accounts: &[AccountInfo], para
             accounts,
             token_withdrawals,
             &mut tx.output,
-            network_type.clone(),
+            &network_type,
             &mut edicts,
         )?;
     }
@@ -271,7 +270,7 @@ pub fn submit_withdraw_batch(program_id: &Pubkey, accounts: &[AccountInfo], para
         let runestone_bytes = runestone.encipher().to_bytes();
         tx.output.push(
             TxOut {
-                script_pubkey: ScriptBuf::from_bytes(runestone_bytes.clone()),
+                script_pubkey: ScriptBuf::from_bytes(runestone_bytes),
                 value: Amount::from_sat(0),
             },
         );
@@ -328,11 +327,11 @@ pub fn update_withdraw_state_utxo(accounts: &[AccountInfo], params: &UpdateWithd
 
     accounts[1].set_utxo(
         &UtxoMeta::from(
-            hex::decode(params.clone().tx_id)
+            hex::decode(params.tx_id.clone())
                 .unwrap()
                 .try_into()
                 .unwrap(),
-            params.clone().vout,
+            params.vout.clone(),
         )
     );
 
@@ -353,20 +352,17 @@ pub fn submit_settlement_batch(accounts: &[AccountInfo], params: &SettlementBatc
 
     for token_settlements in &params.settlements {
         validate_account(accounts, token_settlements.account_index, false, true, Some(AccountType::Token), Some(0))?;
-        let mut increments = if token_settlements.fee_amount > 0 {
-            vec![Adjustment {
+        if token_settlements.fee_amount > 0 {
+            handle_increments(&accounts[token_settlements.account_index as usize], &vec![Adjustment {
                 address_index: AddressIndex {
                     index: FEE_ADDRESS_INDEX,
                     last4: Balance::get_wallet_address_last4(&accounts[token_settlements.account_index as usize], FEE_ADDRESS_INDEX as usize)?,
                 },
                 amount: token_settlements.fee_amount,
-            }]
-        } else {
-            vec![]
-        };
-        increments.append(&mut token_settlements.clone().increments);
-        handle_increments(&accounts[token_settlements.account_index as usize], increments)?;
-        handle_decrements(&accounts[token_settlements.account_index as usize], token_settlements.clone().decrements)?;
+            }])?;
+        }
+        handle_increments(&accounts[token_settlements.account_index as usize], &token_settlements.increments)?;
+        handle_decrements(&accounts[token_settlements.account_index as usize], &token_settlements.decrements)?;
     }
 
     ProgramState::set_last_settlement_hash(&accounts[0], params_hash)?;
@@ -379,23 +375,18 @@ pub fn prepare_settlement_batch(accounts: &[AccountInfo], params: &SettlementBat
         return Err(ProgramError::Custom(ERROR_SETTLEMENT_IN_PROGRESS));
     }
     ProgramState::clear_events(&accounts[0])?;
-    let mut netting_results: HashMap<String, i64> = HashMap::new();
+    let mut running_netting_total: i64 = 0;
 
     for token_settlements in &params.settlements {
         validate_account(accounts, token_settlements.account_index, false, false, Some(AccountType::Token), Some(0))?;
-        let increment_sum: u64 = token_settlements.clone().increments.into_iter().map(|x| x.amount).sum::<u64>() + token_settlements.fee_amount;
-        let decrement_sum: u64 = token_settlements.clone().decrements.into_iter().map(|x| x.amount).sum::<u64>();
-        verify_decrements(&accounts, token_settlements.account_index, token_settlements.clone().decrements)?;
-        verify_increments(&accounts, token_settlements.account_index, token_settlements.clone().increments)?;
-        let running_netting_total = netting_results.entry(TokenState::get_token_id(&accounts[token_settlements.account_index as usize])?).or_insert(0);
-        *running_netting_total += increment_sum as i64 - decrement_sum as i64;
+        let decrement_sum: u64 = verify_decrements(&accounts, token_settlements.account_index, &token_settlements.decrements)?;
+        let increment_sum: u64 = verify_increments(&accounts, token_settlements.account_index, &token_settlements.increments)? + token_settlements.fee_amount;
+        running_netting_total += increment_sum as i64 - decrement_sum as i64;
     }
 
-    for (token, netting_result) in &netting_results {
-        if *netting_result != 0 {
-            msg!("Netting for {} - value is {}", token, netting_result);
-            return Err(ProgramError::Custom(ERROR_NETTING));
-        }
+    if running_netting_total != 0 {
+        msg!("Netting failed {}", running_netting_total);
+        return Err(ProgramError::Custom(ERROR_NETTING));
     }
 
     if ProgramState::get_events_count(&accounts[0])? == 0 {
@@ -416,15 +407,15 @@ fn hash(data: &[u8]) -> Hash {
     tmp
 }
 
-fn handle_increments(account: &AccountInfo, adjustments: Vec<Adjustment>) -> Result<(), ProgramError> {
+fn handle_increments(account: &AccountInfo, adjustments: &Vec<Adjustment>) -> Result<(), ProgramError> {
     handle_adjustments(account, adjustments, true)
 }
 
-fn handle_decrements(account: &AccountInfo, adjustments: Vec<Adjustment>) -> Result<(), ProgramError> {
+fn handle_decrements(account: &AccountInfo, adjustments: &Vec<Adjustment>) -> Result<(), ProgramError> {
     handle_adjustments(account, adjustments, false)
 }
 
-fn handle_adjustments(account: &AccountInfo, adjustments: Vec<Adjustment>, increment: bool) -> Result<(), ProgramError> {
+fn handle_adjustments(account: &AccountInfo, adjustments: &Vec<Adjustment>, increment: bool) -> Result<(), ProgramError> {
     for adjustment in adjustments {
         let index = get_validated_index(account, &adjustment.address_index)?;
         if increment {
@@ -436,11 +427,13 @@ fn handle_adjustments(account: &AccountInfo, adjustments: Vec<Adjustment>, incre
     Ok(())
 }
 
-fn verify_decrements(accounts: &[AccountInfo], account_index: u8, adjustments: Vec<Adjustment>) -> Result<(), ProgramError> {
+fn verify_decrements(accounts: &[AccountInfo], account_index: u8, adjustments: &Vec<Adjustment>) -> Result<u64, ProgramError> {
     let account = &accounts[account_index as usize];
+    let mut total: u64 = 0;
     for adjustment in adjustments {
         let index = get_validated_index(account, &adjustment.address_index)?;
         let current_balance = Balance::get_wallet_balance(account, index)?;
+        total += adjustment.amount;
         if adjustment.amount > current_balance {
             ProgramState::emit_event(
                 &accounts[0],
@@ -453,27 +446,29 @@ fn verify_decrements(accounts: &[AccountInfo], account_index: u8, adjustments: V
                 })?;
         };
     }
-    Ok(())
+    Ok(total)
 }
 
-fn verify_increments(accounts: &[AccountInfo], account_index: u8, adjustments: Vec<Adjustment>) -> Result<(), ProgramError> {
+fn verify_increments(accounts: &[AccountInfo], account_index: u8, adjustments: &Vec<Adjustment>) -> Result<u64, ProgramError> {
     let account = &accounts[account_index as usize];
+    let mut total: u64 = 0;
     for adjustment in adjustments {
         let _ = get_validated_index(account, &adjustment.address_index)?;
+        total += adjustment.amount;
     }
-    Ok(())
+    Ok(total)
 }
 
-fn verify_withdrawals(accounts: &[AccountInfo], account_index: u8, withdrawals: Vec<Withdrawal>, network_type: NetworkType) -> Result<(), ProgramError> {
+fn verify_withdrawals(accounts: &[AccountInfo], account_index: u8, withdrawals: &Vec<Withdrawal>, network_type: &NetworkType) -> Result<(), ProgramError> {
     let account = &accounts[account_index as usize];
     for withdrawal in withdrawals {
-        let index_result = get_validated_index_withdraw(account, &withdrawal.address_index, network_type.clone());
+        let index_result = get_validated_index_withdraw(account, &withdrawal.address_index, network_type);
         validate_account(accounts, withdrawal.fee_account_index, false, true, Some(AccountType::Token), Some(0))?;
         let fee_account = &accounts[withdrawal.fee_account_index as usize];
         match index_result {
             Ok(index) => {
                 let current_balance = Balance::get_wallet_balance(account, index)?;
-                let fee_index = get_validated_index_withdraw(fee_account, &withdrawal.fee_address_index, network_type.clone())?;
+                let fee_index = get_validated_index_withdraw(fee_account, &withdrawal.fee_address_index, network_type)?;
                 let balance_in_fee_token = Balance::get_wallet_balance(fee_account, fee_index)?;
                 if withdrawal.amount > current_balance || withdrawal.fee_amount > balance_in_fee_token {
                     ProgramState::emit_event(
@@ -518,7 +513,7 @@ fn handle_prepare_withdrawals(
     token_withdrawals: &TokenWithdrawals,
     fee_account_address: &str,
     tx_outs: &mut Vec<TxOut>,
-    network_type: NetworkType,
+    network_type: &NetworkType,
     edicts: &mut Vec<Edict>,
 ) -> Result<(), ProgramError> {
     let account = &accounts[token_withdrawals.account_index as usize];
@@ -534,7 +529,7 @@ fn handle_prepare_withdrawals(
                 Balance::decrement_wallet_balance(fee_account, withdrawal.fee_address_index.index as usize, withdrawal.fee_amount)?;
             }
         }
-        add_withdrawal_output(account, &withdrawal, tx_outs, network_type.clone(), edicts)?;
+        add_withdrawal_output(account, &withdrawal, tx_outs, network_type, edicts)?;
     }
     Ok(())
 }
@@ -543,14 +538,14 @@ fn handle_submit_withdrawals(
     accounts: &[AccountInfo],
     token_withdrawals: &TokenWithdrawals,
     tx_outs: &mut Vec<TxOut>,
-    network_type: NetworkType,
+    network_type: &NetworkType,
     edicts: &mut Vec<Edict>,
 ) -> Result<(), ProgramError> {
     let account = &accounts[token_withdrawals.account_index as usize];
     for withdrawal in &token_withdrawals.withdrawals {
         validate_account(accounts, withdrawal.fee_account_index, false, false, Some(AccountType::Token), Some(0))?;
         let _ = get_validated_index(account, &withdrawal.address_index)?;
-        add_withdrawal_output(account, &withdrawal, tx_outs, network_type.clone(), edicts)?;
+        add_withdrawal_output(account, &withdrawal, tx_outs, &network_type, edicts)?;
     }
     Ok(())
 }
@@ -559,7 +554,7 @@ fn add_withdrawal_output(
     account: &AccountInfo,
     withdrawal: &Withdrawal,
     tx_outs: &mut Vec<TxOut>,
-    network_type: NetworkType,
+    network_type: &NetworkType,
     edicts: &mut Vec<Edict>,
 ) -> Result<(), ProgramError> {
     let is_rune = TokenState::is_rune_account(account);
@@ -570,7 +565,7 @@ fn add_withdrawal_output(
             edicts,
             get_bitcoin_address(
                 &Balance::get_wallet_address(account, withdrawal.address_index.index as usize)?,
-                network_type.clone(),
+                network_type,
             ).script_pubkey(),
             withdrawal.amount,
         )?;
@@ -580,7 +575,7 @@ fn add_withdrawal_output(
                 value: Amount::from_sat(withdrawal.amount - withdrawal.fee_amount),
                 script_pubkey: get_bitcoin_address(
                     &Balance::get_wallet_address(account, withdrawal.address_index.index as usize)?,
-                    network_type.clone(),
+                    network_type,
                 ).script_pubkey(),
             }
         );
@@ -652,14 +647,13 @@ pub fn get_validated_index(account: &AccountInfo, address_index: &AddressIndex) 
     if index >= TokenState::get_num_balances(account)? {
         return Err(ProgramError::Custom(ERROR_INVALID_ADDRESS_INDEX));
     }
-    let wallet_address = Balance::get_wallet_address(account, index)?;
-    if wallet_last4(&wallet_address) != address_index.last4 {
+    if Balance::get_wallet_address_last4(account, index)? != address_index.last4 {
         return Err(ProgramError::Custom(ERROR_WALLET_LAST4_MISMATCH));
     }
     Ok(index)
 }
 
-pub fn get_validated_index_withdraw(account: &AccountInfo, address_index: &AddressIndex, network_type: NetworkType) -> Result<usize, ProgramError> {
+pub fn get_validated_index_withdraw(account: &AccountInfo, address_index: &AddressIndex, network_type: &NetworkType) -> Result<usize, ProgramError> {
     let index = get_validated_index(account, address_index)?;
     let wallet_address = Balance::get_wallet_address(account, index)?;
     validate_bitcoin_address(&wallet_address, network_type, true)?;

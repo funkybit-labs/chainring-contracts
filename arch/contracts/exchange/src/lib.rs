@@ -2,6 +2,7 @@
 ///
 #[cfg(test)]
 mod tests {
+    use std::cmp::min;
     use testutils::constants::*;
     use testutils::bitcoin::*;
     use testutils::runes::*;
@@ -1280,6 +1281,220 @@ mod tests {
     }
 
     #[test]
+    fn test_setup_many_coins_many_wallets() {
+        cleanup_account_keys();
+        let num_accounts = 90;
+        let max_balance_indexes = 25;
+        let num_wallets_per_account = 4;
+        let num_wallets = num_accounts * num_wallets_per_account;
+        let tokens = (0..num_accounts)
+            .map(|idx| format!("1000:{}", idx))
+            .collect::<Vec<String>>();
+        let account_pubkeys = onboard_state_accounts(vec![]);
+        let mut token_pubkeys: Vec<Pubkey> = vec![];
+        let acct_creation_txids = (0..num_accounts)
+            .map(|idx| {
+                let (txid, pubkey) = create_new_rune_account(SETUP.program_pubkey);
+                token_pubkeys.push(pubkey);
+                std::thread::sleep(std::time::Duration::from_millis(20));
+                txid
+            })
+            .collect::<Vec<String>>();
+        for (i, txid) in acct_creation_txids.iter().enumerate() {
+            match get_processed_transaction(NODE1_ADDRESS, txid.clone()) {
+                Ok(_) => debug!("Account Creation Transaction {} (ID: {}) processed successfully", i + 1, txid),
+                Err(e) => warn!("Failed to process transaction {} (ID: {}): {:?}", i + 1, txid, e),
+            }
+        }
+        let (submitter_keypair, submitter_pubkey) = with_secret_key_file(SUBMITTER_FILE_PATH).unwrap();
+
+        let acct_init_txids = (0..num_accounts)
+            .map(|idx| {
+                let (txid, _) = sign_and_send_instruction(
+                    Instruction {
+                        program_id: SETUP.program_pubkey,
+                        accounts: vec![
+                            AccountMeta {
+                                pubkey: submitter_pubkey,
+                                is_signer: true,
+                                is_writable: false,
+                            },
+                            AccountMeta {
+                                pubkey: token_pubkeys[idx],
+                                is_signer: false,
+                                is_writable: true,
+                            },
+                        ],
+                        data: ProgramInstruction::InitTokenState(
+                            InitTokenStateParams {
+                                token_id: format!("1000:{}", idx)
+                            }
+                        ).encode_to_vec().unwrap(),
+                    },
+                    vec![submitter_keypair],
+                ).unwrap();
+                std::thread::sleep(std::time::Duration::from_millis(20));
+                txid
+            })
+            .collect::<Vec<String>>();
+        for (i, txid) in acct_init_txids.iter().enumerate() {
+            match get_processed_transaction(NODE1_ADDRESS, txid.clone()) {
+                Ok(_) => debug!("Account Initialization Transaction {} (ID: {}) processed successfully", i + 1, txid),
+                Err(e) => warn!("Failed to process transaction {} (ID: {}): {:?}", i + 1, txid, e),
+            }
+        }
+
+        // create the wallets
+        let wallets = (0..num_wallets)
+            .map(|_| CallerInfo::generate_new(bitcoin::Network::Regtest).address.to_string())
+            .collect::<Vec<String>>();
+
+        // establish balance for all wallets
+        let mut token_state_setups: Vec<TokenStateSetup> = vec![];
+        let mut accounts: Vec<AccountMeta> = vec![
+            AccountMeta {
+                pubkey: submitter_pubkey,
+                is_signer: true,
+                is_writable: false,
+            }
+        ];
+        for (i, pubkey) in token_pubkeys.iter().enumerate() {
+            token_state_setups.push(
+                TokenStateSetup {
+                    account_index: ((i % max_balance_indexes)  +  1) as u8,
+                    wallet_addresses: wallets[i * num_wallets_per_account .. i * num_wallets_per_account + num_wallets_per_account].to_vec(),
+                }
+            );
+            accounts.push(
+                AccountMeta {
+                    pubkey: *pubkey,
+                    is_signer: false,
+                    is_writable: true,
+                },
+            )
+        }
+        for i in 0 .. (num_accounts / max_balance_indexes) + 1 {
+            let start_index = max_balance_indexes * i;
+            let end_index = min(start_index + max_balance_indexes, num_accounts);
+            let mut accts = vec![
+                AccountMeta {
+                    pubkey: submitter_pubkey,
+                    is_signer: true,
+                    is_writable: false,
+                }
+            ];
+            accts.append(&mut accounts[start_index + 1 .. end_index + 1].to_vec());
+            sign_and_send_instruction_success(
+                accts,
+                ProgramInstruction::InitWalletBalances(InitWalletBalancesParams {
+                    token_state_setups: token_state_setups[start_index .. end_index].to_vec()
+                }).encode_to_vec().unwrap(),
+                vec![submitter_keypair],
+            );
+        }
+
+        // batch deposit into the first wallet in each account
+        sign_and_send_instruction_success(
+            accounts.clone(),
+            ProgramInstruction::BatchDeposit(
+                DepositBatchParams {
+                    token_deposits: (0..num_accounts)
+                        .map(|idx| TokenDeposits {
+                            account_index: idx as u8 + 1,
+                            deposits: vec![
+                                Adjustment {
+                                    address_index: AddressIndex {
+                                        index: 0,
+                                        last4: wallet_last4(&wallets[idx * num_wallets_per_account]),
+                                    },
+                                    amount: 10000,
+                                }
+                            ],
+                        })
+                        .collect::<Vec<TokenDeposits>>()
+                }
+            ).encode_to_vec().unwrap(),
+            vec![submitter_keypair],
+        );
+
+        let settlement_batch_params = SettlementBatchParams {
+            settlements: (0..num_accounts)
+                .map(|idx| SettlementAdjustments {
+                    account_index: idx as u8 + 1,
+                    increments: vec![
+                        Adjustment {
+                            address_index: AddressIndex {
+                                index: 1,
+                                last4: wallet_last4(&wallets[(idx * num_wallets_per_account + 1) as usize]),
+                            },
+                            amount: 4000,
+                        },
+                        Adjustment {
+                            address_index: AddressIndex {
+                                index: 2,
+                                last4: wallet_last4(&wallets[(idx * num_wallets_per_account + 2) as usize]),
+                            },
+                            amount: 3500,
+                        },
+                        Adjustment {
+                            address_index: AddressIndex {
+                                index: 3,
+                                last4: wallet_last4(&wallets[(idx * num_wallets_per_account + 3) as usize]),
+                            },
+                            amount: 1000,
+                        },
+                    ],
+                    decrements: vec![
+                        Adjustment {
+                            address_index: AddressIndex {
+                                index: 0,
+                                last4: wallet_last4(&wallets[(idx * num_wallets_per_account) as usize]),
+                            },
+                            amount: 8500,
+                        }
+                    ],
+                    fee_amount: 0,
+                })
+                .collect::<Vec<SettlementAdjustments>>()
+        };
+
+        sign_and_send_instruction_success(
+            accounts.clone().iter().map(|a| AccountMeta {
+                pubkey: a.pubkey,
+                is_writable: a.is_signer,
+                is_signer: a.is_signer
+            }).collect::<Vec<AccountMeta>>(),
+            ProgramInstruction::PrepareBatchSettlement(
+                settlement_batch_params.clone()
+            ).encode_to_vec().unwrap(),
+            vec![submitter_keypair],
+        );
+
+        sign_and_send_instruction_success(
+            accounts.clone().iter().map(|a| AccountMeta {
+                pubkey: a.pubkey,
+                is_writable: true,
+                is_signer: a.is_signer
+            }).collect::<Vec<AccountMeta>>(),
+            ProgramInstruction::SubmitBatchSettlement(
+                settlement_batch_params
+            ).encode_to_vec().unwrap(),
+            vec![submitter_keypair],
+        );
+
+        // then check all balances
+        for idx in 0..num_accounts {
+            let account_info = read_account_info(NODE1_ADDRESS, token_pubkeys[idx]).unwrap();
+            let token_balances: TokenState = TokenState::decode_from_slice(&account_info.data).unwrap();
+            assert_eq!(4, token_balances.balances.len());
+            assert_eq!(1500, token_balances.balances[0].balance);
+            assert_eq!(4000, token_balances.balances[1].balance);
+            assert_eq!(3500, token_balances.balances[2].balance);
+            assert_eq!(1000, token_balances.balances[3].balance);
+        }
+    }
+
+    #[test]
     fn test_withdrawal_rollback() {
         cleanup_account_keys();
         let accounts = onboard_state_accounts(vec!["btc"]);
@@ -1966,7 +2181,6 @@ mod tests {
         let address_response = ord_client.get_address(&rune_deposit_address.to_string());
         assert_eq!(spaced_rune_name, address_response.runes_balances[0].rune_name);
         assert_eq!(1000.000000 - 400.000000, address_response.runes_balances[0].balance);
-
     }
 
     #[test]
@@ -2088,7 +2302,6 @@ mod tests {
             ),
             ERROR_INVALID_RUNE_ID,
         );
-
     }
 
     #[test]

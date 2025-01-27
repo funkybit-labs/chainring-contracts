@@ -152,10 +152,16 @@ pub fn extend_bytes_max_len() -> usize {
         .len()
 }
 
-/// Creates an instruction, signs it as a message
-/// and sends the signed message as a transaction
 pub fn sign_and_send_instruction(
     instruction: Instruction,
+    signers: Vec<Keypair>,
+) -> Result<(String, String)> {
+    sign_and_send_instructions(vec![instruction], signers)
+}
+/// Creates an instruction, signs it as a message
+/// and sends the signed message as a transaction
+pub fn sign_and_send_instructions(
+    instructions: Vec<Instruction>,
     signers: Vec<Keypair>,
 ) -> Result<(String, String)> {
     // Get public keys from signers
@@ -170,7 +176,7 @@ pub fn sign_and_send_instruction(
     // Step 2: Create a message with the instruction and signers
     let message = Message {
         signers: pubkeys.clone(), // Clone for logging purposes
-        instructions: vec![instruction.clone()],
+        instructions: instructions.clone(),
     };
 
     // Step 3: Hash the message and decode
@@ -205,7 +211,7 @@ pub fn sign_and_send_instruction(
     //println!("Arch transaction ID: {:?}", result);
 
     // Step 8: Hash the instruction
-    let hashed_instruction = instruction.hash();
+    let hashed_instruction = instructions[0].hash();
 
     Ok((result, hashed_instruction))
 }
