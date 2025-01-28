@@ -16,7 +16,7 @@ bitcoin_image:
 	cd docker/bitcoin && make build && cd ../..
 
 stop_containers:
-	docker compose -p arch-bitcoin-network down --remove-orphans
+	docker compose -f docker-compose-arch.yaml down && docker compose -p arch-bitcoin-network down --remove-orphans
 
 start_containers: stop_containers
 	./start_containers.sh

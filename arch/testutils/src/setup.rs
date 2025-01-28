@@ -2,11 +2,11 @@ use std::fs;
 use bitcoin::{Address, Amount, Txid};
 use bitcoin::key::UntweakedKeypair;
 use bitcoincore_rpc::{Auth, Client, RpcApi};
-use common::constants::{BITCOIN_NODE_ENDPOINT, BITCOIN_NODE_PASSWORD, BITCOIN_NODE_USERNAME, NODE1_ADDRESS, PROGRAM_FILE_PATH};
-use arch_program::{pubkey::Pubkey, instruction::Instruction, account::AccountMeta, system_instruction::SystemInstruction};
-use common::helper::{deploy_program_txs, get_account_address, get_processed_transaction, read_account_info, send_utxo, sign_and_send_instruction, sign_and_send_instructions, with_secret_key_file};
-use common::models::CallerInfo;
-use common::processed_transaction::{ProcessedTransaction, Status};
+use arch_sdk::constants::{BITCOIN_NODE_ENDPOINT, BITCOIN_NODE_PASSWORD, BITCOIN_NODE_USERNAME, NODE1_ADDRESS, PROGRAM_FILE_PATH};
+use arch_program::{pubkey::Pubkey, instruction::Instruction, account::AccountMeta};
+use arch_sdk::helper::{deploy_program_txs, get_account_address, get_processed_transaction, read_account_info, send_utxo, sign_and_send_instruction, sign_and_send_transaction, with_secret_key_file};
+use arch_sdk::models::CallerInfo;
+use arch_sdk::processed_transaction::{ProcessedTransaction, Status};
 use crate::bitcoin::mine;
 use crate::constants::{FEE_ACCOUNT_FILE_PATH, RUNE_RECEIVER_ACCOUNT_FILE_PATH, SUBMITTER_FILE_PATH, TOKEN_FILE_PATHS, WALLET1_FILE_PATH, WITHDRAW_ACCOUNT_FILE_PATH};
 use crate::utils::hash;
@@ -15,7 +15,7 @@ use model::state::*;
 use model::instructions::*;
 use model::serialization::Codable;
 use std::str::FromStr;
-use arch_program::bitcoin::XOnlyPublicKey;
+use arch_program::system_instruction::{assign, create_account};
 
 pub fn sign_and_send_instruction_success(
     accounts: Vec<AccountMeta>,
@@ -217,74 +217,78 @@ pub fn onboard_state_accounts(tokens: Vec<&str>) -> Vec<Pubkey> {
 }
 
 pub fn create_new_account(file_path: &str) -> (UntweakedKeypair, Pubkey) {
+    mine(1);
     let (keypair, pubkey) = with_secret_key_file(file_path)
         .expect("getting caller info should not fail");
     debug!("Creating new account {}", file_path);
     let (txid, vout) = send_utxo(pubkey.clone());
     debug!("{}:{} {:?}", txid, vout, hex::encode(pubkey));
+    let tx_id = hex::decode(txid).unwrap().try_into().unwrap();
     mine(1);
 
-    let (txid, _) = sign_and_send_instruction(
-        SystemInstruction::new_create_account_instruction(
-            hex::decode(txid).unwrap().try_into().unwrap(),
-            vout,
-            pubkey.clone(),
-        ),
-        vec![keypair],
-    ).expect("signing and sending a transaction should not fail");
+    let mut retries = 0;
+    let mut done = false;
 
-    let processed_tx = get_processed_transaction(NODE1_ADDRESS, txid.clone())
-        .expect("get processed transaction should not fail");
-    debug!("create_new_account: {:?}", processed_tx);
-    assert_eq!(processed_tx.status, Status::Processed);
+    while !done {
+        let (txid, _) = sign_and_send_instruction(
+            create_account(
+                tx_id,
+                vout,
+                pubkey.clone(),
+            ),
+            vec![keypair],
+        ).expect("signing and sending a transaction should not fail");
+
+        let processed_tx = get_processed_transaction(NODE1_ADDRESS, txid.clone())
+            .expect("get processed transaction should not fail");
+        debug!("create_new_account: {:?}", processed_tx);
+        match processed_tx.status {
+            Status::Processed => done = true,
+            Status::Queued => assert!(false, "Status is Queued"),
+            Status::Failed(error) => if error.contains("Transaction not found") && retries < 20 {
+                std::thread::sleep(std::time::Duration::from_millis(100));
+                retries += 1;
+            } else {
+                assert!(false, "Create Account failed");
+            }
+        }
+    }
     (keypair, pubkey)
 }
 
-pub fn create_new_rune_account(program_pubkey: Pubkey) -> (String, Pubkey) {
-    let callerInfo = CallerInfo::generate_new(bitcoin::Network::Regtest);
-    let pubkey = Pubkey::from_slice(&callerInfo.public_key.serialize());
-    let (txid, vout) = send_utxo(pubkey.clone());
-    debug!("{}:{} {:?}", txid, vout, hex::encode(pubkey));
+pub fn fund_new_rune_account() -> (CallerInfo, String, u32) {
+    let caller_info = CallerInfo::generate_new(bitcoin::Network::Regtest);
+    let pubkey = Pubkey::from_slice(&caller_info.public_key.serialize());
+    let (tx_id, vout) = send_utxo(pubkey);
     mine(1);
-    let mut instruction_data = vec![3];
-    instruction_data.extend(program_pubkey.serialize());
+    (caller_info, tx_id, vout)
+}
 
-    let (txid, _) = sign_and_send_instructions(
+pub fn create_new_rune_account(program_pubkey: Pubkey, caller_info: &CallerInfo, txid: String, vout: u32) -> (String, Pubkey) {
+    let pubkey = Pubkey::from_slice(&caller_info.public_key.serialize());
+    let txid = sign_and_send_transaction(
         vec![
-            SystemInstruction::new_create_account_instruction(
+            create_account(
                 hex::decode(txid).unwrap().try_into().unwrap(),
                 vout,
                 pubkey.clone(),
             ),
-            Instruction {
-                program_id: Pubkey::system_program(),
-                accounts: vec![AccountMeta {
-                    pubkey: pubkey.clone(),
-                    is_signer: true,
-                    is_writable: true,
-                }],
-                data: instruction_data,
-            }
+            assign(
+                pubkey.clone(),
+                program_pubkey
+            )
         ],
-        vec![callerInfo.key_pair],
+        vec![caller_info.key_pair],
     ).expect("signing and sending a transaction should not fail");
     (txid, pubkey)
 }
 
 pub fn assign_ownership(account_keypair: UntweakedKeypair, account_pubkey: Pubkey, program_pubkey: Pubkey) {
-    let mut instruction_data = vec![3];
-    instruction_data.extend(program_pubkey.serialize());
-
     let (txid, _) = sign_and_send_instruction(
-        Instruction {
-            program_id: Pubkey::system_program(),
-            accounts: vec![AccountMeta {
-                pubkey: account_pubkey.clone(),
-                is_signer: true,
-                is_writable: true,
-            }],
-            data: instruction_data,
-        },
+        assign(
+            account_pubkey.clone(),
+            program_pubkey
+        ),
         vec![account_keypair.clone()],
     )
         .expect("Failed to sign and send Assign ownership of caller account instruction");

@@ -5,7 +5,7 @@ edition = "2021"
 
 [dependencies]
 base64 = "0.22.1"
-bitcoin = "0.32.3"
+bitcoin = "0.32.5"
 hex = { version = "0.4.3", default-features = false }
 snafu = "0.8.5"
 

@@ -11,6 +11,16 @@ hex = { version = "0.4.3", default-features = false }
 memoffset = "0.9.1"
 rustversion = "1.0.14"
 thiserror = "1.0"
-bitcoin = { version = "0.32.3", features = ["serde"] }
+bitcoin = { version = "0.32.5", features = ["serde"] }
 sha256 = "1.5.0"
 serde = { version = "1.0.198", features = ["derive"] }
+num-derive = "0.4.0"
+num-traits = "0.2"
+bytemuck = { version = "1.14", features = ["derive"] }
+bitcoin-io = { version = "=0.1.2" }
+
+[target.'cfg(not(target_os = "solana"))'.dependencies]
+libsecp256k1 = { version = "0.7.0", default-features = false, features = [
+    "static-context",
+] }
+rand = "0.8.5"

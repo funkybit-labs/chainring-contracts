@@ -1,0 +1,20 @@
+
+services:
+
+  arch-local-validator:
+    platform: linux/amd64
+    container_name: arch-local-validator
+    image: ghcr.io/arch-network/local_validator:v0.3.1
+    ports:
+      - 9002:9002
+    command: /usr/bin/local_validator --rpc-bind-ip 0.0.0.0 --rpc-bind-port 9002 --electrs-endpoint http://electrs:3001 --electrum-endpoint tcp://electrs:50001
+    restart: always
+    environment:
+      RUST_LOG: "info"
+      RUST_BACKTRACE: "full"
+    networks:
+      - arch-bitcoin-network_local
+
+networks:
+  arch-bitcoin-network_local:
+    external: true

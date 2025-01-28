@@ -1,4 +1,7 @@
+use num_traits::FromPrimitive;
 use thiserror::Error;
+
+use crate::{decode_error::DecodeError, msg};
 
 /// Reasons the program may fail
 #[derive(Clone, Debug, Eq, Error, PartialEq)]
@@ -54,6 +57,61 @@ pub enum ProgramError {
     Immutable,
     #[error("Incorrect authority provided")]
     IncorrectAuthority,
+    #[error("From hex error")]
+    FromHexError,
+}
+
+pub trait PrintProgramError {
+    fn print<E>(&self)
+    where
+        E: 'static + std::error::Error + DecodeError<E> + PrintProgramError + FromPrimitive;
+}
+
+impl PrintProgramError for ProgramError {
+    fn print<E>(&self)
+    where
+        E: 'static + std::error::Error + DecodeError<E> + PrintProgramError + FromPrimitive,
+    {
+        match self {
+            Self::Custom(error) => {
+                if let Some(custom_error) = E::decode_custom_error_to_enum(*error) {
+                    custom_error.print::<E>();
+                } else {
+                    msg!("Error: Unknown");
+                }
+            }
+            Self::InvalidArgument => msg!("Error: InvalidArgument"),
+            Self::InvalidInstructionData => msg!("Error: InvalidInstructionData"),
+            Self::InvalidAccountData => msg!("Error: InvalidAccountData"),
+            Self::AccountDataTooSmall => msg!("Error: AccountDataTooSmall"),
+            Self::InsufficientFunds => msg!("Error: InsufficientFunds"),
+            Self::IncorrectProgramId => msg!("Error: IncorrectProgramId"),
+            Self::MissingRequiredSignature => msg!("Error: MissingRequiredSignature"),
+            Self::AccountAlreadyInitialized => msg!("Error: AccountAlreadyInitialized"),
+            Self::UninitializedAccount => msg!("Error: UninitializedAccount"),
+            Self::NotEnoughAccountKeys => msg!("Error: NotEnoughAccountKeys"),
+            Self::AccountBorrowFailed => msg!("Error: AccountBorrowFailed"),
+            Self::MaxSeedLengthExceeded => msg!("Error: MaxSeedLengthExceeded"),
+            Self::InvalidSeeds => msg!("Error: InvalidSeeds"),
+            Self::BorshIoError(_) => msg!("Error: BorshIoError"),
+            Self::IllegalOwner => msg!("Error: IllegalOwner"),
+            Self::MaxAccountsDataAllocationsExceeded => {
+                msg!("Error: MaxAccountsDataAllocationsExceeded")
+            }
+            Self::InvalidRealloc => msg!("Error: InvalidRealloc"),
+            Self::MaxInstructionTraceLengthExceeded => {
+                msg!("Error: MaxInstructionTraceLengthExceeded")
+            }
+            Self::BuiltinProgramsMustConsumeComputeUnits => {
+                msg!("Error: BuiltinProgramsMustConsumeComputeUnits")
+            }
+            Self::InvalidAccountOwner => msg!("Error: InvalidAccountOwner"),
+            Self::ArithmeticOverflow => msg!("Error: ArithmeticOverflow"),
+            Self::Immutable => msg!("Error: Immutable"),
+            Self::IncorrectAuthority => msg!("Error: IncorrectAuthority"),
+            Self::FromHexError => msg!("Error: FromHexError"),
+        }
+    }
 }
 
 /// Builtin return values occupy the upper 32 bits
@@ -90,6 +148,7 @@ pub const INVALID_ACCOUNT_OWNER: u64 = to_builtin!(23);
 pub const ARITHMETIC_OVERFLOW: u64 = to_builtin!(24);
 pub const IMMUTABLE: u64 = to_builtin!(25);
 pub const INCORRECT_AUTHORITY: u64 = to_builtin!(26);
+pub const FROM_HEX_ERROR: u64 = to_builtin!(27);
 // Warning: Any new program errors added here must also be:
 // - Added to the below conversions
 // - Added as an equivalent to InstructionError
@@ -128,6 +187,7 @@ impl From<ProgramError> for u64 {
             ProgramError::ArithmeticOverflow => ARITHMETIC_OVERFLOW,
             ProgramError::Immutable => IMMUTABLE,
             ProgramError::IncorrectAuthority => INCORRECT_AUTHORITY,
+            ProgramError::FromHexError => FROM_HEX_ERROR,
             ProgramError::Custom(error) => {
                 if error == 0 {
                     CUSTOM_ZERO
@@ -168,7 +228,14 @@ impl From<u64> for ProgramError {
             ARITHMETIC_OVERFLOW => Self::ArithmeticOverflow,
             IMMUTABLE => Self::Immutable,
             INCORRECT_AUTHORITY => Self::IncorrectAuthority,
+            FROM_HEX_ERROR => Self::FromHexError,
             _ => Self::Custom(error as u32),
         }
+    }
+}
+
+impl From<hex::FromHexError> for ProgramError {
+    fn from(_: hex::FromHexError) -> Self {
+        Self::FromHexError
     }
 }

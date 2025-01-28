@@ -9,9 +9,9 @@ mod tests {
     use testutils::utils::*;
     use testutils::ordclient::*;
     use testutils::setup::*;
-    use common::constants::*;
+    use arch_sdk::constants::*;
     use arch_program::{pubkey::Pubkey, instruction::Instruction, account::AccountMeta};
-    use common::helper::*;
+    use arch_sdk::helper::*;
     use std::fs;
     use std::str::FromStr;
     use bitcoin::{
@@ -35,7 +35,7 @@ mod tests {
 
     use env_logger;
     use log::{debug, warn};
-    use common::models::CallerInfo;
+    use arch_sdk::models::CallerInfo;
     use model::state::*;
     use model::instructions::*;
 
@@ -57,7 +57,7 @@ mod tests {
     }
 
     use lazy_static::lazy_static;
-    use common::processed_transaction::*;
+    use arch_sdk::processed_transaction::*;
     use model::error::*;
     use model::serialization::Codable;
 
@@ -1158,13 +1158,14 @@ mod tests {
             .require_network(bitcoin::Network::Regtest)
             .unwrap();
 
-        let num_withdrawals_per_batch = 6;
-        let num_withdrawal_batches = 5;
+        let num_withdrawals_per_batch = 10;
+        let num_withdrawal_batches = 3;
         let txs = (0..num_withdrawal_batches * num_withdrawals_per_batch).enumerate().map(
             |_| deposit_to_address(8000, &program_address)
         ).collect::<Vec<(Txid, u32)>>();
         let mut utxo_index: usize = 0;
-
+        mine(1);
+        std::thread::sleep(std::time::Duration::from_millis(1000));
 
         for index in 0..num_withdrawal_batches {
             mine(1);
@@ -1287,14 +1288,16 @@ mod tests {
         let max_balance_indexes = 25;
         let num_wallets_per_account = 4;
         let num_wallets = num_accounts * num_wallets_per_account;
-        let tokens = (0..num_accounts)
-            .map(|idx| format!("1000:{}", idx))
-            .collect::<Vec<String>>();
-        let account_pubkeys = onboard_state_accounts(vec![]);
+        let token_funding_infos = (0..num_accounts)
+            .map(|_| fund_new_rune_account())
+            .collect::<Vec<(CallerInfo, String, u32)>>();
+
+        let _ = onboard_state_accounts(vec![]);
         let mut token_pubkeys: Vec<Pubkey> = vec![];
-        let acct_creation_txids = (0..num_accounts)
-            .map(|idx| {
-                let (txid, pubkey) = create_new_rune_account(SETUP.program_pubkey);
+
+        let acct_creation_txids = token_funding_infos.iter()
+            .map(|fi| {
+                let (txid, pubkey) = create_new_rune_account(SETUP.program_pubkey, &fi.0, fi.1.clone(), fi.2);
                 token_pubkeys.push(pubkey);
                 std::thread::sleep(std::time::Duration::from_millis(20));
                 txid
@@ -1302,7 +1305,7 @@ mod tests {
             .collect::<Vec<String>>();
         for (i, txid) in acct_creation_txids.iter().enumerate() {
             match get_processed_transaction(NODE1_ADDRESS, txid.clone()) {
-                Ok(_) => debug!("Account Creation Transaction {} (ID: {}) processed successfully", i + 1, txid),
+                Ok(p) => debug!("Account Creation Transaction {} (ID: {}): status {:?}", i + 1, txid, p.status),
                 Err(e) => warn!("Failed to process transaction {} (ID: {}): {:?}", i + 1, txid, e),
             }
         }
@@ -1361,8 +1364,8 @@ mod tests {
         for (i, pubkey) in token_pubkeys.iter().enumerate() {
             token_state_setups.push(
                 TokenStateSetup {
-                    account_index: ((i % max_balance_indexes)  +  1) as u8,
-                    wallet_addresses: wallets[i * num_wallets_per_account .. i * num_wallets_per_account + num_wallets_per_account].to_vec(),
+                    account_index: ((i % max_balance_indexes) + 1) as u8,
+                    wallet_addresses: wallets[i * num_wallets_per_account..i * num_wallets_per_account + num_wallets_per_account].to_vec(),
                 }
             );
             accounts.push(
@@ -1373,7 +1376,7 @@ mod tests {
                 },
             )
         }
-        for i in 0 .. (num_accounts / max_balance_indexes) + 1 {
+        for i in 0..(num_accounts / max_balance_indexes) + 1 {
             let start_index = max_balance_indexes * i;
             let end_index = min(start_index + max_balance_indexes, num_accounts);
             let mut accts = vec![
@@ -1383,11 +1386,11 @@ mod tests {
                     is_writable: false,
                 }
             ];
-            accts.append(&mut accounts[start_index + 1 .. end_index + 1].to_vec());
+            accts.append(&mut accounts[start_index + 1..end_index + 1].to_vec());
             sign_and_send_instruction_success(
                 accts,
                 ProgramInstruction::InitWalletBalances(InitWalletBalancesParams {
-                    token_state_setups: token_state_setups[start_index .. end_index].to_vec()
+                    token_state_setups: token_state_setups[start_index..end_index].to_vec()
                 }).encode_to_vec().unwrap(),
                 vec![submitter_keypair],
             );
@@ -1462,7 +1465,7 @@ mod tests {
             accounts.clone().iter().map(|a| AccountMeta {
                 pubkey: a.pubkey,
                 is_writable: a.is_signer,
-                is_signer: a.is_signer
+                is_signer: a.is_signer,
             }).collect::<Vec<AccountMeta>>(),
             ProgramInstruction::PrepareBatchSettlement(
                 settlement_batch_params.clone()
@@ -1474,7 +1477,7 @@ mod tests {
             accounts.clone().iter().map(|a| AccountMeta {
                 pubkey: a.pubkey,
                 is_writable: true,
-                is_signer: a.is_signer
+                is_signer: a.is_signer,
             }).collect::<Vec<AccountMeta>>(),
             ProgramInstruction::SubmitBatchSettlement(
                 settlement_batch_params
@@ -2711,7 +2714,7 @@ mod tests {
         match processed_tx.status {
             Status::Failed(value) => assert!(value.contains(&expected_custom_msg), "unexpected error"),
             Status::Processed => assert!(false, "status is Processed"),
-            Status::Processing => assert!(false, "status is Processing")
+            Status::Queued => assert!(false, "status is Queued")
         }
     }
 }

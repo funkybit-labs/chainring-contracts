@@ -7,6 +7,7 @@ use bitcoin::{
 
 use crate::{
     account::AccountInfo,
+    msg,
     program::{get_account_script_pubkey, get_bitcoin_tx},
 };
 
@@ -58,6 +59,8 @@ pub fn add_state_transition(transaction: &mut Transaction, account: &AccountInfo
         sequence: Sequence::MAX,
         witness: Witness::new(),
     });
+
+    msg!("account utxo : {:?}", hex::encode(account.utxo.txid()));
 
     let tx: Transaction = bitcoin::consensus::deserialize(
         &get_bitcoin_tx(account.utxo.txid().try_into().unwrap()).unwrap(),

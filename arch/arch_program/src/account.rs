@@ -24,6 +24,22 @@ pub struct AccountMeta {
 }
 
 impl AccountMeta {
+    pub fn new(pubkey: Pubkey, is_signer: bool) -> Self {
+        Self {
+            pubkey,
+            is_signer,
+            is_writable: true,
+        }
+    }
+
+    pub fn new_readonly(pubkey: Pubkey, is_signer: bool) -> Self {
+        Self {
+            pubkey,
+            is_signer,
+            is_writable: false,
+        }
+    }
+
     pub fn serialize(&self) -> [u8; 34] {
         let mut serilized = [0; size_of::<Pubkey>() + 2];
 
@@ -41,6 +57,13 @@ impl AccountMeta {
             is_writable: data[size_of::<Pubkey>() + 1] != 0,
         }
     }
+}
+
+// Helper Funtions
+pub fn next_account_info<'a, 'b, I: Iterator<Item = &'a AccountInfo<'b>>>(
+    iter: &mut I,
+) -> Result<I::Item, ProgramError> {
+    iter.next().ok_or(ProgramError::NotEnoughAccountKeys)
 }
 
 use core::fmt;
