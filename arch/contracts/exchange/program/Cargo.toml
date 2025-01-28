@@ -13,7 +13,7 @@ bitcoin = { version = "0.32.5", features = ["serde"] }
 bitcoin-io = "=0.1.2"
 hex = { version = "0.4.3", default-features = false }
 model = { path = "../model" }
-ordinals = "0.0.15"
+ordinals = "0.0.14"
 
 [lib]
 crate-type = ["cdylib", "lib"]

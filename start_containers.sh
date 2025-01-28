@@ -4,7 +4,7 @@ echo -e "\nRunning start containers"
 
 docker compose -p arch-bitcoin-network down --remove-orphans
 docker compose -p arch-bitcoin-network up -d
-sleep 8
+sleep 12
 docker compose -f docker-compose-arch.yaml up -d
 
 echo "Patching mempool-frontend Nginx config"
