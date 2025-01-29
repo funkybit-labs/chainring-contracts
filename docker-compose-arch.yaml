@@ -1,6 +1,4 @@
 
-name: arch
-
 services:
 
   arch-local-validator:
@@ -13,9 +11,3 @@ services:
     environment:
       RUST_LOG: "info"
       RUST_BACKTRACE: "full"
-    networks:
-      - arch-bitcoin-network_local
-
-networks:
-  arch-bitcoin-network_local:
-    external: true

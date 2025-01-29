@@ -9,8 +9,6 @@ services:
       - "18443:18443"
       - "28332:28332"
     stop_grace_period: 2s
-    networks:
-      - local
 
   ordinals-ord:
     platform: linux/amd64
@@ -33,8 +31,6 @@ services:
       interval: 5s
       timeout: 5s
       retries: 3
-    networks:
-      - local
 
   electrs:
     image: public.ecr.aws/b5g5f9g0/arch-electrs:latest
@@ -67,8 +63,6 @@ services:
       - electrs_data:/data/db
     restart: always
     stop_grace_period: 2s
-    networks:
-      - local
 
   mempool-frontend:
     environment:
@@ -84,8 +78,6 @@ services:
     command: "./wait-for mempool-db:3306 --timeout=720 -- nginx -g 'daemon off;'"
     ports:
       - 1080:8080
-    networks:
-      - local
 
   mempool-backend:
     environment:
@@ -114,8 +106,6 @@ services:
     command: "./wait-for-it.sh mempool-db:3306 --timeout=720 --strict -- ./start.sh"
     volumes:
       - .datapi/:/backend/cache
-    networks:
-      - local
 
   mempool-db:
     environment:
@@ -129,13 +119,7 @@ services:
     container_name: mempool-db
     restart: always
     stop_grace_period: 2s
-    networks:
-      - local
 
 
 volumes:
   electrs_data:
-
-networks:
-  local:
-    driver: bridge
