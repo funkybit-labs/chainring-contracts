@@ -1,4 +1,6 @@
 
+name: arch
+
 services:
 
   arch-local-validator:
