@@ -1,7 +1,9 @@
 [package]
 name = "arch_program"
-version = "0.1.0"
+version = "0.3.2"
 edition = "2021"
+description = "A Rust library for building programs that run inside the Arch Virtual Machine. Provides core functionality for creating instructions, managing accounts, handling program errors, and interacting with the Arch runtime environment. Includes utilities for logging, transaction handling, and Bitcoin UTXO management."
+license = "MIT"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 

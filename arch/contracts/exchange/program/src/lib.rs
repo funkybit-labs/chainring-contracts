@@ -43,7 +43,8 @@ pub fn process_instruction(
         ProgramInstruction::SubmitBatchWithdraw(params) => submit_withdraw_batch(program_id, accounts, &params, &params_raw_data),
         ProgramInstruction::UpdateWithdrawStateUtxo(params) => update_withdraw_state_utxo(accounts, &params),
         ProgramInstruction::InitRuneReceiverState() => init_rune_receiver_state(accounts),
-        ProgramInstruction::SetTokeRuneId(params) => set_token_rune_id(accounts, &params)
+        ProgramInstruction::SetTokeRuneId(params) => set_token_rune_id(accounts, &params),
+        ProgramInstruction::InitPrepareWithdrawState() => init_prepare_withdraw_state(accounts)
     }
 }
 
@@ -70,7 +71,7 @@ pub fn init_program_state(accounts: &[AccountInfo],
     if accounts.len() == 3 {
         RuneReceiverState::initialize(accounts, 2)?;
     }
-    WithdrawState::initialize(&accounts)
+    WithdrawState::initialize(&accounts, AccountType::SubmitWithdraw)
 }
 
 pub fn init_token_state(accounts: &[AccountInfo],
@@ -104,6 +105,12 @@ pub fn init_rune_receiver_state(accounts: &[AccountInfo]) -> Result<(), ProgramE
 }
 
 
+pub fn init_prepare_withdraw_state(accounts: &[AccountInfo]) -> Result<(), ProgramError> {
+    validate_account(accounts, 0, true, true, Some(AccountType::Program), None)?;
+    validate_account(accounts, 1, false, true, None, None)?;
+    WithdrawState::initialize(accounts, AccountType::PrepareWithdraw)
+}
+
 pub fn init_wallet_balances(accounts: &[AccountInfo], params: &InitWalletBalancesParams) -> Result<(), ProgramError> {
     validate_account(accounts, 0, true, false, Some(AccountType::Program), None)?;
     let network_type = ProgramState::get_network_type(&accounts[0]);
@@ -135,17 +142,14 @@ pub fn deposit_batch(accounts: &[AccountInfo],
 
 pub fn prepare_withdraw_batch(accounts: &[AccountInfo], params: &WithdrawBatchParams, params_raw_data: &[u8]) -> Result<(), ProgramError> {
     validate_account(accounts, 0, true, true, Some(AccountType::Program), Some(1))?;
-    validate_account(accounts, 1, false, true, Some(AccountType::Withdraw), Some(0))?;
-    let has_rune_receiver = if get_type(&accounts[2])? == AccountType::RuneReceiver {
-        validate_account(accounts, 2, false, false, Some(AccountType::RuneReceiver), Some(0))?;
-        true
-    } else {
-        false
-    };
+    validate_account(accounts, 1, false, false, Some(AccountType::SubmitWithdraw), Some(0))?;
+    validate_account(accounts, 2, false, true, Some(AccountType::PrepareWithdraw), Some(0))?;
+    validate_account(accounts, 3, false, false, Some(AccountType::RuneReceiver), Some(0))?;
+
     if ProgramState::get_settlement_hash(&accounts[0])? != EMPTY_HASH {
         return Err(ProgramError::Custom(ERROR_SETTLEMENT_IN_PROGRESS));
     }
-    if WithdrawState::get_hash(&accounts[1])? != EMPTY_HASH {
+    if WithdrawState::get_hash(&accounts[2])? != EMPTY_HASH {
         return Err(ProgramError::Custom(ERROR_WITHDRAWAL_IN_PROGRESS));
     }
 
@@ -189,32 +193,27 @@ pub fn prepare_withdraw_batch(accounts: &[AccountInfo], params: &WithdrawBatchPa
         )?;
     }
 
-    if !edicts.is_empty() && !has_rune_receiver {
-        return Err(ProgramError::Custom(ERROR_NO_RUNE_RECEIVER));
-    }
-
     if tx.output.len() == 0 {
         return Err(ProgramError::Custom(ERROR_NO_TX_OUTPUTS));
     }
-    WithdrawState::set_hash(&accounts[1], hash(params_raw_data))
+    WithdrawState::set_hash(&accounts[2], hash(params_raw_data))
 }
 
 pub fn submit_withdraw_batch(program_id: &Pubkey, accounts: &[AccountInfo], params: &WithdrawBatchParams, params_raw_data: &[u8]) -> Result<(), ProgramError> {
     validate_account(accounts, 0, true, false, Some(AccountType::Program), Some(1))?;
-    validate_account(accounts, 1, true, true, Some(AccountType::Withdraw), Some(0))?;
-    let has_rune_receiver = if get_type(&accounts[2])? == AccountType::RuneReceiver {
-        validate_account(accounts, 2, true, false, Some(AccountType::RuneReceiver), Some(0))?;
-        true
-    } else {
-        false
-    };
+    validate_account(accounts, 1, true, true, Some(AccountType::SubmitWithdraw), Some(0))?;
+    validate_account(accounts, 2, false, true, Some(AccountType::PrepareWithdraw), Some(0))?;
+    validate_account(accounts, 3, true, false, Some(AccountType::RuneReceiver), Some(0))?;
+    let withdraw_hash = hash(params_raw_data);
 
-    if WithdrawState::get_hash(&accounts[1])? != hash(params_raw_data) {
+    if WithdrawState::get_hash(&accounts[2])? != withdraw_hash {
         return Err(ProgramError::Custom(ERROR_WITHDRAWAL_BATCH_MISMATCH));
     }
+    WithdrawState::set_hash(&accounts[1], withdraw_hash)?;
+
     let network_type = ProgramState::get_network_type(&accounts[0]);
 
-    let mut tx = get_state_transition_tx(accounts);
+    let mut tx = get_state_transition_tx(&[accounts[1].clone()]);
 
     let tx_with_inputs: Transaction = bitcoin::consensus::deserialize(&params.tx_hex)
         .map_err(|_| ProgramError::Custom(ERROR_INVALID_INPUT_TX))?;
@@ -235,10 +234,6 @@ pub fn submit_withdraw_batch(program_id: &Pubkey, accounts: &[AccountInfo], para
         )?;
     }
 
-    if !edicts.is_empty() && !has_rune_receiver {
-        return Err(ProgramError::Custom(ERROR_NO_RUNE_RECEIVER));
-    }
-
     if params.change_amount > 0 {
         tx.output.push(
             TxOut {
@@ -255,7 +250,7 @@ pub fn submit_withdraw_batch(program_id: &Pubkey, accounts: &[AccountInfo], para
                 rune_id,
                 &mut tx.output,
                 &mut edicts,
-                ScriptBuf::from_bytes(get_account_script_pubkey(accounts[2].key).to_vec()),
+                ScriptBuf::from_bytes(get_account_script_pubkey(accounts[3].key).to_vec()),
                 0,
             ).expect("cannot add change edict");
         });
@@ -288,7 +283,7 @@ pub fn submit_withdraw_batch(program_id: &Pubkey, accounts: &[AccountInfo], para
                     if params.input_utxo_types[index - 1] == InputUtxoType::Bitcoin {
                         program_id.clone()
                     } else {
-                        *accounts[2].key
+                        *accounts[3].key
                     }
                 },
             }
@@ -303,12 +298,12 @@ pub fn submit_withdraw_batch(program_id: &Pubkey, accounts: &[AccountInfo], para
 
     set_transaction_to_sign(vec![accounts[1].clone()].as_slice(), tx_to_sign)?;
 
-    WithdrawState::clear_hash(&accounts[1])
+    WithdrawState::clear_hash(&accounts[2])
 }
 
 pub fn rollback_withdraw_batch(accounts: &[AccountInfo], params: &RollbackWithdrawBatchParams) -> Result<(), ProgramError> {
-    validate_account(accounts, 0, true, false, Some(AccountType::Program), Some(1))?;
-    validate_account(accounts, 1, false, true, Some(AccountType::Withdraw), Some(0))?;
+    validate_account(accounts, 0, true, false, Some(AccountType::Program), None)?;
+    validate_account(accounts, 1, false, true, Some(AccountType::PrepareWithdraw), Some(0))?;
     for token_withdrawals in &params.token_withdrawals {
         validate_account(accounts, token_withdrawals.account_index, false, true, Some(AccountType::Token), Some(0))?;
         handle_rollback_withdrawals(
@@ -323,7 +318,7 @@ pub fn rollback_withdraw_batch(accounts: &[AccountInfo], params: &RollbackWithdr
 
 pub fn update_withdraw_state_utxo(accounts: &[AccountInfo], params: &UpdateWithdrawStateUtxoParams) -> Result<(), ProgramError> {
     validate_account(accounts, 0, true, false, Some(AccountType::Program), Some(1))?;
-    validate_account(accounts, 1, true, true, Some(AccountType::Withdraw), Some(0))?;
+    validate_account(accounts, 1, true, true, Some(AccountType::SubmitWithdraw), Some(0))?;
 
     accounts[1].set_utxo(
         &UtxoMeta::from(

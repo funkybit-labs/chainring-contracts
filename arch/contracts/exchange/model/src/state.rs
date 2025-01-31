@@ -90,16 +90,17 @@ pub enum Event {
         balance: u64,
         balance_in_fee_token: u64,
         error_code: u32,
-    }
+    },
 }
 
 #[derive(Clone, PartialEq, Debug)]
 pub enum AccountType {
     Program,
     Token,
-    Withdraw,
+    SubmitWithdraw,
     RuneReceiver,
-    Unknown
+    PrepareWithdraw,
+    Unknown,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -279,7 +280,6 @@ impl Balance {
 }
 
 impl ProgramState {
-
     pub fn get_withdraw_account_key(account: &AccountInfo) -> Result<Pubkey, ProgramError> {
         Ok(Pubkey::from_slice(account.data.borrow()[WITHDRAW_ACCOUNT_PUBKEY_OFFSET..WITHDRAW_ACCOUNT_PUBKEY_OFFSET + PUBKEY_SIZE]
             .try_into().map_err(|_| ProgramError::InvalidAccountData)?))
@@ -374,12 +374,12 @@ impl ProgramState {
 
 pub const WITHDRAW_HASH_OFFSET: usize = PROGRAM_PUBKEY_OFFSET + PUBKEY_SIZE;
 pub const WITHDRAW_ACCOUNT_SIZE: usize = WITHDRAW_HASH_OFFSET + HASH_SIZE;
-impl WithdrawState {
 
-    pub fn initialize(accounts: &[AccountInfo]) -> Result<(), ProgramError> {
+impl WithdrawState {
+    pub fn initialize(accounts: &[AccountInfo], account_type: AccountType) -> Result<(), ProgramError> {
         if accounts[1].data_is_empty() {
             accounts[1].realloc(WITHDRAW_ACCOUNT_SIZE, true)?;
-            set_type(&accounts[1], AccountType::Withdraw)?;
+            set_type(&accounts[1], account_type)?;
             Self::set_program_account(&accounts[1], accounts[0].key)
         } else {
             Ok(())
@@ -415,8 +415,8 @@ impl WithdrawState {
 }
 
 pub const RUNE_RECEIVER_ACCOUNT_SIZE: usize = PROGRAM_PUBKEY_OFFSET + PUBKEY_SIZE;
-impl RuneReceiverState {
 
+impl RuneReceiverState {
     pub fn initialize(accounts: &[AccountInfo], account_index: usize) -> Result<(), ProgramError> {
         if accounts[1].data_is_empty() {
             accounts[1].realloc(RUNE_RECEIVER_ACCOUNT_SIZE, true)?;
@@ -466,7 +466,7 @@ fn get_wallet_last4(account: &AccountInfo, offset: usize) -> Result<WalletLast4,
     let mut tmp = [0u8; MAX_ADDRESS_SIZE];
     tmp[..MAX_ADDRESS_SIZE].copy_from_slice(&account.data.borrow()[offset..offset + MAX_ADDRESS_SIZE]);
     let pos = tmp.iter().position(|&r| r == 0).unwrap_or(MAX_ADDRESS_SIZE);
-    tmp[pos-4 .. pos].try_into().map_err(|_| ProgramError::InvalidAccountData)
+    tmp[pos - 4..pos].try_into().map_err(|_| ProgramError::InvalidAccountData)
 }
 
 pub fn set_string(account: &AccountInfo, offset: usize, string: &str, max_size: usize) -> Result<(), ProgramError> {
@@ -475,7 +475,7 @@ pub fn set_string(account: &AccountInfo, offset: usize, string: &str, max_size: 
         return Err(ProgramError::Custom(ERROR_VALUE_TOO_LARGE));
     }
     let mut data = account.data.try_borrow_mut().map_err(|_| ProgramError::InvalidAccountData)?;
-    data[offset..offset+max_size].fill(0);
+    data[offset..offset + max_size].fill(0);
     Ok(data[offset..offset + bytes.len()].copy_from_slice(bytes))
 }
 
@@ -504,10 +504,11 @@ pub fn validate_account(accounts: &[AccountInfo], index: u8, is_signer: bool, is
         if get_type(account)? != account_type {
             return Err(ProgramError::Custom(ERROR_INVALID_ACCOUNT_TYPE));
         }
-        if let Some(related_account_index) = related_account_index{
+        if let Some(related_account_index) = related_account_index {
             let related_key = match account_type {
                 AccountType::Program => ProgramState::get_withdraw_account_key(&account),
-                AccountType::Withdraw => WithdrawState::get_program_state_account_key(&account),
+                AccountType::PrepareWithdraw => WithdrawState::get_program_state_account_key(&account),
+                AccountType::SubmitWithdraw => WithdrawState::get_program_state_account_key(&account),
                 AccountType::Token => TokenState::get_program_state_account_key(&account),
                 AccountType::RuneReceiver => RuneReceiverState::get_program_state_account_key(&account),
                 _ => Err(ProgramError::Custom(ERROR_INVALID_ACCOUNT_TYPE))
@@ -518,7 +519,7 @@ pub fn validate_account(accounts: &[AccountInfo], index: u8, is_signer: bool, is
         }
     } else {
         if !account.data_is_empty() {
-            return Err(ProgramError::Custom(ERROR_ALREADY_INITIALIZED))
+            return Err(ProgramError::Custom(ERROR_ALREADY_INITIALIZED));
         }
     }
     Ok(())
@@ -561,7 +562,7 @@ mod tests {
             validate_bitcoin_address(
                 "tb1q4sgwdxx8c3l08chkw2w3rewn5armr9urhe0pfk",
                 &NetworkType::Testnet,
-                false
+                false,
             ),
             Ok(())
         );
@@ -571,7 +572,7 @@ mod tests {
             validate_bitcoin_address(
                 "tb1q4sgwdxx8c3l08chkw2w3rewn5armr9urhe0pfk",
                 &NetworkType::Bitcoin,
-                false
+                false,
             ),
             Err(Custom(ERROR_INVALID_ADDRESS_NETWORK))
         );
@@ -581,7 +582,7 @@ mod tests {
             validate_bitcoin_address(
                 "bc1qhz5a7xfh5dj00u32x0j5we6jfpa8vgpqhvaqug",
                 &NetworkType::Testnet,
-                false
+                false,
             ),
             Ok(())
         );
@@ -591,7 +592,7 @@ mod tests {
             validate_bitcoin_address(
                 "bc1qhz5a7xfh5dj00u32x0j5we6jfpa8vgpqhvaqug",
                 &NetworkType::Testnet,
-                true
+                true,
             ),
             Err(Custom(ERROR_INVALID_ADDRESS_NETWORK))
         );
@@ -601,7 +602,7 @@ mod tests {
             validate_bitcoin_address(
                 "bc1qhz5a7xfh5dj00u32x0j5we6jfpa8vgpqhvaqug",
                 &NetworkType::Bitcoin,
-                false
+                false,
             ),
             Ok(())
         );

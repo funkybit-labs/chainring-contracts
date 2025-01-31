@@ -41,7 +41,6 @@ pub struct ProcessedTransaction {
     pub runtime_transaction: RuntimeTransaction,
     pub status: Status,
     pub bitcoin_txid: Option<String>,
-    pub accounts_tags: Vec<String>,
     pub logs: Vec<String>,
     pub rollback_status: RollbackStatus,
 }
@@ -65,11 +64,6 @@ impl ProcessedTransaction {
             }
             None => vec![0],
         });
-
-        serialized.extend((self.accounts_tags.len() as u64).to_le_bytes());
-        for account_tag in &self.accounts_tags {
-            serialized.extend(hex::decode(account_tag)?);
-        }
 
         serialized.extend((self.logs.len() as u64).to_le_bytes());
         for log in &self.logs {
@@ -119,15 +113,6 @@ impl ProcessedTransaction {
         };
 
         let data_bytes = data[size..(size + 8)].try_into()?;
-        let accounts_tags_len = u64::from_le_bytes(data_bytes) as usize;
-        size += 8;
-        let mut accounts_tags = vec![];
-        for _ in 0..accounts_tags_len {
-            accounts_tags.push(hex::encode(&data[(size)..(size + 32)]));
-            size += 32;
-        }
-
-        let data_bytes = data[size..(size + 8)].try_into()?;
         let logs_len = u64::from_le_bytes(data_bytes) as usize;
         size += 8;
         let mut logs = vec![];
@@ -172,7 +157,6 @@ impl ProcessedTransaction {
             status,
             bitcoin_txid,
             logs,
-            accounts_tags,
             rollback_status,
         })
     }
@@ -199,7 +183,6 @@ mod tests {
             signers in prop::collection::vec(any::<[u8; 32]>(), 0..10),
             instructions in prop::collection::vec(prop::collection::vec(any::<u8>(), 0..100), 0..10),
             bitcoin_txid in "[0-9a-f]{64}",
-            accounts_tags in prop::collection::vec("[0-9a-f]{64}", 0..10)
         ) {
             // Generate a random RuntimeTransaction
             let signatures: Vec<Signature> = signatures.into_iter()
@@ -233,7 +216,6 @@ mod tests {
                 runtime_transaction,
                 status: Status::Queued,
                 bitcoin_txid: Some(bitcoin_txid.to_string()),
-                accounts_tags: accounts_tags.iter().map(|s| s.to_string()).collect(),
                 logs: vec![],
                 rollback_status: RollbackStatus::NotRolledback,
             };

@@ -24,7 +24,7 @@ mod tests {
     use ordinals::{Etching, Rune, RuneId, SpacedRune};
 
     fn cleanup_account_keys() {
-        for file in vec![WALLET1_FILE_PATH, WALLET2_FILE_PATH, WALLET3_FILE_PATH, SUBMITTER_FILE_PATH, WITHDRAW_ACCOUNT_FILE_PATH, RUNE_RECEIVER_ACCOUNT_FILE_PATH, FEE_ACCOUNT_FILE_PATH] {
+        for file in vec![WALLET1_FILE_PATH, WALLET2_FILE_PATH, WALLET3_FILE_PATH, SUBMITTER_FILE_PATH, PREPARE_WITHDRAW_ACCOUNT_FILE_PATH, SUBMIT_WITHDRAW_ACCOUNT_FILE_PATH, RUNE_RECEIVER_ACCOUNT_FILE_PATH, FEE_ACCOUNT_FILE_PATH] {
             delete_secret_file(file);
         }
         for file in TOKEN_FILE_PATHS {
@@ -305,14 +305,14 @@ mod tests {
         // perform withdrawal
         let input = WithdrawBatchParams {
             token_withdrawals: vec![TokenWithdrawals {
-                account_index: 2,
+                account_index: 4,
                 withdrawals: vec![Withdrawal {
                     address_index: AddressIndex {
                         index: 1,
                         last4: wallet_last4(&wallet.address.to_string()),
                     },
                     amount: 5500,
-                    fee_account_index: 2,
+                    fee_account_index: 4,
                     fee_address_index: AddressIndex {
                         index: 1,
                         last4: wallet_last4(&wallet.address.to_string()),
@@ -350,14 +350,14 @@ mod tests {
 
         let input2 = WithdrawBatchParams {
             token_withdrawals: vec![TokenWithdrawals {
-                account_index: 2,
+                account_index: 4,
                 withdrawals: vec![Withdrawal {
                     address_index: AddressIndex {
                         index: 1,
                         last4: wallet_last4(&wallet.address.to_string()),
                     },
                     amount: 100000,
-                    fee_account_index: 2,
+                    fee_account_index: 4,
                     fee_address_index: AddressIndex {
                         index: 1,
                         last4: wallet_last4(&wallet.address.to_string()),
@@ -378,9 +378,9 @@ mod tests {
             Some(
                 vec![
                     Event::FailedWithdrawal {
-                        account_index: 2,
+                        account_index: 4,
                         address_index: 1,
-                        fee_account_index: 2,
+                        fee_account_index: 4,
                         fee_address_index: 1,
                         requested_amount: 100000,
                         fee_amount: 500,
@@ -485,7 +485,7 @@ mod tests {
         // perform withdrawal
         let input = WithdrawBatchParams {
             token_withdrawals: vec![TokenWithdrawals {
-                account_index: 2,
+                account_index: 4,
                 withdrawals: vec![
                     Withdrawal {
                         address_index: AddressIndex {
@@ -493,7 +493,7 @@ mod tests {
                             last4: wallet_last4(&wallet1.address.to_string()),
                         },
                         amount: 10000,
-                        fee_account_index: 2,
+                        fee_account_index: 4,
                         fee_address_index: AddressIndex {
                             index: 1,
                             last4: wallet_last4(&wallet1.address.to_string()),
@@ -506,7 +506,7 @@ mod tests {
                             last4: wallet_last4(&wallet2.address.to_string()),
                         },
                         amount: 12000,
-                        fee_account_index: 2,
+                        fee_account_index: 4,
                         fee_address_index: AddressIndex {
                             index: 2,
                             last4: wallet_last4(&wallet2.address.to_string()),
@@ -519,7 +519,7 @@ mod tests {
                             last4: wallet_last4(&wallet3.address.to_string()),
                         },
                         amount: 12500,
-                        fee_account_index: 2,
+                        fee_account_index: 4,
                         fee_address_index: AddressIndex {
                             index: 3,
                             last4: wallet_last4(&wallet3.address.to_string()),
@@ -564,9 +564,9 @@ mod tests {
             Some(
                 vec![
                     Event::FailedWithdrawal {
-                        account_index: 2,
+                        account_index: 4,
                         address_index: 2,
-                        fee_account_index: 2,
+                        fee_account_index: 4,
                         fee_address_index: 2,
                         requested_amount: 12000,
                         fee_amount: 500,
@@ -575,9 +575,9 @@ mod tests {
                         error_code: ERROR_INSUFFICIENT_BALANCE,
                     },
                     Event::FailedWithdrawal {
-                        account_index: 2,
+                        account_index: 4,
                         address_index: 3,
-                        fee_account_index: 2,
+                        fee_account_index: 4,
                         fee_address_index: 3,
                         requested_amount: 12500,
                         fee_amount: 500,
@@ -637,14 +637,14 @@ mod tests {
             vec![token_account],
             WithdrawBatchParams {
                 token_withdrawals: vec![TokenWithdrawals {
-                    account_index: 2,
+                    account_index: 4,
                     withdrawals: vec![Withdrawal {
                         address_index: AddressIndex {
                             index: 1,
                             last4: wallet_last4(&mainnet_address.clone()),
                         },
                         amount: 100000,
-                        fee_account_index: 2,
+                        fee_account_index: 4,
                         fee_address_index: AddressIndex {
                             index: 1,
                             last4: wallet_last4(&mainnet_address.clone()),
@@ -678,9 +678,9 @@ mod tests {
             Some(
                 vec![
                     Event::FailedWithdrawal {
-                        account_index: 2,
+                        account_index: 4,
                         address_index: 1,
-                        fee_account_index: 2,
+                        fee_account_index: 4,
                         fee_address_index: 1,
                         requested_amount: 100000,
                         fee_amount: 500,
@@ -1031,7 +1031,9 @@ mod tests {
         let token1 = "btc";
         let accounts = onboard_state_accounts(vec![token1]);
 
-        let withdraw_pubkey = accounts[1].clone();
+        let (submit_withdraw_keypair, submit_withdraw_pubkey) = with_secret_key_file(SUBMIT_WITHDRAW_ACCOUNT_FILE_PATH).unwrap();
+        let (_, prepare_withdraw_pubkey) = with_secret_key_file(PREPARE_WITHDRAW_ACCOUNT_FILE_PATH).unwrap();
+        let (rune_receiver_keypair, rune_receiver_pubkey) = with_secret_key_file(RUNE_RECEIVER_ACCOUNT_FILE_PATH).unwrap();
         let token_account = accounts[2].clone();
         let account_info = read_account_info(NODE1_ADDRESS, token_account.clone()).unwrap();
         let token_balances: TokenState = TokenState::decode_from_slice(&account_info.data).unwrap();
@@ -1195,7 +1197,7 @@ mod tests {
                             last4: wallet_last4(&wallets[num_withdrawals_per_batch * index + i]),
                         },
                         amount: 6000,
-                        fee_account_index: 2,
+                        fee_account_index: 4,
                         fee_address_index: AddressIndex {
                             index: (num_withdrawals_per_batch * index + i + 1) as u32,
                             last4: wallet_last4(&wallets[num_withdrawals_per_batch * index + i]),
@@ -1209,7 +1211,7 @@ mod tests {
                 change_amount: (1000 * num_withdrawals_per_batch) as u64,
                 token_withdrawals: vec![
                     TokenWithdrawals {
-                        account_index: 2,
+                        account_index: 4,
                         withdrawals,
                     }
                 ],
@@ -1223,9 +1225,19 @@ mod tests {
                         is_writable: true,
                     },
                     AccountMeta {
-                        pubkey: withdraw_pubkey,
+                        pubkey: submit_withdraw_pubkey,
+                        is_signer: false,
+                        is_writable: false,
+                    },
+                    AccountMeta {
+                        pubkey: prepare_withdraw_pubkey,
                         is_signer: false,
                         is_writable: true,
+                    },
+                    AccountMeta {
+                        pubkey: rune_receiver_pubkey,
+                        is_signer: false,
+                        is_writable: false,
                     },
                     AccountMeta {
                         pubkey: token_account,
@@ -1238,7 +1250,6 @@ mod tests {
                 ).encode_to_vec().unwrap(),
                 vec![submitter_keypair],
             );
-            let (withdraw_keypair, _) = with_secret_key_file(WITHDRAW_ACCOUNT_FILE_PATH).unwrap();
             let processed_tx = sign_and_send_instruction_success(
                 vec![
                     AccountMeta {
@@ -1247,9 +1258,19 @@ mod tests {
                         is_writable: false,
                     },
                     AccountMeta {
-                        pubkey: withdraw_pubkey,
+                        pubkey: submit_withdraw_pubkey,
                         is_signer: true,
                         is_writable: true,
+                    },
+                    AccountMeta {
+                        pubkey: prepare_withdraw_pubkey,
+                        is_signer: false,
+                        is_writable: true,
+                    },
+                    AccountMeta {
+                        pubkey: rune_receiver_pubkey,
+                        is_signer: true,
+                        is_writable: false,
                     },
                     AccountMeta {
                         pubkey: token_account,
@@ -1260,7 +1281,7 @@ mod tests {
                 ProgramInstruction::SubmitBatchWithdraw(
                     withdraw_batch_params
                 ).encode_to_vec().unwrap(),
-                vec![submitter_keypair, withdraw_keypair],
+                vec![submitter_keypair, submit_withdraw_keypair, rune_receiver_keypair],
             );
             assert_ne!(processed_tx.bitcoin_txid, None);
             debug!("processed tx = {:?}", processed_tx.bitcoin_txid)
@@ -1542,14 +1563,14 @@ mod tests {
         );
 
         let token_withdrawals = vec![TokenWithdrawals {
-            account_index: 2,
+            account_index: 4,
             withdrawals: vec![Withdrawal {
                 address_index: AddressIndex {
                     index: 1,
                     last4: wallet_last4(&wallet.address.to_string()),
                 },
                 amount: 5500,
-                fee_account_index: 2,
+                fee_account_index: 4,
                 fee_address_index: AddressIndex {
                     index: 1,
                     last4: wallet_last4(&wallet.address.to_string()),
@@ -1587,10 +1608,27 @@ mod tests {
             None,
         );
 
+        let token_withdrawal_rollbacks = vec![TokenWithdrawals {
+            account_index: 2,
+            withdrawals: vec![Withdrawal {
+                address_index: AddressIndex {
+                    index: 1,
+                    last4: wallet_last4(&wallet.address.to_string()),
+                },
+                amount: 5500,
+                fee_account_index: 2,
+                fee_address_index: AddressIndex {
+                    index: 1,
+                    last4: wallet_last4(&wallet.address.to_string()),
+                },
+                fee_amount: 500,
+            }],
+        }];
+
         assert_send_and_sign_withdrawal_rollback(
             vec![token_account],
             RollbackWithdrawBatchParams {
-                token_withdrawals,
+                token_withdrawals: token_withdrawal_rollbacks
             },
             vec![
                 TokenState {
@@ -1601,7 +1639,6 @@ mod tests {
                     balances: balances_after_deposit,
                 }
             ],
-            false,
         );
     }
 
@@ -1610,7 +1647,10 @@ mod tests {
         cleanup_account_keys();
         let accounts = onboard_state_accounts(vec!["btc"]);
 
-        let withdraw_account = accounts[1].clone();
+        let (submit_withdraw_keypair, submit_withdraw_pubkey) = with_secret_key_file(SUBMIT_WITHDRAW_ACCOUNT_FILE_PATH).unwrap();
+        let (_, prepare_withdraw_pubkey) = with_secret_key_file(PREPARE_WITHDRAW_ACCOUNT_FILE_PATH).unwrap();
+        let (rune_receiver_keypair, rune_receiver_pubkey) = with_secret_key_file(RUNE_RECEIVER_ACCOUNT_FILE_PATH).unwrap();
+
         let token_account = accounts[2].clone();
         let fee_account = CallerInfo::with_secret_key_file(FEE_ACCOUNT_FILE_PATH).unwrap();
         let (submitter_keypair, submitter_pubkey) = with_secret_key_file(SUBMITTER_FILE_PATH).unwrap();
@@ -1624,7 +1664,7 @@ mod tests {
                     is_writable: true,
                 },
                 AccountMeta {
-                    pubkey: withdraw_account,
+                    pubkey: submit_withdraw_pubkey,
                     is_signer: false,
                     is_writable: true,
                 },
@@ -1742,7 +1782,7 @@ mod tests {
         test_error_condition(
             vec![
                 AccountMeta {
-                    pubkey: withdraw_account,
+                    pubkey: submit_withdraw_pubkey,
                     is_signer: true,
                     is_writable: false,
                 },
@@ -1769,7 +1809,7 @@ mod tests {
         test_error_condition(
             vec![
                 AccountMeta {
-                    pubkey: withdraw_account,
+                    pubkey: submit_withdraw_pubkey,
                     is_signer: false,
                     is_writable: false,
                 },
@@ -1797,12 +1837,12 @@ mod tests {
             change_amount: 0,
             token_withdrawals: vec![
                 TokenWithdrawals {
-                    account_index: 1,
+                    account_index: 4,
                     withdrawals: vec![
                         Withdrawal {
                             address_index: AddressIndex { index: 0, last4: wallet_last4(&fee_account.address.to_string()) },
                             amount: 100000000,
-                            fee_account_index: 1,
+                            fee_account_index: 4,
                             fee_address_index: AddressIndex { index: 0, last4: wallet_last4(&fee_account.address.to_string()) },
                             fee_amount: 0,
                         }
@@ -1819,9 +1859,19 @@ mod tests {
                 is_writable: true,
             },
             AccountMeta {
-                pubkey: withdraw_account,
+                pubkey: submit_withdraw_pubkey,
+                is_signer: false,
+                is_writable: false,
+            },
+            AccountMeta {
+                pubkey: prepare_withdraw_pubkey,
                 is_signer: false,
                 is_writable: true,
+            },
+            AccountMeta {
+                pubkey: rune_receiver_pubkey,
+                is_signer: false,
+                is_writable: false,
             },
             AccountMeta {
                 pubkey: token_account,
@@ -2118,14 +2168,14 @@ mod tests {
         let input = WithdrawBatchParams {
             token_withdrawals: vec![
                 TokenWithdrawals {
-                    account_index: 3,
+                    account_index: 4,
                     withdrawals: vec![Withdrawal {
                         address_index: AddressIndex {
                             index: 0,
                             last4: wallet_last4(&wallet.address.to_string()),
                         },
                         amount: withdraw_amount,
-                        fee_account_index: 4,
+                        fee_account_index: 5,
                         fee_address_index: AddressIndex {
                             index: 1,
                             last4: wallet_last4(&wallet.address.to_string()),
@@ -2218,14 +2268,14 @@ mod tests {
             vec![btc_token_account, rune_token_account],
             WithdrawBatchParams {
                 token_withdrawals: vec![TokenWithdrawals {
-                    account_index: 3,
+                    account_index: 5,
                     withdrawals: vec![Withdrawal {
                         address_index: AddressIndex {
                             index: 0,
                             last4: wallet_last4(&wallet.address.to_string()),
                         },
                         amount: 10000,
-                        fee_account_index: 2,
+                        fee_account_index: 4,
                         fee_address_index: AddressIndex {
                             index: 1,
                             last4: wallet_last4(&wallet.address.to_string()),
@@ -2242,9 +2292,9 @@ mod tests {
             Some(
                 vec![
                     Event::FailedWithdrawal {
-                        account_index: 3,
+                        account_index: 5,
                         address_index: 0,
-                        fee_account_index: 2,
+                        fee_account_index: 4,
                         fee_address_index: 1,
                         requested_amount: 10000,
                         fee_amount: 0,
@@ -2475,7 +2525,7 @@ mod tests {
         let input = WithdrawBatchParams {
             token_withdrawals: vec![
                 TokenWithdrawals {
-                    account_index: 5,
+                    account_index: 6,
                     withdrawals: vec![
                         Withdrawal {
                             address_index: AddressIndex {
@@ -2483,7 +2533,7 @@ mod tests {
                                 last4: wallet_last4(&wallet1.address.to_string()),
                             },
                             amount: btc_withdraw_amount,
-                            fee_account_index: 5,
+                            fee_account_index: 6,
                             fee_address_index: AddressIndex {
                                 index: 1,
                                 last4: wallet_last4(&wallet1.address.to_string()),
@@ -2496,38 +2546,7 @@ mod tests {
                                 last4: wallet_last4(&wallet2.address.to_string()),
                             },
                             amount: btc_withdraw_amount2,
-                            fee_account_index: 5,
-                            fee_address_index: AddressIndex {
-                                index: 2,
-                                last4: wallet_last4(&wallet2.address.to_string()),
-                            },
-                            fee_amount: 500,
-                        },
-                    ],
-                },
-                TokenWithdrawals {
-                    account_index: 3,
-                    withdrawals: vec![
-                        Withdrawal {
-                            address_index: AddressIndex {
-                                index: 0,
-                                last4: wallet_last4(&wallet1.address.to_string()),
-                            },
-                            amount: rune_withdraw_base_amount,
-                            fee_account_index: 5,
-                            fee_address_index: AddressIndex {
-                                index: 1,
-                                last4: wallet_last4(&wallet1.address.to_string()),
-                            },
-                            fee_amount: 500,
-                        },
-                        Withdrawal {
-                            address_index: AddressIndex {
-                                index: 1,
-                                last4: wallet_last4(&wallet2.address.to_string()),
-                            },
-                            amount: rune_withdraw_base_amount2,
-                            fee_account_index: 5,
+                            fee_account_index: 6,
                             fee_address_index: AddressIndex {
                                 index: 2,
                                 last4: wallet_last4(&wallet2.address.to_string()),
@@ -2544,8 +2563,39 @@ mod tests {
                                 index: 0,
                                 last4: wallet_last4(&wallet1.address.to_string()),
                             },
+                            amount: rune_withdraw_base_amount,
+                            fee_account_index: 6,
+                            fee_address_index: AddressIndex {
+                                index: 1,
+                                last4: wallet_last4(&wallet1.address.to_string()),
+                            },
+                            fee_amount: 500,
+                        },
+                        Withdrawal {
+                            address_index: AddressIndex {
+                                index: 1,
+                                last4: wallet_last4(&wallet2.address.to_string()),
+                            },
+                            amount: rune_withdraw_base_amount2,
+                            fee_account_index: 6,
+                            fee_address_index: AddressIndex {
+                                index: 2,
+                                last4: wallet_last4(&wallet2.address.to_string()),
+                            },
+                            fee_amount: 500,
+                        },
+                    ],
+                },
+                TokenWithdrawals {
+                    account_index: 5,
+                    withdrawals: vec![
+                        Withdrawal {
+                            address_index: AddressIndex {
+                                index: 0,
+                                last4: wallet_last4(&wallet1.address.to_string()),
+                            },
                             amount: rune_withdraw_base_amount + 2000000,
-                            fee_account_index: 5,
+                            fee_account_index: 6,
                             fee_address_index: AddressIndex {
                                 index: 1,
                                 last4: wallet_last4(&wallet1.address.to_string()),
@@ -2558,7 +2608,7 @@ mod tests {
                                 last4: wallet_last4(&wallet2.address.to_string()),
                             },
                             amount: rune_withdraw_base_amount2 + 20000,
-                            fee_account_index: 5,
+                            fee_account_index: 6,
                             fee_address_index: AddressIndex {
                                 index: 2,
                                 last4: wallet_last4(&wallet2.address.to_string()),
@@ -2657,7 +2707,101 @@ mod tests {
         assert_send_and_sign_withdrawal_rollback(
             vec![rune_token_accounts[0], rune_token_accounts[1], btc_token_account],
             RollbackWithdrawBatchParams {
-                token_withdrawals: input.token_withdrawals,
+                token_withdrawals: vec![
+                    TokenWithdrawals {
+                        account_index: 4,
+                        withdrawals: vec![
+                            Withdrawal {
+                                address_index: AddressIndex {
+                                    index: 1,
+                                    last4: wallet_last4(&wallet1.address.to_string()),
+                                },
+                                amount: btc_withdraw_amount,
+                                fee_account_index: 4,
+                                fee_address_index: AddressIndex {
+                                    index: 1,
+                                    last4: wallet_last4(&wallet1.address.to_string()),
+                                },
+                                fee_amount: 500,
+                            },
+                            Withdrawal {
+                                address_index: AddressIndex {
+                                    index: 2,
+                                    last4: wallet_last4(&wallet2.address.to_string()),
+                                },
+                                amount: btc_withdraw_amount2,
+                                fee_account_index: 4,
+                                fee_address_index: AddressIndex {
+                                    index: 2,
+                                    last4: wallet_last4(&wallet2.address.to_string()),
+                                },
+                                fee_amount: 500,
+                            },
+                        ],
+                    },
+                    TokenWithdrawals {
+                        account_index: 2,
+                        withdrawals: vec![
+                            Withdrawal {
+                                address_index: AddressIndex {
+                                    index: 0,
+                                    last4: wallet_last4(&wallet1.address.to_string()),
+                                },
+                                amount: rune_withdraw_base_amount,
+                                fee_account_index: 4,
+                                fee_address_index: AddressIndex {
+                                    index: 1,
+                                    last4: wallet_last4(&wallet1.address.to_string()),
+                                },
+                                fee_amount: 500,
+                            },
+                            Withdrawal {
+                                address_index: AddressIndex {
+                                    index: 1,
+                                    last4: wallet_last4(&wallet2.address.to_string()),
+                                },
+                                amount: rune_withdraw_base_amount2,
+                                fee_account_index: 4,
+                                fee_address_index: AddressIndex {
+                                    index: 2,
+                                    last4: wallet_last4(&wallet2.address.to_string()),
+                                },
+                                fee_amount: 500,
+                            },
+                        ],
+                    },
+                    TokenWithdrawals {
+                        account_index: 3,
+                        withdrawals: vec![
+                            Withdrawal {
+                                address_index: AddressIndex {
+                                    index: 0,
+                                    last4: wallet_last4(&wallet1.address.to_string()),
+                                },
+                                amount: rune_withdraw_base_amount + 2000000,
+                                fee_account_index: 4,
+                                fee_address_index: AddressIndex {
+                                    index: 1,
+                                    last4: wallet_last4(&wallet1.address.to_string()),
+                                },
+                                fee_amount: 500,
+                            },
+                            Withdrawal {
+                                address_index: AddressIndex {
+                                    index: 1,
+                                    last4: wallet_last4(&wallet2.address.to_string()),
+                                },
+                                amount: rune_withdraw_base_amount2 + 20000,
+                                fee_account_index: 4,
+                                fee_address_index: AddressIndex {
+                                    index: 2,
+                                    last4: wallet_last4(&wallet2.address.to_string()),
+                                },
+                                fee_amount: 500,
+                            },
+                        ],
+                    },
+                ],
             },
             vec![
                 TokenState {
@@ -2700,7 +2844,6 @@ mod tests {
                     balances: expected_btc_balances_after_deposit.clone(),
                 },
             ],
-            true,
         )
     }
 

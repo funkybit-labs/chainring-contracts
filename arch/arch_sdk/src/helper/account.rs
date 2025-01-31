@@ -41,7 +41,6 @@ pub struct AccountInfoResult {
     pub data: Vec<u8>,
     pub utxo: String,
     pub is_executable: bool,
-    pub tag: String,
 }
 
 /* -------------------------------------------------------------------------- */
