@@ -206,6 +206,7 @@ impl Codable for ProgramInstruction {
             10 => Ok(Self::UpdateWithdrawStateUtxo(UpdateWithdrawStateUtxoParams::decode(reader)?)),
             11 => Ok(Self::InitRuneReceiverState()),
             12 => Ok(Self::SetTokeRuneId(SetTokenRuneIdParams::decode(reader)?)),
+            13 => Ok(Self::InitPrepareWithdrawState()),
             _ => Err(io::Error::new(io::ErrorKind::Other, "Invalid instruction type"))
         }
     }
@@ -250,6 +251,9 @@ impl Codable for ProgramInstruction {
             }
             Self::SetTokeRuneId(params) => {
                 Ok(writer.write_u8(12)? + params.encode(&mut writer)?)
+            }
+            Self::InitPrepareWithdrawState() => {
+                Ok(writer.write_u8(13)?)
             }
         }
     }
@@ -872,8 +876,9 @@ impl Codable for AccountType {
         Ok(match reader.read_u8()? {
             1 => Self::Program,
             2 => Self::Token,
-            3 => Self::Withdraw,
+            3 => Self::SubmitWithdraw,
             4 => Self::RuneReceiver,
+            5 => Self::PrepareWithdraw,
             _ => Self::Unknown,
         })
     }
@@ -882,8 +887,9 @@ impl Codable for AccountType {
         Ok(writer.write_u8(match self {
             Self::Program => 1,
             Self::Token => 2,
-            Self::Withdraw => 3,
+            Self::SubmitWithdraw => 3,
             Self::RuneReceiver => 4,
+            Self::PrepareWithdraw => 5,
             Self::Unknown => 0
         })?)
     }

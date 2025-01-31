@@ -1,5 +1,5 @@
-use common::constants::*;
-use common::models::*;
+use arch_sdk::constants::*;
+use arch_sdk::models::*;
 use bitcoin::{
     Address, Amount, OutPoint, ScriptBuf, Sequence, TapSighashType, Transaction, TxIn, TxOut, Witness,
     opcodes,
@@ -19,7 +19,7 @@ use model::state::{Balance, DUST_THRESHOLD};
 use crate::bitcoin::{mine, deposit_to_address};
 use crate::ordclient::{OrdClient, Output, wait_for_block};
 use std::str::FromStr;
-use common::helper::{get_account_address, with_secret_key_file};
+use arch_sdk::helper::{get_account_address, with_secret_key_file};
 use crate::constants::RUNE_RECEIVER_ACCOUNT_FILE_PATH;
 use crate::setup::deposit;
 

@@ -1,0 +1,33 @@
+[package]
+name = "arch_sdk"
+version = "0.3.2"
+edition = "2021"
+description = "A Rust SDK for building applications on the Arch Network blockchain platform. Provides tools and interfaces for developing, testing, and deploying programs with native Bitcoin integration."
+license = "MIT"
+
+[dependencies]
+arch_program = { path = "../arch_program" }
+
+borsh = { version = "1.5.1" }
+proptest = "1.5.0"
+serde = { version = "1.0.197" }
+sha256 = { version = "1.5.0" }
+anyhow = { version = "1", features = ["backtrace"] }
+hex = { version = "0.4.3" }
+serde_json = { version = "1.0.114" }
+bitcoincore-rpc = "0.19.0"
+bitcoin = { version = "0.32.5", features = ["serde", "rand"] }
+rand_core = { version = "0.6.4", features = ["getrandom"] }
+reqwest = { version = "0.12", default-features = false, features = [
+  "json",
+  "rustls-tls",
+  "blocking",
+] }
+indicatif = "0.17.8"
+snafu = "0.8.5"
+base64 = "0.22.1"
+bip322 = "0.0.9"
+thiserror = { version = "1.0.57" }
+termsize = "0.1.9"
+tracing = "0.1.40"
+tracing-subscriber = { version = "0.3.3", features = ["env-filter", "ansi"] }
