@@ -7,7 +7,7 @@ lint:
 	cd evm && make lint && cd ..
 
 format:
-	cd evm && make fmt && cd ..
+	cd evm && make format && cd ..
 
 test:
 	cd evm && make test && cd ../arch && make test && cd ..

@@ -18,16 +18,28 @@ jobs:
       - name: Install Foundry
         uses: foundry-rs/foundry-toolchain@v1.2.0
 
-      - name: Lint
-        working-directory: "evm"
+      - name: Lint Exchange
+        working-directory: "evm/exchange"
         run: forge fmt --check
 
-      - name: Build
-        working-directory: "evm"
+      - name: Build Exchange
+        working-directory: "evm/exchange"
         run: forge build --deny-warnings
 
-      - name: Run tests
-        working-directory: "evm"
+      - name: Run tests Exchange
+        working-directory: "evm/exchange"
+        run: forge test -vvv
+
+      - name: Lint Coin Proxy
+        working-directory: "evm/coin-proxy"
+        run: forge fmt --check
+
+      - name: Build Coin Proxy
+        working-directory: "evm/coin-proxy"
+        run: forge build --deny-warnings
+
+      - name: Run tests Coin Proxy
+        working-directory: "evm/coin-proxy"
         run: forge test -vvv
 
 

@@ -1,13 +1,13 @@
 .PHONY: test
 
 build:
-	forge build
+	cd exchange && make build && cd ../coin-proxy && make build && cd ..
 
 lint:
-	forge fmt --check
+	cd exchange && make lint && cd ../coin-proxy && make lint && cd ..
 
 format:
-	forge fmt
+	cd exchange && make format && cd ../coin-proxy && make format && cd ..
 
 test:
-	forge test -vvvv
+	cd exchange && make test && cd ../coin-proxy && make test && cd ..

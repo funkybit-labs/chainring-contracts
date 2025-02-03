@@ -4,4 +4,4 @@ out = "out"
 libs = ["lib"]
 
 # See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options
-allow_paths = ["../lib"]
+allow_paths = ["../../lib"]
