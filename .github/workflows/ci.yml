@@ -4,7 +4,7 @@ on:
   push:
     branches: [ "main" ]
   pull_request:
-    branches: [ "main", "feature-runes-support-phase1" ]
+    branches: [ "main", "feature-mainnet" ]
 
 jobs:
   build_evm:
@@ -28,6 +28,18 @@ jobs:
 
       - name: Run tests
         working-directory: "evm"
+        run: forge test -vvv
+
+      - name: Lint (Coin-Proxy)
+        working-directory: "coin-proxy"
+        run: forge fmt --check
+
+      - name: Build (Coin-Proxy)
+        working-directory: "coin-proxy"
+        run: forge build --deny-warnings
+
+      - name: Run tests (Coin-Proxy)
+        working-directory: "coin-proxy"
         run: forge test -vvv
 
 
