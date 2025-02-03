@@ -2,20 +2,20 @@ use std::fs;
 use bitcoin::{Address, Amount, Txid};
 use bitcoin::key::UntweakedKeypair;
 use bitcoincore_rpc::{Auth, Client, RpcApi};
-use common::constants::{BITCOIN_NODE_ENDPOINT, BITCOIN_NODE_PASSWORD, BITCOIN_NODE_USERNAME, NODE1_ADDRESS, PROGRAM_FILE_PATH};
-use arch_program::{pubkey::Pubkey, instruction::Instruction, account::AccountMeta, system_instruction::SystemInstruction};
-use common::helper::{deploy_program_txs, get_account_address, get_processed_transaction, read_account_info, send_utxo, sign_and_send_instruction, sign_and_send_instructions, with_secret_key_file};
-use common::models::CallerInfo;
-use common::processed_transaction::{ProcessedTransaction, Status};
+use arch_sdk::constants::{BITCOIN_NODE_ENDPOINT, BITCOIN_NODE_PASSWORD, BITCOIN_NODE_USERNAME, NODE1_ADDRESS, PROGRAM_FILE_PATH};
+use arch_program::{pubkey::Pubkey, instruction::Instruction, account::AccountMeta};
+use arch_sdk::helper::{deploy_program_txs, get_account_address, get_processed_transaction, read_account_info, send_utxo, sign_and_send_instruction, sign_and_send_transaction, with_secret_key_file};
+use arch_sdk::models::CallerInfo;
+use arch_sdk::processed_transaction::{ProcessedTransaction, Status};
 use crate::bitcoin::mine;
-use crate::constants::{FEE_ACCOUNT_FILE_PATH, RUNE_RECEIVER_ACCOUNT_FILE_PATH, SUBMITTER_FILE_PATH, TOKEN_FILE_PATHS, WALLET1_FILE_PATH, WITHDRAW_ACCOUNT_FILE_PATH};
+use crate::constants::{FEE_ACCOUNT_FILE_PATH, RUNE_RECEIVER_ACCOUNT_FILE_PATH, SUBMITTER_FILE_PATH, TOKEN_FILE_PATHS, WALLET1_FILE_PATH, SUBMIT_WITHDRAW_ACCOUNT_FILE_PATH, PREPARE_WITHDRAW_ACCOUNT_FILE_PATH};
 use crate::utils::hash;
 use log::debug;
 use model::state::*;
 use model::instructions::*;
 use model::serialization::Codable;
 use std::str::FromStr;
-use arch_program::bitcoin::XOnlyPublicKey;
+use arch_program::system_instruction::{assign, create_account};
 
 pub fn sign_and_send_instruction_success(
     accounts: Vec<AccountMeta>,
@@ -143,10 +143,10 @@ pub fn onboard_state_accounts(tokens: Vec<&str>) -> Vec<Pubkey> {
     assign_ownership(submitter_keypair, submitter_pubkey, program_pubkey);
     debug!("Assigned ownership for program state account");
 
-    let (withdraw_account_keypair, withdraw_account_pubkey) = create_new_account(WITHDRAW_ACCOUNT_FILE_PATH);
-    debug!("Created withdraw account");
+    let (submit_withdraw_account_keypair, submit_withdraw_account_pubkey) = create_new_account(SUBMIT_WITHDRAW_ACCOUNT_FILE_PATH);
+    debug!("Created submit withdraw account");
 
-    assign_ownership(withdraw_account_keypair, withdraw_account_pubkey, program_pubkey);
+    assign_ownership(submit_withdraw_account_keypair, submit_withdraw_account_pubkey, program_pubkey);
     debug!("Assigned ownership for withdraw account");
 
     let program_change_address = get_account_address(program_pubkey);
@@ -160,7 +160,7 @@ pub fn onboard_state_accounts(tokens: Vec<&str>) -> Vec<Pubkey> {
         ProgramState {
             account_type: AccountType::Program,
             version: 0,
-            withdraw_account: withdraw_account_pubkey,
+            withdraw_account: submit_withdraw_account_pubkey,
             fee_account_address: fee_account.address.to_string(),
             program_change_address,
             network_type: NetworkType::Regtest,
@@ -171,7 +171,7 @@ pub fn onboard_state_accounts(tokens: Vec<&str>) -> Vec<Pubkey> {
     );
     debug!("Initialized program state");
     accounts.push(submitter_pubkey);
-    accounts.push(withdraw_account_pubkey);
+    accounts.push(submit_withdraw_account_pubkey);
 
     for (index, token) in tokens.iter().enumerate() {
         let (token_keypair, token_pubkey) = create_new_account(TOKEN_FILE_PATHS[index]);
@@ -212,79 +212,96 @@ pub fn onboard_state_accounts(tokens: Vec<&str>) -> Vec<Pubkey> {
             program_state_account: submitter_pubkey,
         },
     );
-    debug!("Initialized token state account");
+
+    debug!("Created prepare withdraw account");
+    let (prepare_withdraw_account_keypair, prepare_withdraw_account_pubkey) = create_new_account(PREPARE_WITHDRAW_ACCOUNT_FILE_PATH);
+    assign_ownership(prepare_withdraw_account_keypair, prepare_withdraw_account_pubkey, program_pubkey);
+    init_prepare_withdraw_state_account(
+        prepare_withdraw_account_pubkey,
+        WithdrawState {
+            account_type: AccountType::PrepareWithdraw,
+            version: 0,
+            program_state_account: submitter_pubkey,
+            batch_hash: EMPTY_HASH,
+        },
+    );
+
     accounts
 }
 
 pub fn create_new_account(file_path: &str) -> (UntweakedKeypair, Pubkey) {
+    mine(1);
     let (keypair, pubkey) = with_secret_key_file(file_path)
         .expect("getting caller info should not fail");
     debug!("Creating new account {}", file_path);
     let (txid, vout) = send_utxo(pubkey.clone());
     debug!("{}:{} {:?}", txid, vout, hex::encode(pubkey));
+    let tx_id = hex::decode(txid).unwrap().try_into().unwrap();
     mine(1);
 
-    let (txid, _) = sign_and_send_instruction(
-        SystemInstruction::new_create_account_instruction(
-            hex::decode(txid).unwrap().try_into().unwrap(),
-            vout,
-            pubkey.clone(),
-        ),
-        vec![keypair],
-    ).expect("signing and sending a transaction should not fail");
+    let mut retries = 0;
+    let mut done = false;
 
-    let processed_tx = get_processed_transaction(NODE1_ADDRESS, txid.clone())
-        .expect("get processed transaction should not fail");
-    debug!("create_new_account: {:?}", processed_tx);
-    assert_eq!(processed_tx.status, Status::Processed);
+    while !done {
+        let (txid, _) = sign_and_send_instruction(
+            create_account(
+                tx_id,
+                vout,
+                pubkey.clone(),
+            ),
+            vec![keypair],
+        ).expect("signing and sending a transaction should not fail");
+
+        let processed_tx = get_processed_transaction(NODE1_ADDRESS, txid.clone())
+            .expect("get processed transaction should not fail");
+        debug!("create_new_account: {:?}", processed_tx);
+        match processed_tx.status {
+            Status::Processed => done = true,
+            Status::Queued => assert!(false, "Status is Queued"),
+            Status::Failed(error) => if error.contains("Transaction not found") && retries < 20 {
+                std::thread::sleep(std::time::Duration::from_millis(100));
+                retries += 1;
+            } else {
+                assert!(false, "Create Account failed");
+            }
+        }
+    }
     (keypair, pubkey)
 }
 
-pub fn create_new_rune_account(program_pubkey: Pubkey) -> (String, Pubkey) {
-    let callerInfo = CallerInfo::generate_new(bitcoin::Network::Regtest);
-    let pubkey = Pubkey::from_slice(&callerInfo.public_key.serialize());
-    let (txid, vout) = send_utxo(pubkey.clone());
-    debug!("{}:{} {:?}", txid, vout, hex::encode(pubkey));
+pub fn fund_new_rune_account() -> (CallerInfo, String, u32) {
+    let caller_info = CallerInfo::generate_new(bitcoin::Network::Regtest);
+    let pubkey = Pubkey::from_slice(&caller_info.public_key.serialize());
+    let (tx_id, vout) = send_utxo(pubkey);
     mine(1);
-    let mut instruction_data = vec![3];
-    instruction_data.extend(program_pubkey.serialize());
+    (caller_info, tx_id, vout)
+}
 
-    let (txid, _) = sign_and_send_instructions(
+pub fn create_new_rune_account(program_pubkey: Pubkey, caller_info: &CallerInfo, txid: String, vout: u32) -> (String, Pubkey) {
+    let pubkey = Pubkey::from_slice(&caller_info.public_key.serialize());
+    let txid = sign_and_send_transaction(
         vec![
-            SystemInstruction::new_create_account_instruction(
+            create_account(
                 hex::decode(txid).unwrap().try_into().unwrap(),
                 vout,
                 pubkey.clone(),
             ),
-            Instruction {
-                program_id: Pubkey::system_program(),
-                accounts: vec![AccountMeta {
-                    pubkey: pubkey.clone(),
-                    is_signer: true,
-                    is_writable: true,
-                }],
-                data: instruction_data,
-            }
+            assign(
+                pubkey.clone(),
+                program_pubkey,
+            ),
         ],
-        vec![callerInfo.key_pair],
+        vec![caller_info.key_pair],
     ).expect("signing and sending a transaction should not fail");
     (txid, pubkey)
 }
 
 pub fn assign_ownership(account_keypair: UntweakedKeypair, account_pubkey: Pubkey, program_pubkey: Pubkey) {
-    let mut instruction_data = vec![3];
-    instruction_data.extend(program_pubkey.serialize());
-
     let (txid, _) = sign_and_send_instruction(
-        Instruction {
-            program_id: Pubkey::system_program(),
-            accounts: vec![AccountMeta {
-                pubkey: account_pubkey.clone(),
-                is_signer: true,
-                is_writable: true,
-            }],
-            data: instruction_data,
-        },
+        assign(
+            account_pubkey.clone(),
+            program_pubkey,
+        ),
         vec![account_keypair.clone()],
     )
         .expect("Failed to sign and send Assign ownership of caller account instruction");
@@ -307,7 +324,7 @@ pub fn init_program_state_account(
     expected: ProgramState,
 ) {
     let (submitter_keypair, submitter_pubkey) = with_secret_key_file(SUBMITTER_FILE_PATH).unwrap();
-    let (_, withdraw_pubkey) = with_secret_key_file(WITHDRAW_ACCOUNT_FILE_PATH).unwrap();
+    let (_, withdraw_pubkey) = with_secret_key_file(SUBMIT_WITHDRAW_ACCOUNT_FILE_PATH).unwrap();
     let expected = expected.encode_to_vec().unwrap();
 
     debug!("Invoking contract to init program state");
@@ -395,6 +412,35 @@ pub fn init_rune_receiver_state_account(
     let account = read_account_info(NODE1_ADDRESS, rune_receiver_account.clone()).unwrap();
     assert_eq!(
         expected.encode_to_vec().unwrap(), RuneReceiverState::decode_from_slice(account.data.as_slice()).unwrap().encode_to_vec().unwrap()
+    )
+}
+
+pub fn init_prepare_withdraw_state_account(
+    prepare_withdraw_account: Pubkey,
+    expected: WithdrawState,
+) {
+    debug!("Invoking contract to init rune receiver state");
+    let (submitter_keypair, submitter_pubkey) = with_secret_key_file(SUBMITTER_FILE_PATH).unwrap();
+    sign_and_send_instruction_success(
+        vec![
+            AccountMeta {
+                pubkey: submitter_pubkey,
+                is_signer: true,
+                is_writable: true,
+            },
+            AccountMeta {
+                pubkey: prepare_withdraw_account,
+                is_signer: false,
+                is_writable: true,
+            },
+        ],
+        ProgramInstruction::InitPrepareWithdrawState().encode_to_vec().unwrap(),
+        vec![submitter_keypair],
+    );
+
+    let account = read_account_info(NODE1_ADDRESS, prepare_withdraw_account.clone()).unwrap();
+    assert_eq!(
+        expected.encode_to_vec().unwrap(), WithdrawState::decode_from_slice(account.data.as_slice()).unwrap().encode_to_vec().unwrap()
     )
 }
 
@@ -496,7 +542,8 @@ pub fn assert_send_and_sign_withdrawal(
 ) {
     debug!("Performing Withdrawal");
     let wallet = CallerInfo::with_secret_key_file(WALLET1_FILE_PATH).unwrap();
-    let (withdraw_keypair, withdraw_pubkey) = with_secret_key_file(WITHDRAW_ACCOUNT_FILE_PATH).unwrap();
+    let (submit_withdraw_keypair, submit_withdraw_pubkey) = with_secret_key_file(SUBMIT_WITHDRAW_ACCOUNT_FILE_PATH).unwrap();
+    let (prepare_withdraw_keypair, prepare_withdraw_pubkey) = with_secret_key_file(PREPARE_WITHDRAW_ACCOUNT_FILE_PATH).unwrap();
     let (submitter_keypair, submitter_pubkey) = with_secret_key_file(SUBMITTER_FILE_PATH).unwrap();
     let (rune_receiver_keypair, rune_receiver_pubkey) = with_secret_key_file(RUNE_RECEIVER_ACCOUNT_FILE_PATH).unwrap();
     let (_, program_pubkey) = with_secret_key_file(PROGRAM_FILE_PATH).unwrap();
@@ -504,7 +551,7 @@ pub fn assert_send_and_sign_withdrawal(
         .unwrap()
         .require_network(bitcoin::Network::Regtest)
         .unwrap();
-    let withdraw_account_address = Address::from_str(&get_account_address(withdraw_pubkey))
+    let withdraw_account_address = Address::from_str(&get_account_address(submit_withdraw_pubkey))
         .unwrap()
         .require_network(bitcoin::Network::Regtest)
         .unwrap();
@@ -516,20 +563,21 @@ pub fn assert_send_and_sign_withdrawal(
             is_writable: true,
         },
         AccountMeta {
-            pubkey: withdraw_pubkey,
+            pubkey: submit_withdraw_pubkey,
+            is_signer: false,
+            is_writable: false,
+        },
+        AccountMeta {
+            pubkey: prepare_withdraw_pubkey,
             is_signer: false,
             is_writable: true,
         },
+        AccountMeta {
+            pubkey: rune_receiver_pubkey,
+            is_signer: false,
+            is_writable: false,
+        },
     ];
-    if params.input_utxo_types.clone().into_iter().any(|i| i == InputUtxoType::Rune) {
-        accounts.push(
-            AccountMeta {
-                pubkey: rune_receiver_pubkey,
-                is_signer: false,
-                is_writable: false,
-            },
-        )
-    }
 
     token_accounts.iter().for_each(|pubkey|
         accounts.push(AccountMeta {
@@ -557,10 +605,14 @@ pub fn assert_send_and_sign_withdrawal(
         );
     }
 
-    let withdraw_account_info = read_account_info(NODE1_ADDRESS, withdraw_pubkey).unwrap();
-    let withdraw_state = WithdrawState::decode_from_slice(withdraw_account_info.data.as_slice()).unwrap();
-    assert_eq!(AccountType::Withdraw, withdraw_state.account_type);
-    let withdraw_utxo_before = withdraw_account_info.utxo;
+    let prepare_withdraw_account_info = read_account_info(NODE1_ADDRESS, prepare_withdraw_pubkey).unwrap();
+    let prepare_withdraw_state = WithdrawState::decode_from_slice(prepare_withdraw_account_info.data.as_slice()).unwrap();
+    assert_eq!(AccountType::PrepareWithdraw, prepare_withdraw_state.account_type);
+
+    let submit_withdraw_account_info = read_account_info(NODE1_ADDRESS, submit_withdraw_pubkey).unwrap();
+    let submit_withdraw_state = WithdrawState::decode_from_slice(submit_withdraw_account_info.data.as_slice()).unwrap();
+    assert_eq!(AccountType::SubmitWithdraw, submit_withdraw_state.account_type);
+    let withdraw_utxo_before = submit_withdraw_account_info.utxo;
 
     if let Some(events) = expected_events {
         let state_account = read_account_info(NODE1_ADDRESS, submitter_pubkey.clone()).unwrap();
@@ -570,16 +622,16 @@ pub fn assert_send_and_sign_withdrawal(
             events
         );
         assert_eq!(
-            withdraw_state.batch_hash,
+            prepare_withdraw_state.batch_hash,
             EMPTY_HASH
         );
         return;
     }
 
     assert_eq!(
-            hex::encode(withdraw_state.batch_hash),
-            hash(&params.encode_to_vec().unwrap()),
-        );
+        hex::encode(prepare_withdraw_state.batch_hash),
+        hash(&params.encode_to_vec().unwrap()),
+    );
 
     let mut accounts = vec![
         AccountMeta {
@@ -588,20 +640,21 @@ pub fn assert_send_and_sign_withdrawal(
             is_writable: false,
         },
         AccountMeta {
-            pubkey: withdraw_pubkey,
+            pubkey: submit_withdraw_pubkey,
             is_signer: true,
             is_writable: true,
         },
+        AccountMeta {
+            pubkey: prepare_withdraw_pubkey,
+            is_signer: false,
+            is_writable: true,
+        },
+        AccountMeta {
+            pubkey: rune_receiver_pubkey,
+            is_signer: true,
+            is_writable: false,
+        },
     ];
-    if params.input_utxo_types.clone().into_iter().any(|i| i == InputUtxoType::Rune) {
-        accounts.push(
-            AccountMeta {
-                pubkey: rune_receiver_pubkey,
-                is_signer: true,
-                is_writable: false,
-            }
-        )
-    }
     token_accounts.iter().for_each(|pubkey|
         accounts.push(
             AccountMeta {
@@ -615,7 +668,7 @@ pub fn assert_send_and_sign_withdrawal(
     let processed_tx = sign_and_send_instruction_success(
         accounts,
         ProgramInstruction::SubmitBatchWithdraw(params.clone()).encode_to_vec().unwrap(),
-        vec![submitter_keypair, withdraw_keypair, rune_receiver_keypair],
+        vec![submitter_keypair, submit_withdraw_keypair, rune_receiver_keypair],
     );
 
     for i in 0..expected.len() {
@@ -628,13 +681,20 @@ pub fn assert_send_and_sign_withdrawal(
         );
     }
 
-    let withdraw_account_info = read_account_info(NODE1_ADDRESS, withdraw_pubkey).unwrap();
-    let withdraw_state = WithdrawState::decode_from_slice(withdraw_account_info.data.as_slice()).unwrap();
+    let prepare_withdraw_account_info = read_account_info(NODE1_ADDRESS, prepare_withdraw_pubkey).unwrap();
+    let prepare_withdraw_state = WithdrawState::decode_from_slice(prepare_withdraw_account_info.data.as_slice()).unwrap();
     assert_eq!(
-        withdraw_state.batch_hash,
+        prepare_withdraw_state.batch_hash,
         EMPTY_HASH
     );
-    assert_ne!(withdraw_account_info.utxo, withdraw_utxo_before);
+
+    let submit_withdraw_account_info = read_account_info(NODE1_ADDRESS, submit_withdraw_pubkey).unwrap();
+    let submit_withdraw_state = WithdrawState::decode_from_slice(submit_withdraw_account_info.data.as_slice()).unwrap();
+    assert_eq!(
+        hex::encode(submit_withdraw_state.batch_hash),
+        hash(&params.encode_to_vec().unwrap()),
+    );
+    assert_ne!(submit_withdraw_account_info.utxo, withdraw_utxo_before);
 
 
     if let Some(expected_change_amount) = expected_change_amount {
@@ -676,7 +736,7 @@ pub fn assert_send_and_sign_withdrawal(
             vout = vout + 1;
         }
         assert_eq!(
-            withdraw_account_info.utxo,
+            submit_withdraw_account_info.utxo,
             format!("{}:{}", &bitcoin_txid, withdraw_account_vout)
         );
         if !has_rune {
@@ -698,12 +758,10 @@ pub fn assert_send_and_sign_withdrawal_rollback(
     token_accounts: Vec<Pubkey>,
     params: RollbackWithdrawBatchParams,
     expected: Vec<TokenState>,
-    has_runes: bool,
 ) {
     debug!("Performing Withdrawal Rollback");
-    let (_, withdraw_pubkey) = with_secret_key_file(WITHDRAW_ACCOUNT_FILE_PATH).unwrap();
+    let (_, prepare_withdraw_pubkey) = with_secret_key_file(PREPARE_WITHDRAW_ACCOUNT_FILE_PATH).unwrap();
     let (submitter_keypair, submitter_pubkey) = with_secret_key_file(SUBMITTER_FILE_PATH).unwrap();
-    let (_, rune_receiver_pubkey) = with_secret_key_file(RUNE_RECEIVER_ACCOUNT_FILE_PATH).unwrap();
 
     let mut accounts = vec![
         AccountMeta {
@@ -712,22 +770,11 @@ pub fn assert_send_and_sign_withdrawal_rollback(
             is_writable: false,
         },
         AccountMeta {
-            pubkey: withdraw_pubkey,
+            pubkey: prepare_withdraw_pubkey,
             is_signer: false,
             is_writable: true,
         },
     ];
-
-    if has_runes {
-        accounts.push(
-            AccountMeta {
-                pubkey: rune_receiver_pubkey,
-                is_signer: false,
-                is_writable: false,
-            }
-        )
-    }
-
     token_accounts.iter().for_each(|pubkey|
         accounts.push(AccountMeta {
             pubkey: *pubkey,
@@ -889,7 +936,7 @@ pub fn assert_send_and_sign_submit_settlement(
 
 pub fn update_withdraw_state_utxo() {
     let (submitter_keypair, submitter_pubkey) = with_secret_key_file(SUBMITTER_FILE_PATH).unwrap();
-    let (withdraw_keypair, withdraw_pubkey) = with_secret_key_file(WITHDRAW_ACCOUNT_FILE_PATH).unwrap();
+    let (withdraw_keypair, withdraw_pubkey) = with_secret_key_file(SUBMIT_WITHDRAW_ACCOUNT_FILE_PATH).unwrap();
     let account = read_account_info(NODE1_ADDRESS, withdraw_pubkey.clone()).unwrap();
     debug!("utxo id on account is {:?}", account.utxo);
 

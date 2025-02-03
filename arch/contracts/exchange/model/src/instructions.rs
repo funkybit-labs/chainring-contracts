@@ -15,6 +15,7 @@ pub enum ProgramInstruction {
     UpdateWithdrawStateUtxo(UpdateWithdrawStateUtxoParams),
     InitRuneReceiverState(),
     SetTokeRuneId(SetTokenRuneIdParams),
+    InitPrepareWithdrawState(),
 }
 
 #[derive(Clone, PartialEq, Debug)]

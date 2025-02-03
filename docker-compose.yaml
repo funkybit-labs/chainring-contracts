@@ -1,17 +1,5 @@
 
 services:
-
-  arch-local-validator:
-    platform: linux/amd64
-    container_name: arch-local-validator
-    image: ghcr.io/arch-network/local_validator:v0.2.17
-    ports:
-      - 9002:9002
-    command: /usr/bin/local_validator --rpc-bind-ip 0.0.0.0 --rpc-bind-port 9002 --bitcoin-rpc-endpoint bitcoin --bitcoin-rpc-port 18443 --bitcoin-rpc-username user --bitcoin-rpc-password password
-    environment:
-      RUST_LOG: "info"
-      RUST_BACKTRACE: "1"
-
   bitcoin:
     image: ${BITCOIN_IMAGE:-bitcoin}
     platform: linux/amd64
@@ -45,7 +33,7 @@ services:
       retries: 3
 
   electrs:
-    image: mempool/electrs:v3.0.0
+    image: public.ecr.aws/b5g5f9g0/arch-electrs:latest
     container_name: electrs
     platform: linux/amd64
     depends_on:

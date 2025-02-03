@@ -4,6 +4,6 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-arch_program = { path = "../../../program" }
-bitcoin = { version = "0.32.3", features = ["serde"] }
-ordinals = "0.0.12"
+arch_program = { path = "../../../arch_program" }
+bitcoin = { version = "0.32.5", features = ["serde"] }
+ordinals = "0.0.14"

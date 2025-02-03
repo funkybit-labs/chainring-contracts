@@ -1,10 +1,10 @@
-use common::constants::*;
+use arch_sdk::constants::*;
 use std::str::FromStr;
 use bitcoin::{Address, Amount, OutPoint, ScriptBuf, Sequence, Transaction, Txid, TxIn, Witness, absolute::LockTime, transaction::Version, TapSighashType, secp256k1};
 use bitcoin::key::{Secp256k1, TweakedKeypair, TapTweak};
 use bitcoin::sighash::{Prevouts, SighashCache};
 use bitcoincore_rpc::{Auth, Client, RawTx, RpcApi};
-use common::models::CallerInfo;
+use arch_sdk::models::CallerInfo;
 
 pub fn deposit_to_address(
     amount: u64,
