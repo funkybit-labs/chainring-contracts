@@ -34,10 +34,6 @@ interface ICoinProxy is IVersion {
         uint256 amount;
     }
 
-    struct BatchDeposit {
-        Deposit[] deposits;
-    }
-
     struct Withdrawal {
         address sender;
         address token;
@@ -46,7 +42,12 @@ interface ICoinProxy is IVersion {
         uint256 feeAmount;
     }
 
-    struct BatchWithdrawal {
+    struct BatchDepositAndWithdrawal {
+        Deposit[] deposits;
+        Withdrawal[] withdrawals;
+    }
+
+    struct BatchWithdrawalRollback {
         Withdrawal[] withdrawals;
     }
 
@@ -74,15 +75,13 @@ interface ICoinProxy is IVersion {
 
     function DOMAIN_SEPARATOR() external view returns (bytes32);
 
-    function submitDeposits(bytes calldata data) external;
-
     function submitSettlementBatch(bytes calldata data) external;
 
     function prepareSettlementBatch(bytes calldata data) external;
 
     function rollbackBatch() external;
 
-    function submitWithdrawalBatch(bytes calldata data) external;
+    function submitDepositAndWithdrawalBatch(bytes calldata data) external;
 
     function rollbackWithdrawalBatch(bytes calldata data) external;
 

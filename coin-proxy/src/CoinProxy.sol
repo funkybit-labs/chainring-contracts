@@ -15,8 +15,7 @@ contract CoinProxy is EIP712Upgradeable, UUPSUpgradeable, OwnableUpgradeable, IC
     address public feeAccount;
     bytes32 public batchHash;
     bytes32 public lastSettlementBatchHash;
-    uint64 public lastDepositSequence;
-    uint64 public lastWithdrawalSequence;
+    bytes32 public lastDepositAndWithdrawBatchHash;
 
     function initialize(address _submitter, address _feeAccount) public initializer {
         __Ownable_init(msg.sender);
@@ -46,57 +45,41 @@ contract CoinProxy is EIP712Upgradeable, UUPSUpgradeable, OwnableUpgradeable, IC
         feeAccount = _feeAccount;
     }
 
-    function submitDeposits(bytes calldata data) public onlySubmitter {
-        BatchDeposit memory _batchDeposit = abi.decode(data, (BatchDeposit));
-        require(_batchDeposit.deposits.length > 0, "Must be at least 1 deposit");
-        uint64 _sequence = _batchDeposit.deposits[0].sequence;
-        require(_sequence >= lastDepositSequence, "Sequence must be increasing");
-        for (uint256 i = 0; i < _batchDeposit.deposits.length; i++) {
-            if (i > 0) {
-                require(_batchDeposit.deposits[i].sequence > _sequence, "Sequence must be increasing");
-            }
-            balances[_batchDeposit.deposits[i].sender][_batchDeposit.deposits[i].token] +=
-                _batchDeposit.deposits[i].amount;
-            emit DepositSucceeded(
-                _batchDeposit.deposits[i].sender,
-                _batchDeposit.deposits[i].sequence,
-                _batchDeposit.deposits[i].token,
-                _batchDeposit.deposits[i].amount
-            );
-        }
-        lastDepositSequence = _batchDeposit.deposits[_batchDeposit.deposits.length - 1].sequence;
-    }
-
-    function submitWithdrawalBatch(bytes calldata data) public onlySubmitter {
+    function submitDepositAndWithdrawalBatch(bytes calldata data) public onlySubmitter {
         require(batchHash == 0, "Settlement batch in process");
-        BatchWithdrawal memory _batchWithdrawal = abi.decode(data, (BatchWithdrawal));
-        require(_batchWithdrawal.withdrawals.length > 0, "Must be at least 1 withdrawal");
-        uint64 _sequence = _batchWithdrawal.withdrawals[0].sequence;
-        require(_sequence > lastWithdrawalSequence, "Sequence must be increasing");
-        for (uint256 i = 0; i < _batchWithdrawal.withdrawals.length; i++) {
-            if (i > 0) {
-                require(_batchWithdrawal.withdrawals[i].sequence > _sequence, "Sequence must be increasing");
-            }
-            _withdraw(
-                _batchWithdrawal.withdrawals[i].sequence,
-                _batchWithdrawal.withdrawals[i].sender,
-                _batchWithdrawal.withdrawals[i].token,
-                _batchWithdrawal.withdrawals[i].amount,
-                _batchWithdrawal.withdrawals[i].feeAmount
+        require(lastDepositAndWithdrawBatchHash != keccak256(data), "This was the last batch processed");
+        BatchDepositAndWithdrawal memory _batch = abi.decode(data, (BatchDepositAndWithdrawal));
+        require(_batch.withdrawals.length > 0 || _batch.deposits.length > 0, "Must be at least 1 deposit or withdrawal");
+        for (uint256 i = 0; i < _batch.deposits.length; i++) {
+            balances[_batch.deposits[i].sender][_batch.deposits[i].token] += _batch.deposits[i].amount;
+            emit DepositSucceeded(
+                _batch.deposits[i].sender,
+                _batch.deposits[i].sequence,
+                _batch.deposits[i].token,
+                _batch.deposits[i].amount
             );
         }
-        lastDepositSequence = _batchWithdrawal.withdrawals[_batchWithdrawal.withdrawals.length - 1].sequence;
+        for (uint256 i = 0; i < _batch.withdrawals.length; i++) {
+            _withdraw(
+                _batch.withdrawals[i].sequence,
+                _batch.withdrawals[i].sender,
+                _batch.withdrawals[i].token,
+                _batch.withdrawals[i].amount,
+                _batch.withdrawals[i].feeAmount
+            );
+        }
+        lastDepositAndWithdrawBatchHash = keccak256(data);
     }
 
     function rollbackWithdrawalBatch(bytes calldata data) public onlySubmitter {
-        BatchWithdrawal memory _batchWithdrawal = abi.decode(data, (BatchWithdrawal));
-        for (uint256 i = 0; i < _batchWithdrawal.withdrawals.length; i++) {
+        BatchWithdrawalRollback memory _batch = abi.decode(data, (BatchWithdrawalRollback));
+        for (uint256 i = 0; i < _batch.withdrawals.length; i++) {
             _rollbackWithdraw(
-                _batchWithdrawal.withdrawals[i].sequence,
-                _batchWithdrawal.withdrawals[i].sender,
-                _batchWithdrawal.withdrawals[i].token,
-                _batchWithdrawal.withdrawals[i].amount,
-                _batchWithdrawal.withdrawals[i].feeAmount
+                _batch.withdrawals[i].sequence,
+                _batch.withdrawals[i].sender,
+                _batch.withdrawals[i].token,
+                _batch.withdrawals[i].amount,
+                _batch.withdrawals[i].feeAmount
             );
         }
     }

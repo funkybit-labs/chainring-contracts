@@ -40,10 +40,11 @@ contract CoinProxyBaseTest is Test {
         vm.startPrank(submitter);
         vm.expectEmit(coinProxyProxyAddress);
         emit ICoinProxy.DepositSucceeded(wallet, sequence, tokenAddress, amount);
-        ICoinProxy.BatchDeposit memory batch = ICoinProxy.BatchDeposit(new ICoinProxy.Deposit[](1));
+        ICoinProxy.BatchDepositAndWithdrawal memory batch =
+            ICoinProxy.BatchDepositAndWithdrawal(new ICoinProxy.Deposit[](1), new ICoinProxy.Withdrawal[](0));
         batch.deposits[0] =
             ICoinProxy.Deposit({sequence: sequence, sender: wallet, token: tokenAddress, amount: amount});
-        coinProxy.submitDeposits(abi.encode(batch));
+        coinProxy.submitDepositAndWithdrawalBatch(abi.encode(batch));
         vm.stopPrank();
     }
 
@@ -55,7 +56,8 @@ contract CoinProxyBaseTest is Test {
         uint256 feeAmount,
         uint64 sequence
     ) internal {
-        ICoinProxy.BatchWithdrawal memory batch = ICoinProxy.BatchWithdrawal(new ICoinProxy.Withdrawal[](1));
+        ICoinProxy.BatchDepositAndWithdrawal memory batch =
+            ICoinProxy.BatchDepositAndWithdrawal(new ICoinProxy.Deposit[](0), new ICoinProxy.Withdrawal[](1));
         batch.withdrawals[0] = ICoinProxy.Withdrawal({
             sequence: sequence,
             sender: wallet,
@@ -73,7 +75,7 @@ contract CoinProxyBaseTest is Test {
         } else {
             emit ICoinProxy.WithdrawalSucceeded(wallet, sequence, tokenAddress, expectedAmount, feeAmount);
         }
-        coinProxy.submitWithdrawalBatch(abi.encode(batch));
+        coinProxy.submitDepositAndWithdrawalBatch(abi.encode(batch));
         vm.stopPrank();
     }
 
@@ -85,7 +87,8 @@ contract CoinProxyBaseTest is Test {
         uint256 feeAmount,
         uint64 sequence
     ) internal {
-        ICoinProxy.BatchWithdrawal memory batch = ICoinProxy.BatchWithdrawal(new ICoinProxy.Withdrawal[](1));
+        ICoinProxy.BatchDepositAndWithdrawal memory batch =
+            ICoinProxy.BatchDepositAndWithdrawal(new ICoinProxy.Deposit[](0), new ICoinProxy.Withdrawal[](1));
         batch.withdrawals[0] = ICoinProxy.Withdrawal({
             sequence: sequence,
             sender: wallet,
@@ -99,7 +102,7 @@ contract CoinProxyBaseTest is Test {
         emit ICoinProxy.WithdrawalFailed(
             wallet, sequence, tokenAddress, feeAmount, expectedFeeBalance, ICoinProxy.ErrorCode.InsufficientFeeBalance
         );
-        coinProxy.submitWithdrawalBatch(abi.encode(batch));
+        coinProxy.submitDepositAndWithdrawalBatch(abi.encode(batch));
         vm.stopPrank();
     }
 

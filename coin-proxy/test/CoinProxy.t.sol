@@ -124,14 +124,15 @@ contract CoinProxyTest is CoinProxyBaseTest {
         emit ICoinProxy.DepositSucceeded(wallet1, 2, coinAddress, 1000e6);
         emit ICoinProxy.DepositSucceeded(wallet1, 3, btcAddress, 12e8);
         emit ICoinProxy.DepositSucceeded(wallet1, 4, coinAddress, 2000e6);
-        ICoinProxy.BatchDeposit memory depositBatch = ICoinProxy.BatchDeposit(new ICoinProxy.Deposit[](4));
+        ICoinProxy.BatchDepositAndWithdrawal memory depositBatch =
+            ICoinProxy.BatchDepositAndWithdrawal(new ICoinProxy.Deposit[](4), new ICoinProxy.Withdrawal[](0));
         depositBatch.deposits[0] = ICoinProxy.Deposit({sequence: 1, sender: wallet1, token: btcAddress, amount: 5e8});
         depositBatch.deposits[1] =
             ICoinProxy.Deposit({sequence: 2, sender: wallet1, token: coinAddress, amount: 1000e6});
         depositBatch.deposits[2] = ICoinProxy.Deposit({sequence: 3, sender: wallet1, token: btcAddress, amount: 12e8});
         depositBatch.deposits[3] =
             ICoinProxy.Deposit({sequence: 4, sender: wallet1, token: coinAddress, amount: 2000e6});
-        coinProxy.submitDeposits(abi.encode(depositBatch));
+        coinProxy.submitDepositAndWithdrawalBatch(abi.encode(depositBatch));
         vm.stopPrank();
 
         verifyBalance(wallet1, btcAddress, 17e8);
@@ -144,7 +145,8 @@ contract CoinProxyTest is CoinProxyBaseTest {
         emit ICoinProxy.WithdrawalSucceeded(wallet1, 2, coinAddress, 1000e6, 1e8);
         emit ICoinProxy.WithdrawalSucceeded(wallet1, 3, btcAddress, 8e8, 1e8);
         emit ICoinProxy.WithdrawalSucceeded(wallet1, 4, coinAddress, 2000e6, 1e8);
-        ICoinProxy.BatchWithdrawal memory withdrawalBatch = ICoinProxy.BatchWithdrawal(new ICoinProxy.Withdrawal[](4));
+        ICoinProxy.BatchDepositAndWithdrawal memory withdrawalBatch =
+            ICoinProxy.BatchDepositAndWithdrawal(new ICoinProxy.Deposit[](0), new ICoinProxy.Withdrawal[](4));
         withdrawalBatch.withdrawals[0] =
             ICoinProxy.Withdrawal({sequence: 1, sender: wallet1, token: btcAddress, amount: 4e8, feeAmount: 1e8});
         withdrawalBatch.withdrawals[1] =
@@ -153,7 +155,7 @@ contract CoinProxyTest is CoinProxyBaseTest {
             ICoinProxy.Withdrawal({sequence: 3, sender: wallet1, token: btcAddress, amount: 8e8, feeAmount: 1e8});
         withdrawalBatch.withdrawals[3] =
             ICoinProxy.Withdrawal({sequence: 4, sender: wallet1, token: coinAddress, amount: 2000e6, feeAmount: 1e8});
-        coinProxy.submitWithdrawalBatch(abi.encode(withdrawalBatch));
+        coinProxy.submitDepositAndWithdrawalBatch(abi.encode(withdrawalBatch));
         vm.stopPrank();
 
         verifyBalance(wallet1, btcAddress, 3e8);
@@ -167,7 +169,9 @@ contract CoinProxyTest is CoinProxyBaseTest {
         emit ICoinProxy.WithdrawalRolledBack(wallet1, 2, coinAddress, 1000e6, 1e8);
         emit ICoinProxy.WithdrawalRolledBack(wallet1, 3, btcAddress, 8e8, 1e8);
         emit ICoinProxy.WithdrawalRolledBack(wallet1, 4, coinAddress, 2000e6, 1e8);
-        coinProxy.rollbackWithdrawalBatch(abi.encode(withdrawalBatch));
+        ICoinProxy.BatchWithdrawalRollback memory rollbackBatch =
+            ICoinProxy.BatchWithdrawalRollback(withdrawalBatch.withdrawals);
+        coinProxy.rollbackWithdrawalBatch(abi.encode(rollbackBatch));
 
         vm.stopPrank();
 
@@ -185,14 +189,15 @@ contract CoinProxyTest is CoinProxyBaseTest {
         emit ICoinProxy.DepositSucceeded(wallet1, 2, coinAddress, 1000e6);
         emit ICoinProxy.DepositSucceeded(wallet1, 3, btcAddress, 12e8);
         emit ICoinProxy.DepositSucceeded(wallet1, 4, coinAddress, 2000e6);
-        ICoinProxy.BatchDeposit memory depositBatch = ICoinProxy.BatchDeposit(new ICoinProxy.Deposit[](4));
+        ICoinProxy.BatchDepositAndWithdrawal memory depositBatch =
+            ICoinProxy.BatchDepositAndWithdrawal(new ICoinProxy.Deposit[](4), new ICoinProxy.Withdrawal[](0));
         depositBatch.deposits[0] = ICoinProxy.Deposit({sequence: 1, sender: wallet1, token: btcAddress, amount: 5e8});
         depositBatch.deposits[1] =
             ICoinProxy.Deposit({sequence: 2, sender: wallet1, token: coinAddress, amount: 1000e6});
         depositBatch.deposits[2] = ICoinProxy.Deposit({sequence: 3, sender: wallet1, token: btcAddress, amount: 12e8});
         depositBatch.deposits[3] =
             ICoinProxy.Deposit({sequence: 4, sender: wallet1, token: coinAddress, amount: 2000e6});
-        coinProxy.submitDeposits(abi.encode(depositBatch));
+        coinProxy.submitDepositAndWithdrawalBatch(abi.encode(depositBatch));
         vm.stopPrank();
 
         verifyBalance(wallet1, btcAddress, 17e8);
@@ -205,7 +210,8 @@ contract CoinProxyTest is CoinProxyBaseTest {
         emit ICoinProxy.WithdrawalFailed(wallet1, 2, coinAddress, 5000e6, 1e8, ICoinProxy.ErrorCode.InsufficientBalance);
         emit ICoinProxy.WithdrawalSucceeded(wallet1, 3, btcAddress, 8e8, 1e8);
         emit ICoinProxy.WithdrawalSucceeded(wallet1, 4, coinAddress, 2000e6, 1e8);
-        ICoinProxy.BatchWithdrawal memory withdrawalBatch = ICoinProxy.BatchWithdrawal(new ICoinProxy.Withdrawal[](4));
+        ICoinProxy.BatchDepositAndWithdrawal memory withdrawalBatch =
+            ICoinProxy.BatchDepositAndWithdrawal(new ICoinProxy.Deposit[](0), new ICoinProxy.Withdrawal[](4));
         withdrawalBatch.withdrawals[0] =
             ICoinProxy.Withdrawal({sequence: 1, sender: wallet1, token: btcAddress, amount: 4e8, feeAmount: 1e8});
         withdrawalBatch.withdrawals[1] =
@@ -214,11 +220,52 @@ contract CoinProxyTest is CoinProxyBaseTest {
             ICoinProxy.Withdrawal({sequence: 3, sender: wallet1, token: btcAddress, amount: 8e8, feeAmount: 1e8});
         withdrawalBatch.withdrawals[3] =
             ICoinProxy.Withdrawal({sequence: 4, sender: wallet1, token: coinAddress, amount: 2000e6, feeAmount: 1e8});
-        coinProxy.submitWithdrawalBatch(abi.encode(withdrawalBatch));
+        coinProxy.submitDepositAndWithdrawalBatch(abi.encode(withdrawalBatch));
         vm.stopPrank();
 
         verifyBalance(wallet1, btcAddress, 4e8);
         verifyBalance(wallet1, coinAddress, 1000e6);
         verifyBalance(feeAccount, btcAddress, 3e8);
+    }
+
+    function test_CombinedBatches() public {
+        setupWallets();
+
+        vm.startPrank(submitter);
+        vm.expectEmit(coinProxyProxyAddress);
+        emit ICoinProxy.DepositSucceeded(wallet1, 1, btcAddress, 5e8);
+        emit ICoinProxy.DepositSucceeded(wallet1, 2, coinAddress, 1000e6);
+        emit ICoinProxy.DepositSucceeded(wallet1, 3, btcAddress, 12e8);
+        emit ICoinProxy.DepositSucceeded(wallet1, 4, coinAddress, 2000e6);
+        emit ICoinProxy.WithdrawalSucceeded(wallet1, 1, btcAddress, 4e8, 1e8);
+        emit ICoinProxy.WithdrawalSucceeded(wallet1, 2, coinAddress, 1000e6, 1e8);
+        emit ICoinProxy.WithdrawalSucceeded(wallet1, 3, btcAddress, 8e8, 1e8);
+        emit ICoinProxy.WithdrawalSucceeded(wallet1, 4, coinAddress, 2000e6, 1e8);
+        ICoinProxy.BatchDepositAndWithdrawal memory batch =
+            ICoinProxy.BatchDepositAndWithdrawal(new ICoinProxy.Deposit[](4), new ICoinProxy.Withdrawal[](4));
+        batch.deposits[0] = ICoinProxy.Deposit({sequence: 1, sender: wallet1, token: btcAddress, amount: 5e8});
+        batch.deposits[1] = ICoinProxy.Deposit({sequence: 2, sender: wallet1, token: coinAddress, amount: 1000e6});
+        batch.deposits[2] = ICoinProxy.Deposit({sequence: 3, sender: wallet1, token: btcAddress, amount: 12e8});
+        batch.deposits[3] = ICoinProxy.Deposit({sequence: 4, sender: wallet1, token: coinAddress, amount: 2000e6});
+        batch.withdrawals[0] =
+            ICoinProxy.Withdrawal({sequence: 1, sender: wallet1, token: btcAddress, amount: 4e8, feeAmount: 1e8});
+        batch.withdrawals[1] =
+            ICoinProxy.Withdrawal({sequence: 2, sender: wallet1, token: coinAddress, amount: 1000e6, feeAmount: 1e8});
+        batch.withdrawals[2] =
+            ICoinProxy.Withdrawal({sequence: 3, sender: wallet1, token: btcAddress, amount: 8e8, feeAmount: 1e8});
+        batch.withdrawals[3] =
+            ICoinProxy.Withdrawal({sequence: 4, sender: wallet1, token: coinAddress, amount: 2000e6, feeAmount: 1e8});
+        coinProxy.submitDepositAndWithdrawalBatch(abi.encode(batch));
+        vm.stopPrank();
+
+        verifyBalance(wallet1, btcAddress, 3e8);
+        verifyBalance(wallet1, coinAddress, 0);
+        verifyBalance(feeAccount, btcAddress, 4e8);
+
+        //try to submit same batch again
+        vm.startPrank(submitter);
+        vm.expectRevert(bytes("This was the last batch processed"));
+        coinProxy.submitDepositAndWithdrawalBatch(abi.encode(batch));
+        vm.stopPrank();
     }
 }
