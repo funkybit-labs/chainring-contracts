@@ -46,8 +46,8 @@ contract CoinProxy is EIP712Upgradeable, UUPSUpgradeable, OwnableUpgradeable, IC
     }
 
     function submitDepositAndWithdrawalBatch(bytes calldata data) public onlySubmitter {
-        require(batchHash == 0, "Settlement batch in process");
-        require(lastDepositAndWithdrawBatchHash != keccak256(data), "This was the last batch processed");
+        require(batchHash == 0, "Settlement batch in progress");
+        require(lastDepositAndWithdrawBatchHash != keccak256(data), "Matches last batch processed");
         BatchDepositAndWithdrawal memory _batch = abi.decode(data, (BatchDepositAndWithdrawal));
         require(_batch.withdrawals.length > 0 || _batch.deposits.length > 0, "Must be at least 1 deposit or withdrawal");
         for (uint256 i = 0; i < _batch.deposits.length; i++) {
@@ -173,15 +173,6 @@ contract CoinProxy is EIP712Upgradeable, UUPSUpgradeable, OwnableUpgradeable, IC
     modifier onlySubmitter() {
         require(msg.sender == submitter, "Sender is not the submitter");
         _;
-    }
-
-    function _calculateWithdrawalBatchHash(bytes[] calldata withdrawals) internal pure returns (bytes32) {
-        bytes memory buffer = new bytes(0);
-        for (uint256 i = 0; i < withdrawals.length; i++) {
-            bytes32 txHash = keccak256(withdrawals[i]);
-            buffer = bytes.concat(buffer, txHash);
-        }
-        return keccak256(buffer);
     }
 
     function _withdraw(uint64 _sequence, address _sender, address _token, uint256 _amount, uint256 _fee) internal {

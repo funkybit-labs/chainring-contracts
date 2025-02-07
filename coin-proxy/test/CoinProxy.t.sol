@@ -264,7 +264,7 @@ contract CoinProxyTest is CoinProxyBaseTest {
 
         //try to submit same batch again
         vm.startPrank(submitter);
-        vm.expectRevert(bytes("This was the last batch processed"));
+        vm.expectRevert(bytes("Matches last batch processed"));
         coinProxy.submitDepositAndWithdrawalBatch(abi.encode(batch));
         vm.stopPrank();
     }

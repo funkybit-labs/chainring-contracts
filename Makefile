@@ -1,16 +1,16 @@
 .PHONY: test
 
 build:
-	cd evm && make build && cd ../coin-proxy && make build && cd ..
+	(cd evm && make build) && (cd coin-proxy && make build)
 
 lint:
-	cd evm && make lint && cd ../coin-proxy && make lint && cd ..
+	(cd evm && make lint) && (cd coin-proxy && make lint)
 
 format:
-	cd evm && make format && cd .. && cd coin-proxy && make format && cd ..
+	(cd evm && make format) && (cd coin-proxy && make format)
 
 test:
-	cd evm && make test && cd ../coin-proxy && make test && cd ..
+	(cd evm && make test) && (cd coin-proxy && make test)
 
 bitcoin_image:
 	cd docker/bitcoin && make build && cd ../..
