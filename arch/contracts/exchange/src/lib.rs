@@ -87,6 +87,8 @@ mod tests {
                 turbo: false,
             },
             None,
+            None,
+            None,
         );
         println!("Rune id is {:?}", uncommon_goods_rune_id);
 
@@ -101,6 +103,8 @@ mod tests {
                 terms: None,
                 turbo: false,
             },
+            None,
+            None,
             None,
         );
         println!("Rune id is {:?}", cats_and_dogs_rune_id);
@@ -239,6 +243,63 @@ mod tests {
 
         assert!(address_response.runes_balances.into_iter().position(|r| r.rune_name == spaced_uncommon_goods).unwrap_or_else(|| usize::MAX) == usize::MAX);
         println!("wallet outputs = {:?}", ord_client.get_outputs_for_address(&wallet.address.to_string()));
+    }
+
+    #[test]
+    fn test_etch_with_inscription() {
+        let wallet = CallerInfo::generate_new(bitcoin::Network::Regtest);
+        let ord_client = OrdClient::new("http://localhost:7080".to_string());
+        let address_response = ord_client.get_address(&wallet.address.to_string());
+        assert_eq!(0, address_response.runes_balances.len());
+
+        // text inscription
+        let txt_inscription_rune = Rune::from_str(&["TXT", &generate_upper_case_string(15)].join("")).unwrap();
+        let txt_inscription_rune_id = etch_rune(
+            &wallet,
+            Etching {
+                divisibility: Some(6u8),
+                premine: Some(1000000000000),
+                rune: Some(txt_inscription_rune),
+                spacers: Some(4),
+                symbol: Some('¢'),
+                terms: None,
+                turbo: false,
+            },
+            None,
+            Some("text/plain;charset=utf-8".to_string().into_bytes()),
+            Some("115".to_string().into_bytes()),
+        );
+        println!("Rune id is {:?}", txt_inscription_rune_id);
+        wait_for_block(&ord_client, txt_inscription_rune_id.block);
+
+
+        // image types
+        for image_type in ["png", "jpg", "svg"] {
+            let content = fs::read(format!("../../images/sample.{}", image_type)).unwrap();
+            let inscription_rune = Rune::from_str(&[image_type.to_uppercase(), generate_upper_case_string(12)].join("")).unwrap();
+            let content_type = match image_type {
+                "svg" => "image/svg+xml",
+                "jpg" => "image/jpeg",
+                _ => &format!("image/{}", image_type)
+            };
+            let inscription_rune_id = etch_rune(
+                &wallet,
+                Etching {
+                    divisibility: Some(6u8),
+                    premine: Some(1000000000000),
+                    rune: Some(inscription_rune),
+                    spacers: Some(4),
+                    symbol: Some('¢'),
+                    terms: None,
+                    turbo: false,
+                },
+                None,
+                Some(content_type.to_string().into_bytes()),
+                Some(content),
+            );
+            println!("Rune id is {:?}", inscription_rune_id);
+            wait_for_block(&ord_client, inscription_rune_id.block);
+        }
     }
 
     #[test]
@@ -1361,8 +1422,8 @@ mod tests {
         for (i, pubkey) in token_pubkeys.iter().enumerate() {
             token_state_setups.push(
                 TokenStateSetup {
-                    account_index: ((i % max_balance_indexes)  +  1) as u8,
-                    wallet_addresses: wallets[i * num_wallets_per_account .. i * num_wallets_per_account + num_wallets_per_account].to_vec(),
+                    account_index: ((i % max_balance_indexes) + 1) as u8,
+                    wallet_addresses: wallets[i * num_wallets_per_account..i * num_wallets_per_account + num_wallets_per_account].to_vec(),
                 }
             );
             accounts.push(
@@ -1373,7 +1434,7 @@ mod tests {
                 },
             )
         }
-        for i in 0 .. (num_accounts / max_balance_indexes) + 1 {
+        for i in 0..(num_accounts / max_balance_indexes) + 1 {
             let start_index = max_balance_indexes * i;
             let end_index = min(start_index + max_balance_indexes, num_accounts);
             let mut accts = vec![
@@ -1383,11 +1444,11 @@ mod tests {
                     is_writable: false,
                 }
             ];
-            accts.append(&mut accounts[start_index + 1 .. end_index + 1].to_vec());
+            accts.append(&mut accounts[start_index + 1..end_index + 1].to_vec());
             sign_and_send_instruction_success(
                 accts,
                 ProgramInstruction::InitWalletBalances(InitWalletBalancesParams {
-                    token_state_setups: token_state_setups[start_index .. end_index].to_vec()
+                    token_state_setups: token_state_setups[start_index..end_index].to_vec()
                 }).encode_to_vec().unwrap(),
                 vec![submitter_keypair],
             );
@@ -1462,7 +1523,7 @@ mod tests {
             accounts.clone().iter().map(|a| AccountMeta {
                 pubkey: a.pubkey,
                 is_writable: a.is_signer,
-                is_signer: a.is_signer
+                is_signer: a.is_signer,
             }).collect::<Vec<AccountMeta>>(),
             ProgramInstruction::PrepareBatchSettlement(
                 settlement_batch_params.clone()
@@ -1474,7 +1535,7 @@ mod tests {
             accounts.clone().iter().map(|a| AccountMeta {
                 pubkey: a.pubkey,
                 is_writable: true,
-                is_signer: a.is_signer
+                is_signer: a.is_signer,
             }).collect::<Vec<AccountMeta>>(),
             ProgramInstruction::SubmitBatchSettlement(
                 settlement_batch_params
@@ -2023,6 +2084,8 @@ mod tests {
                 turbo: false,
             },
             None,
+            None,
+            None,
         );
         let spaced_rune_name = format!("{}", SpacedRune { rune, spacers: 128 });
 
@@ -2266,6 +2329,8 @@ mod tests {
                 turbo: false,
             },
             None,
+            None,
+            None,
         );
 
         // set to earlier block and make sure we can update it
@@ -2324,6 +2389,8 @@ mod tests {
                 terms: None,
                 turbo: false,
             },
+            None,
+            None,
             None,
         )).collect::<Vec<RuneId>>();
 
