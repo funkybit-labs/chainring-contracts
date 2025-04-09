@@ -274,7 +274,7 @@ mod tests {
 
 
         // image types
-        for image_type in ["png", "jpg", "svg"] {
+        for image_type in ["png", "jpg", "svg", "webp"] {
             let content = fs::read(format!("../../images/sample.{}", image_type)).unwrap();
             let inscription_rune = Rune::from_str(&[image_type.to_uppercase(), generate_upper_case_string(12)].join("")).unwrap();
             let content_type = match image_type {
