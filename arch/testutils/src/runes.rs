@@ -1,14 +1,7 @@
+use std::mem;
 use common::constants::*;
 use common::models::*;
-use bitcoin::{
-    Address, Amount, OutPoint, ScriptBuf, Sequence, TapSighashType, Transaction, TxIn, TxOut, Witness,
-    opcodes,
-    absolute::LockTime,
-    transaction::Version,
-    secp256k1,
-    secp256k1::Secp256k1,
-    key::{TapTweak, TweakedKeypair},
-};
+use bitcoin::{Address, Amount, OutPoint, ScriptBuf, Sequence, TapSighashType, Transaction, TxIn, TxOut, Witness, opcodes, absolute::LockTime, transaction::Version, secp256k1, secp256k1::Secp256k1, key::{TapTweak, TweakedKeypair}, script};
 use bitcoin::script::{Builder as ScriptBuilder, PushBytes};
 use bitcoin::sighash::{Prevouts, SighashCache};
 use bitcoin::taproot::{LeafVersion, TaprootBuilder, TapLeafHash, TaprootSpendInfo};
@@ -19,7 +12,8 @@ use model::state::{Balance, DUST_THRESHOLD};
 use crate::bitcoin::{mine, deposit_to_address};
 use crate::ordclient::{OrdClient, Output, wait_for_block};
 use std::str::FromStr;
-use common::helper::{get_account_address, with_secret_key_file};
+use bitcoin::constants::MAX_SCRIPT_ELEMENT_SIZE;
+use common::helper::{extend_bytes_max_len, get_account_address, with_secret_key_file};
 use crate::constants::RUNE_RECEIVER_ACCOUNT_FILE_PATH;
 use crate::setup::deposit;
 
@@ -199,7 +193,9 @@ pub fn transfer_runes(
 pub fn etch_rune(
     wallet: &CallerInfo,
     etching: Etching,
-    premine_address: Option<Address>
+    premine_address: Option<Address>,
+    content_type: Option<Vec<u8>>,
+    content: Option<Vec<u8>>
 ) -> RuneId {
     let userpass = Auth::UserPass(
         BITCOIN_NODE_USERNAME.to_string(),
@@ -224,8 +220,10 @@ pub fn etch_rune(
         },
         funding_psbt,
         postage,
-        Amount::from_sat(2000),
-        bitcoin::Network::Regtest
+        Amount::from_sat(20000),
+        bitcoin::Network::Regtest,
+        content_type,
+        content
     );
 
     let commit_tx: Transaction = bitcoin::consensus::deserialize(&hex::decode(commit_tx_hex).unwrap()).unwrap();
@@ -248,7 +246,9 @@ pub fn build_commit_and_etch_transactions(
     funding_psbt: Transaction,
     postage: Amount,
     etching_network_fee: Amount,
-    network: bitcoin::Network
+    network: bitcoin::Network,
+    content_type: Option<Vec<u8>>,
+    content: Option<Vec<u8>>,
 ) -> (String, String) {
     let ephemeral = CallerInfo::generate_new(network);
     let mut commit_tx = funding_psbt.clone();
@@ -261,29 +261,59 @@ pub fn build_commit_and_etch_transactions(
         pointer: None,
     };
 
-    let rune_name_commitment_script = ScriptBuilder::new()
-        .push_opcode(opcodes::OP_FALSE)
-        .push_opcode(opcodes::all::OP_IF)
-        .push_slice::<&PushBytes>(
-            etching
-                .rune
-                .unwrap()
-                .commitment()
-                .as_slice()
+    let mut builder = ScriptBuilder::new();
+    if let Some(content) = content {
+        builder = builder.push_slice(ephemeral.public_key.serialize())
+            .push_opcode(opcodes::all::OP_CHECKSIG)
+            .push_opcode(opcodes::OP_FALSE)
+            .push_opcode(opcodes::all::OP_IF);
+
+        // protocol id
+        builder = builder.push_slice::<&PushBytes>(
+            "ord"
+                .to_string()
+                .as_bytes()
                 .try_into()
-                .unwrap(),
-        )
-        .push_opcode(opcodes::all::OP_ENDIF)
-        .push_slice(ephemeral.public_key.serialize())
-        .push_opcode(opcodes::all::OP_CHECKSIG)
-        .into_script();
+                .unwrap()
+        );
+
+        // content type
+        add_tag(1, &mut builder, content_type.unwrap());
+        // rune name
+        add_tag(13, &mut builder, etching.rune.unwrap().commitment());
+
+        // 0 is the body tag
+        builder = builder.push_opcode(opcodes::OP_FALSE);
+        // push content in chunks of 520 bytes
+        for chunk in content.chunks(MAX_SCRIPT_ELEMENT_SIZE) {
+            builder = builder.push_slice::<&PushBytes>(chunk.try_into().unwrap());
+        }
+        builder = builder.push_opcode(opcodes::all::OP_ENDIF);
+    } else {
+        builder = builder.push_opcode(opcodes::OP_FALSE)
+            .push_opcode(opcodes::all::OP_IF)
+            .push_slice::<&PushBytes>(
+                etching
+                    .rune
+                    .unwrap()
+                    .commitment()
+                    .as_slice()
+                    .try_into()
+                    .unwrap(),
+            )
+            .push_opcode(opcodes::all::OP_ENDIF)
+            .push_slice(ephemeral.public_key.serialize())
+            .push_opcode(opcodes::all::OP_CHECKSIG)
+    }
+
+    let commitment_script = builder.into_script();
 
     let secp = Secp256k1::new();
 
     // Build taproot tree
     let taproot_builder = TaprootBuilder::new()
-        .add_leaf(0, rune_name_commitment_script.clone())
-        .expect("error adding name commitment script leaf");
+        .add_leaf(0, commitment_script.clone())
+        .expect("error adding commitment script leaf");
 
     let taproot_spend_info = taproot_builder
         .finalize(&secp, ephemeral.public_key)
@@ -310,7 +340,7 @@ pub fn build_commit_and_etch_transactions(
     if etching.premine.is_some() {
         etching_outputs.push(TxOut {
             script_pubkey: premine_address.script_pubkey(),
-            value: postage - etching_network_fee
+            value: postage - etching_network_fee,
         });
     }
 
@@ -326,7 +356,7 @@ pub fn build_commit_and_etch_transactions(
     // Build etching transaction with all outputs
     let etching_tx = build_etching_transaction(
         &ephemeral,
-        &rune_name_commitment_script,
+        &commitment_script,
         &taproot_spend_info,
         OutPoint {
             txid: commit_tx.compute_txid(),
@@ -337,6 +367,25 @@ pub fn build_commit_and_etch_transactions(
     );
 
     (commit_tx.raw_hex(), etching_tx.raw_hex())
+}
+
+pub fn add_tag(tag: u8, builder: &mut script::Builder, value: Vec<u8>) {
+    let mut tmp = script::Builder::new();
+    mem::swap(&mut tmp, builder);
+    tmp = tmp
+        .push_slice::<&PushBytes>(
+            vec![tag]
+                .as_slice()
+                .try_into()
+                .unwrap(),
+        )
+        .push_slice::<&PushBytes>(
+            value
+                .as_slice()
+                .try_into()
+                .unwrap(),
+        );
+    mem::swap(&mut tmp, builder);
 }
 
 pub fn build_funding_psbt(
