@@ -58,7 +58,7 @@ contract ExchangeTest is ExchangeBaseTest {
         withdrawAll(wallet1PrivateKey, btcAddress, 51e8, 51e8, 1e5, 3);
         verifyBalances(wallet1, btcAddress, 0, 45e8 + 4e8 - 1e5 + 51e8 - 1e5, 2e5);
 
-        withdrawAllRevert(wallet1PrivateKey, btcAddress, 51e8, 51e8, 1e5, 3);
+        withdrawAllRevert(wallet1PrivateKey, btcAddress, 51e8, 1e5, 3);
     }
 
     function test_MultipleWallets() public {

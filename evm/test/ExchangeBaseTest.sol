@@ -148,7 +148,6 @@ contract ExchangeBaseTest is Test {
         uint256 walletPrivateKey,
         address tokenAddress,
         uint256 amount,
-        uint256 expectedAmount,
         uint256 feeAmount,
         uint64 sequence
     ) internal {
