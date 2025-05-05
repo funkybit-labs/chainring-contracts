@@ -61,9 +61,10 @@ contract ExchangeBaseTest is Test {
         address tokenAddress,
         uint256 amount,
         uint256 expectedAmount,
-        uint256 feeAmount
+        uint256 feeAmount,
+        uint64 sequence
     ) internal {
-        withdraw(walletPrivateKey, tokenAddress, amount, expectedAmount, feeAmount, true);
+        withdraw(walletPrivateKey, tokenAddress, amount, expectedAmount, feeAmount, sequence, true);
     }
 
     function withdraw(
@@ -71,9 +72,10 @@ contract ExchangeBaseTest is Test {
         address tokenAddress,
         uint256 amount,
         uint256 expectedAmount,
-        uint256 feeAmount
+        uint256 feeAmount,
+        uint64 sequence
     ) internal {
-        withdraw(walletPrivateKey, tokenAddress, amount, expectedAmount, feeAmount, false);
+        withdraw(walletPrivateKey, tokenAddress, amount, expectedAmount, feeAmount, sequence, false);
     }
 
     function withdraw(
@@ -83,9 +85,9 @@ contract ExchangeBaseTest is Test {
         uint256 amount,
         uint256 expectedAmount,
         uint256 feeAmount,
+        uint64 sequence,
         bool expectSignatureFailure
     ) internal {
-        uint64 sequence = 1;
         bytes memory tx1 =
             createSignedWithdrawTx(linkedSignerPrivateKey, tokenAddress, amount, 1000, sequence, feeAmount, wallet);
         bytes[] memory txs = new bytes[](1);
@@ -115,9 +117,9 @@ contract ExchangeBaseTest is Test {
         uint256 amount,
         uint256 expectedAmount,
         uint256 feeAmount,
+        uint64 sequence,
         bool isWithdrawAll
     ) internal {
-        uint64 sequence = 1;
         bytes memory tx1 = isWithdrawAll
             ? createSignedWithdrawAllTx(walletPrivateKey, tokenAddress, amount, 1000, sequence, feeAmount)
             : createSignedWithdrawTx(walletPrivateKey, tokenAddress, amount, 1000, sequence, feeAmount, address(0));
@@ -138,6 +140,24 @@ contract ExchangeBaseTest is Test {
         } else {
             emit IExchange.Withdrawal(vm.addr(walletPrivateKey), sequence, tokenAddress, expectedAmount, feeAmount);
         }
+        exchange.submitWithdrawals(txs);
+        vm.stopPrank();
+    }
+
+    function withdrawAllRevert(
+        uint256 walletPrivateKey,
+        address tokenAddress,
+        uint256 amount,
+        uint256 expectedAmount,
+        uint256 feeAmount,
+        uint64 sequence
+    ) internal {
+        bytes memory tx1 = createSignedWithdrawAllTx(walletPrivateKey, tokenAddress, amount, 1000, sequence, feeAmount);
+        bytes[] memory txs = new bytes[](1);
+        txs[0] = tx1;
+
+        vm.startPrank(submitter);
+        vm.expectRevert("Matches last batch processed");
         exchange.submitWithdrawals(txs);
         vm.stopPrank();
     }

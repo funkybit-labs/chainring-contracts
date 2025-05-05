@@ -45,18 +45,20 @@ contract ExchangeTest is ExchangeBaseTest {
 
         deposit(wallet1, usdcAddress, 1000e6);
         verifyBalances(wallet1, usdcAddress, 1000e6, 499000e6, 1000e6);
-        withdraw(wallet1PrivateKey, usdcAddress, 133e6, 133e6, 1e6);
+        withdraw(wallet1PrivateKey, usdcAddress, 133e6, 133e6, 1e6, 1);
         verifyBalances(wallet1, usdcAddress, 867e6, 499000e6 + 133e6 - 1e6, 1000e6 - 133e6 + 1e6);
         verifyBalances(feeAccount, usdcAddress, 1e6, 0, 1000e6 - 133e6 + 1e6);
 
         deposit(wallet1, btcAddress, 55e8);
         verifyBalances(wallet1, btcAddress, 55e8, 45e8, 55e8);
-        withdraw(wallet1PrivateKey, btcAddress, 4e8, 4e8, 1e5);
+        withdraw(wallet1PrivateKey, btcAddress, 4e8, 4e8, 1e5, 2);
         verifyBalances(wallet1, btcAddress, 51e8, 45e8 + 4e8 - 1e5, 55e8 - 4e8 + 1e5);
         verifyBalances(feeAccount, btcAddress, 1e5, 0, 55e8 - 4e8 + 1e5);
 
-        withdrawAll(wallet1PrivateKey, btcAddress, 51e8, 51e8, 1e5);
+        withdrawAll(wallet1PrivateKey, btcAddress, 51e8, 51e8, 1e5, 3);
         verifyBalances(wallet1, btcAddress, 0, 45e8 + 4e8 - 1e5 + 51e8 - 1e5, 2e5);
+
+        withdrawAllRevert(wallet1PrivateKey, btcAddress, 51e8, 51e8, 1e5, 3);
     }
 
     function test_MultipleWallets() public {
@@ -67,9 +69,9 @@ contract ExchangeTest is ExchangeBaseTest {
         deposit(wallet2, usdcAddress, 800e6);
         verifyBalances(wallet2, usdcAddress, 800e6, 499200e6, 1800e6);
 
-        withdraw(wallet1PrivateKey, usdcAddress, 133e6, 133e6, 1e6);
+        withdraw(wallet1PrivateKey, usdcAddress, 133e6, 133e6, 1e6, 1);
         verifyBalances(wallet1, usdcAddress, 867e6, 499000e6 + 133e6 - 1e6, 1800e6 - 133e6 + 1e6);
-        withdraw(wallet2PrivateKey, usdcAddress, 120e6, 120e6, 1e6);
+        withdraw(wallet2PrivateKey, usdcAddress, 120e6, 120e6, 1e6, 2);
         verifyBalances(wallet2, usdcAddress, 680e6, 499200e6 + 120e6 - 1e6, 1800e6 - 133e6 - 120e6 + 2e6);
         verifyBalances(feeAccount, usdcAddress, 2e6, 0, 1800e6 - 133e6 - 120e6 + 2e6);
     }
@@ -107,9 +109,9 @@ contract ExchangeTest is ExchangeBaseTest {
         verifyBalances(wallet2, usdcAddress, 800e6, 499200e6, 1800e6);
 
         // perform some withdrawals
-        withdraw(wallet1PrivateKey, usdcAddress, 100e6, 100e6, 1e6);
+        withdraw(wallet1PrivateKey, usdcAddress, 100e6, 100e6, 1e6, 1);
         verifyBalances(wallet1, usdcAddress, 900e6, 499000e6 + 100e6 - 1e6, 1800e6 - 100e6 + 1e6);
-        withdraw(wallet2PrivateKey, usdcAddress, 120e6, 120e6, 1e6);
+        withdraw(wallet2PrivateKey, usdcAddress, 120e6, 120e6, 1e6, 2);
         verifyBalances(wallet2, usdcAddress, 680e6, 499200e6 + 120e6 - 1e6, 1800e6 - 100e6 - 120e6 + 2e6);
         verifyBalances(feeAccount, usdcAddress, 2e6, 0, 1800e6 - 100e6 - 120e6 + 2e6);
     }
@@ -180,12 +182,12 @@ contract ExchangeTest is ExchangeBaseTest {
 
         deposit(wallet1, usdcAddress, 1000e6);
         verifyBalances(wallet1, usdcAddress, 1000e6, 500000e6 - 1000e6, 1000e6);
-        withdraw(wallet1PrivateKey, usdcAddress, 1001e6, 1000e6, 1e6);
+        withdraw(wallet1PrivateKey, usdcAddress, 1001e6, 1000e6, 1e6, 1);
         verifyBalances(wallet1, usdcAddress, 1000e6, 500000e6 - 1000e6, 1000e6);
 
         deposit(wallet1, 2e18);
         verifyBalances(wallet1, 2e18, 10e18 - 2e18, 2e18);
-        withdraw(wallet1PrivateKey, address(0), 3e18, 2e18, 1e15);
+        withdraw(wallet1PrivateKey, address(0), 3e18, 2e18, 1e15, 2);
         verifyBalances(wallet1, 2e18, 10e18 - 2e18, 2e18);
     }
 
@@ -195,21 +197,21 @@ contract ExchangeTest is ExchangeBaseTest {
         deposit(wallet1, usdcAddress, 1000e6);
         verifyBalances(wallet1, usdcAddress, 1000e6, 500000e6 - 1000e6, 1000e6);
         // the withdrawAll amount + fee is equal to balance
-        withdrawAll(wallet1PrivateKey, usdcAddress, 1000e6, 1000e6, 1e6);
+        withdrawAll(wallet1PrivateKey, usdcAddress, 1000e6, 1000e6, 1e6, 1);
         verifyBalances(wallet1, usdcAddress, 0, 500000e6 - 1e6, 1e6);
         verifyBalances(feeAccount, usdcAddress, 1e6, 0, 1e6);
 
         deposit(wallet1, usdcAddress, 1000e6);
         verifyBalances(wallet1, usdcAddress, 1000e6, 500000e6 - 1000e6 - 1e6, 1000e6 + 1e6);
         // the withdrawAll amount + fee is less than balance, so should withdraw that amount
-        withdrawAll(wallet1PrivateKey, usdcAddress, 900e6, 900e6, 1e6);
+        withdrawAll(wallet1PrivateKey, usdcAddress, 900e6, 900e6, 1e6, 2);
         verifyBalances(wallet1, usdcAddress, 100e6, 500000e6 - 1000e6 - 2e6 + 900e6, 1000e6 - 900e6 + 2e6);
         verifyBalances(feeAccount, usdcAddress, 2e6, 0, 1000e6 - 900e6 + 2e6);
 
         deposit(wallet1, 2e18);
         verifyBalances(wallet1, 2e18, 10e18 - 2e18, 2e18);
         // withdrawAll amount greater than balance so should withdraw balance
-        withdrawAll(wallet1PrivateKey, address(0), 3e18, 2e18, 1e15);
+        withdrawAll(wallet1PrivateKey, address(0), 3e18, 2e18, 1e15, 3);
         verifyBalances(wallet1, 0, 10e18 - 1e15, 1e15);
         verifyBalances(feeAccount, 1e15, 0, 1e15);
     }
@@ -271,25 +273,25 @@ contract ExchangeTest is ExchangeBaseTest {
 
         deposit(wallet1, usdcAddress, 1000e6);
         verifyBalances(wallet1, usdcAddress, 1000e6, 499000e6, 1000e6);
-        withdraw(wallet1PrivateKey, usdcAddress, 100e6, 100e6, 1e6);
+        withdraw(wallet1PrivateKey, usdcAddress, 100e6, 100e6, 1e6, 1);
 
         // link signer can sign for wallet1
-        withdraw(wallet1, linkedSignerPrivateKey, usdcAddress, 50e6, 50e6, 1e6, false);
+        withdraw(wallet1, linkedSignerPrivateKey, usdcAddress, 50e6, 50e6, 1e6, 2, false);
 
         // linked signer cannot sign for a different wallet its not linked to
-        withdraw(wallet2, linkedSignerPrivateKey, usdcAddress, 50e6, 0, 1e6, true);
+        withdraw(wallet2, linkedSignerPrivateKey, usdcAddress, 50e6, 0, 1e6, 3, true);
 
         // change the linked signer
         uint256 newLinkedSignerPrivateKey = 0x1234567890ABCDEF1234;
         linkSigner(wallet1, newLinkedSignerPrivateKey);
 
         // old linked signer fails, new one works
-        withdraw(wallet1, linkedSignerPrivateKey, usdcAddress, 50e6, 0, 1e6, true);
-        withdraw(wallet1, newLinkedSignerPrivateKey, usdcAddress, 50e6, 50e6, 1e6, false);
+        withdraw(wallet1, linkedSignerPrivateKey, usdcAddress, 50e6, 0, 1e6, 4, true);
+        withdraw(wallet1, newLinkedSignerPrivateKey, usdcAddress, 50e6, 50e6, 1e6, 5, false);
 
         // remove linked signer and verify fails
         removeLinkedSigner(wallet1);
-        withdraw(wallet1, newLinkedSignerPrivateKey, usdcAddress, 50e6, 0, 1e6, true);
+        withdraw(wallet1, newLinkedSignerPrivateKey, usdcAddress, 50e6, 0, 1e6, 6, true);
 
         // test bad signature
         vm.startPrank(wallet1);
