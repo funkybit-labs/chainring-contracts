@@ -138,6 +138,8 @@ contract Exchange is EIP712Upgradeable, UUPSUpgradeable, OwnableUpgradeable, IEx
 
     function submitWithdrawals(bytes[] calldata withdrawals) public onlySubmitter {
         require(batchHash == 0, "Settlement batch in process");
+        bytes32 _withdrawalBatchHash = _calculateWithdrawalBatchHash(withdrawals);
+        require(lastWithdrawalBatchHash != _withdrawalBatchHash, "Matches last batch processed");
         for (uint256 i = 0; i < withdrawals.length; i++) {
             TransactionType txType = TransactionType(uint8(withdrawals[i][0]));
             WithdrawWithSignature memory signedTx = abi.decode(withdrawals[i][1:], (WithdrawWithSignature));
@@ -167,7 +169,7 @@ contract Exchange is EIP712Upgradeable, UUPSUpgradeable, OwnableUpgradeable, IEx
                 }
             }
         }
-        lastWithdrawalBatchHash = _calculateWithdrawalBatchHash(withdrawals);
+        lastWithdrawalBatchHash = _withdrawalBatchHash;
     }
 
     function prepareSettlementBatch(bytes calldata data) public onlySubmitter {
